@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import pathlib
+import sys
 
 
 def _generated_exists() -> bool:
@@ -20,6 +21,10 @@ def _ensure() -> None:
 
 
 _ensure()
+
+_proto_dir = pathlib.Path(__file__).resolve().parent
+if str(_proto_dir) not in sys.path:
+    sys.path.insert(0, str(_proto_dir))
 
 opamp_pb2 = importlib.import_module("opamp_provider.proto.opamp_pb2")
 anyvalue_pb2 = importlib.import_module("opamp_provider.proto.anyvalue_pb2")

@@ -1,3 +1,15 @@
+# Copyright 2026 mp3monster.org
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """OpAMP client skeleton for HTTP and WebSocket transports."""
 
 from __future__ import annotations
@@ -9,14 +21,17 @@ import pathlib
 import subprocess
 import threading
 import time
+import platform
+import socket
 from typing import Optional
 
 import httpx
 import websockets
+from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, CONFIG
-from opamp_consumer.proto import opamp_pb2
+from opamp_consumer.proto import opamp_pb2, anyvalue_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
@@ -30,7 +45,7 @@ LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
 CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf payloads.
 ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header error text.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
-FLUENTBIT_CMD = "fluentbit"  # Fluent Bit executable name.
+FLUENTBIT_CMD = "fluent-bit"  # Fluent Bit executable name.
 FLUENTBIT_CONFIG_FLAG = "-c"  # Fluent Bit config flag.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
 KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key for agent description.
@@ -39,6 +54,29 @@ KEY_HTTP_PORT = "http_port"  # Fluent Bit HTTP port config key.
 KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit HTTP listen config key.
 KEY_HTTP_SERVER = "http_server"  # Fluent Bit HTTP server config key.
 KEY_HTTP_SERVER_ON = "on"  # Expected value token when HTTP server is enabled.
+KEY_SERVICE_NAME = "service.name"  # Agent description service name key.
+KEY_SERVICE_NAMESPACE = "service.namespace"  # Agent description service namespace key.
+KEY_SERVICE_INSTANCE_ID = "service.instance.id"  # Agent description instance id key.
+KEY_SERVICE_VERSION = "service.version"  # Agent description version key.
+CAPABILITIES_MAP = {
+    "UnspecifiedAgentCapability": 0x00000000,
+    "ReportsStatus": 0x00000001,
+    "AcceptsRemoteConfig": 0x00000002,
+    "ReportsEffectiveConfig": 0x00000004,
+    "AcceptsPackages": 0x00000008,
+    "ReportsPackageStatuses": 0x00000010,
+    "ReportsOwnTraces": 0x00000020,
+    "ReportsOwnMetrics": 0x00000040,
+    "ReportsOwnLogs": 0x00000080,
+    "AcceptsOpAMPConnectionSettings": 0x00000100,
+    "AcceptsOtherConnectionSettings": 0x00000200,
+    "AcceptsRestartCommand": 0x00000400,
+    "ReportsHealth": 0x00000800,
+    "ReportsRemoteConfig": 0x00001000,
+    "ReportsHeartbeat": 0x00002000,
+    "ReportsAvailableComponents": 0x00004000,
+    "ReportsConnectionSettingsStatus": 0x00008000,
+}
 LOG_INVALID_HTTP_PORT = "invalid http_port value: %s"  # Log format for bad ports.
 LOG_HTTP_SERVER_DISABLED = (
     "http_server is not enabled: %s"  # Log format for disabled HTTP.
@@ -89,11 +127,15 @@ class OpAMPClient:
     async def send_ws(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via WebSocket and return the response."""
         # TODO(opamp): Populate AgentToServer with per-operation fields before sending:
-        # - agent_description, capabilities
         # - health, effective_config, remote_config_status
         # - package_statuses
         # - connection_settings_request / connection_settings_status
         # - custom_capabilities / custom_message / available_components
+        if not msg.HasField("agent_description"):
+            msg.agent_description.CopyFrom(
+                self.get_agent_description(msg.instance_uid or None)
+            )
+        msg.capabilities = self.get_agent_capabilities()
         url = f"{self.base_url}{OPAMP_HTTP_PATH}"
         async with websockets.connect(url) as ws:
             await ws.send(encode_message(msg.SerializeToString()))
@@ -105,22 +147,46 @@ class OpAMPClient:
             raise ValueError(ERR_UNSUPPORTED_HEADER)
         reply = opamp_pb2.ServerToAgent()
         reply.ParseFromString(payload)
-        # TODO(opamp): Handle per-operation ServerToAgent fields:
-        # - error_response
-        # - remote_config, connection_settings, packages_available
-        # - capabilities, agent_identification, command
-        # - custom_capabilities / custom_message
+        if reply.HasField("error_response"):
+            self.handle_error_response(reply.error_response)
+        if reply.HasField("remote_config"):
+            self.handle_remote_config(reply.remote_config)
+        if reply.HasField("connection_settings"):
+            self.handle_connection_settings(reply.connection_settings)
+        if reply.HasField("packages_available"):
+            self.handle_packages_available(reply.packages_available)
+        if reply.flags:
+            self.handle_flags(reply.flags)
+        if reply.capabilities:
+            self.handle_capabilities(reply.capabilities)
+        if reply.HasField("agent_identification"):
+            self.handle_agent_identification(reply.agent_identification)
+        if reply.HasField("command"):
+            self.handle_command(reply.command)
+        if reply.HasField("custom_capabilities"):
+            self.handle_custom_capabilities(reply.custom_capabilities)
+        if reply.HasField("custom_message"):
+            self.handle_custom_message(reply.custom_message)
+
         return reply
 
-    def launch_fluent_bit(self) -> "subprocess.Popen[bytes]":
+    def launch_fluent_bit(self) -> Boolean:
         """Launch the Fluent Bit process using configured params."""
+        launched = True
+        logger = logging.getLogger(__name__)
         cmd = [
             FLUENTBIT_CMD,
             *CONFIG.additional_fluent_bit_params,
             FLUENTBIT_CONFIG_FLAG,
             CONFIG.fluentbit_config_path,
         ]
-        return subprocess.Popen(cmd)
+        logger.debug(
+            f"About to start Fluent Bit with {CONFIG.fluentbit_config_path} and cmd {cmd}"
+        )
+
+        processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
+        logger.info(f"Launch result = {processResponse}")
+        return launched
 
     def _heartbeat_key(self, path: str) -> str:
         """Return the last URL path component as the dictionary key."""
@@ -146,9 +212,169 @@ class OpAMPClient:
             resp = httpx.get(url, timeout=HTTP_TIMEOUT_SECONDS)
             resp.raise_for_status()
             value = resp.text
+            try:
+                data = resp.json()
+                version = None
+                edition = None
+                if isinstance(data, dict):
+                    version = data.get("fluent-bit.version")
+                    edition = data.get("fluent-bit.edition")
+                    fb = data.get("fluent-bit") or data.get("fluentbit")
+                    if isinstance(fb, dict):
+                        version = version or fb.get("version")
+                        edition = edition or fb.get("edition")
+                if version or edition:
+                    if version and edition:
+                        value = f"{version} ({edition})"
+                    else:
+                        value = version or edition
+            except ValueError as exc:
+                logging.getLogger(__name__).warning(
+                    "failed to parse Fluent Bit version response: %s", exc
+                )
         except Exception as exc:  # pragma: no cover - error path varies by env
             value = f"{ERR_PREFIX}{exc}"
         self.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = value
+
+    def get_agent_description(
+        self, instance_uid: bytes | None = None
+    ) -> opamp_pb2.AgentDescription:
+        """Build AgentDescription for outbound AgentToServer messages."""
+        desc = opamp_pb2.AgentDescription()
+        service_name = CONFIG.service_name
+        service_namespace = CONFIG.service_namespace
+        if service_name:
+            desc.identifying_attributes.append(
+                anyvalue_pb2.KeyValue(
+                    key=KEY_SERVICE_NAME,
+                    value=anyvalue_pb2.AnyValue(string_value=service_name),
+                )
+            )
+        if service_namespace:
+            desc.identifying_attributes.append(
+                anyvalue_pb2.KeyValue(
+                    key=KEY_SERVICE_NAMESPACE,
+                    value=anyvalue_pb2.AnyValue(string_value=service_namespace),
+                )
+            )
+        metadata = self.get_host_metadata()
+        for key, value in metadata.items():
+            desc.non_identifying_attributes.append(
+                anyvalue_pb2.KeyValue(
+                    key=key,
+                    value=anyvalue_pb2.AnyValue(string_value=value),
+                )
+            )
+        if instance_uid:
+            desc.identifying_attributes.append(
+                anyvalue_pb2.KeyValue(
+                    key=KEY_SERVICE_INSTANCE_ID,
+                    value=anyvalue_pb2.AnyValue(string_value=instance_uid.hex()),
+                )
+            )
+        fluentbit_version = self.last_heartbeat_results.get(KEY_FLUENTBIT_VERSION)
+        if fluentbit_version:
+            desc.identifying_attributes.append(
+                anyvalue_pb2.KeyValue(
+                    key=KEY_SERVICE_VERSION,
+                    value=anyvalue_pb2.AnyValue(string_value=fluentbit_version),
+                )
+            )
+        return desc
+
+    def get_agent_capabilities(self) -> int:
+        """Return the configured agent capability bitmask."""
+        configured = CONFIG.agent_capabilities
+        if isinstance(configured, int):
+            return configured
+        if not configured:
+            logging.getLogger(__name__).warning(
+                "No capabilities configuration available"
+            )
+            return 0
+        mask = 0
+        for name in configured:
+            value = CAPABILITIES_MAP.get(str(name))
+            if value is None:
+                logging.getLogger(__name__).warning(
+                    "unknown agent capability: %s", name
+                )
+                continue
+            mask |= value
+        return mask
+
+    def get_host_metadata(self) -> dict[str, str]:
+        """Collect basic host metadata as key/value pairs."""
+        return {
+            "os_type": platform.system(),
+            "os_version": platform.version(),
+            "hostname": socket.gethostname(),
+        }
+
+    def handle_error_response(self, error_response: opamp_pb2.ServerErrorResponse) -> None:
+        """Log details from a ServerErrorResponse."""
+        logger = logging.getLogger(__name__)
+        logger.warning("server error_response type=%s", error_response.type)
+        if error_response.error_message:
+            logger.warning("server error_response message=%s", error_response.error_message)
+        if error_response.HasField("retry_info"):
+            logger.warning(
+                "server error_response retry_after_nanoseconds=%s",
+                error_response.retry_info.retry_after_nanoseconds,
+            )
+
+    def handle_remote_config(self, remote_config: opamp_pb2.AgentRemoteConfig) -> None:
+        logging.getLogger(__name__).info(
+            "server remote_config:\n%s", text_format.MessageToString(remote_config)
+        )
+
+    def handle_connection_settings(
+        self, connection_settings: opamp_pb2.ConnectionSettingsOffers
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "server connection_settings:\n%s",
+            text_format.MessageToString(connection_settings),
+        )
+
+    def handle_packages_available(
+        self, packages_available: opamp_pb2.PackagesAvailable
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "server packages_available:\n%s",
+            text_format.MessageToString(packages_available),
+        )
+
+    def handle_flags(self, flags: int) -> None:
+        logging.getLogger(__name__).info("server flags: %s", flags)
+
+    def handle_capabilities(self, capabilities: int) -> None:
+        logging.getLogger(__name__).info("server capabilities: %s", capabilities)
+
+    def handle_command(self, command: opamp_pb2.ServerToAgentCommand) -> None:
+        logging.getLogger(__name__).info(
+            "server command:\n%s", text_format.MessageToString(command)
+        )
+
+    def handle_agent_identification(
+        self, agent_identification: opamp_pb2.AgentIdentification
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "server agent_identification:\n%s",
+            text_format.MessageToString(agent_identification),
+        )
+
+    def handle_custom_capabilities(
+        self, custom_capabilities: opamp_pb2.CustomCapabilities
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "server custom_capabilities:\n%s",
+            text_format.MessageToString(custom_capabilities),
+        )
+
+    def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
+        logging.getLogger(__name__).info(
+            "server custom_message:\n%s", text_format.MessageToString(custom_message)
+        )
 
     def _heartbeat_loop(self, port: int) -> None:
         """Run a periodic polling loop that updates last heartbeat results."""
@@ -186,7 +412,7 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
         re.IGNORECASE,
     )
     config_kv = re.compile(
-        r"^\s*(?P<key>http_port|http_listen|http_server|http_server)\s*[:=]\s*(?P<value>\S.*)$",
+        r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
         re.IGNORECASE,
     )
     section_header = re.compile(r"^\s*\[.*\]\s*$")
@@ -194,32 +420,44 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
     with open(path, "r", encoding=UTF8_ENCODING) as handle:
         for raw_line in handle:
             line = raw_line.strip()
-            if not line or line.__sizeof__() > 0:
-                comment_match = comment_kv.match(raw_line)
-                if comment_match:
-                    key = comment_match.group("key").lower()
-                    value = comment_match.group("value")
-                    try:
-                        config[key] = value
-                        logger.info(f"located >{key}< with value >{value}<")
-                        continue
-                    except KeyError:
-                        logger.error(f"barfed with comment match {key} --> {value}")
-                        continue
+            if not line:
+                continue
+            comment_match = comment_kv.match(raw_line)
+            if comment_match:
+                key = comment_match.group("key").lower()
+                value = comment_match.group("value")
+                try:
+                    config[key] = value
+                    logger.info(f"located >{key}< with value >{value}<")
+                    continue
+                except KeyError:
+                    logger.error(f"barfed with comment match {key} --> {value}")
+                    continue
 
-                config_match = config_kv.match(raw_line)
-                if config_match:
-                    key = config_match.group("key").lower()
-                    value = config_match.group("value").strip()
-                    try:
+            config_match = config_kv.match(raw_line)
+            if config_match:
+                key = config_match.group("key").lower()
+                value = config_match.group("value").strip()
+                try:
+                    if key == KEY_HTTP_PORT:
+                        port_value = int(value)
+                        config.http_port = port_value
+                        config.fluentbit_http_port = port_value
+                    elif key == KEY_HTTP_LISTEN:
+                        config.http_listen = value
+                        config.fluentbit_http_listen = value
+                    elif key == KEY_HTTP_SERVER:
+                        config.http_server = value
+                        config.fluentbit_http_server = value
+                    else:
                         config[key] = value
-                        logger.info(f"located >{key}< with value >{value}<")
-                        continue
-                    except KeyError:
-                        logger.error(f"barfed with config match {key} --> {value}")
-                        continue
+                    logger.info(f"located >{key}< with value >{value}<")
+                    continue
+                except KeyError:
+                    logger.error(f"barfed with config match {key} --> {value}")
+                    continue
 
-                logger.debug(f"No matches for >>{line}<<")
+            logger.debug(f"No matches for >>{line}<<")
     return config
 
 
@@ -268,8 +506,15 @@ def main() -> None:
     if config.http_port is None:
         raise ValueError("http_port not found in Fluent Bit config")
 
+    if config.server_url is None and config.server_port is not None:
+        config.server_url = f"{LOCALHOST_BASE}:{config.server_port}"
+    if config.server_url is None:
+        raise ValueError("server_url is not configured")
+
     logger.debug(msg="setting up OpAMP")
     client = OpAMPClient(config.server_url)
+
+    client.launch_fluent_bit()
 
     # client.start_heartbeat_thread(config.http_port)
     client._heartbeat_loop(config.http_port)

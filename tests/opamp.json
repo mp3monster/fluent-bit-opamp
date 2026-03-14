@@ -1,0 +1,24 @@
+{
+  "consumer": {
+    "server_url": "http://localhost:8080",
+    "fluentbit_config_path": "./fluent-bit.conf",
+    "additional_fluent_bit_params": [],
+    "heartbeat_frequency": 30,
+    "log_level": "debug",
+    "service_name": "Fluentbit",
+    "service_namespace": "FluentBitNS",
+    "agent_capabilities": [
+      "ReportsStatus",
+      "ReportsHealth",
+      "ReportsHeartbeat"
+    ]
+  },
+  "provider": {
+    "server_capabilities": [
+      "AcceptsStatus"
+    ],
+    "delayed_comms_seconds": 60,
+    "significant_comms_seconds": 300,
+    "webui_port": 8080
+  }
+}

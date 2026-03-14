@@ -25,11 +25,14 @@ CFG_ADDITIONAL_FLUENTBIT_PARAMS = "additional_fluent_bit_params"
 CFG_HEARTBEAT_FREQUENCY = "heartbeat_frequency"
 CFG_AGENT_CAPABILITIES = "agent_capabilities"
 CFG_LOG_LEVEL = "log_level"
+CFG_SERVICE_NAME = "service_name"
+CFG_SERVICE_NAMESPACE = "service_namespace"
 
 
 @dataclass
 class ConsumerConfig:
     server_url: str | None = None
+    server_port: int | None = None
     fluentbit_config_path: str | None = None
     additional_fluent_bit_params: list[str] | None = None
     heartbeat_frequency: int | None = None
@@ -41,6 +44,11 @@ class ConsumerConfig:
     fluentbit_config_text: str | None = None
     agent_description: str | None = None
     instance_uid: str | None = None
+    service_name: str | None = None
+    service_namespace: str | None = None
+    fluentbit_http_port: int | None = None
+    fluentbit_http_listen: str | None = None
+    fluentbit_http_server: str | None = None
 
     def __setitem__(self, key, value):
         return setattr(self, key, value)
@@ -98,6 +106,9 @@ def load_config() -> ConsumerConfig:
     raw = _load_json(_config_path())
     consumer_raw = raw.get(CFG_CONSUMER, {})
     server_url = consumer_raw.get(CFG_SERVER_URL)
+    server_port = consumer_raw.get(CFG_SERVER_PORT)
+    service_name = consumer_raw.get(CFG_SERVICE_NAME)
+    service_namespace = consumer_raw.get(CFG_SERVICE_NAMESPACE)
     mask: None
 
     if not server_url:
@@ -132,6 +143,9 @@ def load_config() -> ConsumerConfig:
     log_level = consumer_raw.get(CFG_LOG_LEVEL, "debug") or "debug"
 
     logger.info("loaded consumer server_url: %s", server_url)
+    logger.info("loaded consumer server_port: %s", server_port)
+    logger.info("loaded consumer service_name: %s", service_name)
+    logger.info("loaded consumer service_namespace: %s", service_namespace)
     logger.info("loaded consumer fluentbit_config_path: %s", fluentbit_config_path)
     logger.info("loaded consumer additional_fluent_bit_params: %s", additional_params)
     logger.info("loaded consumer heartbeat_frequency: %s", heartbeat_frequency)
@@ -139,10 +153,13 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer log_level: %s", log_level)
     return ConsumerConfig(
         server_url=server_url,
+        server_port=server_port,
         fluentbit_config_path=fluentbit_config_path,
         additional_fluent_bit_params=additional_params,
         heartbeat_frequency=heartbeat_frequency,
         agent_capabilities=mask,
+        service_name=service_name,
+        service_namespace=service_namespace,
     )
 
 

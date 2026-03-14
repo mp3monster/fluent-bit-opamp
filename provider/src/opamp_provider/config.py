@@ -19,11 +19,21 @@ from shared.opamp_config import ServerCapabilities, UTF8_ENCODING, parse_capabil
 ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"
 CFG_PROVIDER = "provider"
 CFG_SERVER_CAPABILITIES = "server_capabilities"
+CFG_DELAYED_COMMS_SECONDS = "delayed_comms_seconds"
+CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"
+CFG_WEBUI_PORT = "webui_port"
+
+DEFAULT_DELAYED_COMMS_SECONDS = 60
+DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
+DEFAULT_WEBUI_PORT = 8080
 
 
 @dataclass(frozen=True)
 class ProviderConfig:
     server_capabilities: int
+    delayed_comms_seconds: int
+    significant_comms_seconds: int
+    webui_port: int
 
 
 def _repo_root() -> pathlib.Path:
@@ -56,7 +66,16 @@ def load_config() -> ProviderConfig:
         raise ValueError(f"{CFG_PROVIDER}.{CFG_SERVER_CAPABILITIES} must be a non-empty list")
     mask = parse_capabilities(capability_names, ServerCapabilities)
     logger.info("loaded provider capabilities: %s", capability_names)
-    return ProviderConfig(server_capabilities=mask)
+    delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
+    significant = int(
+        provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
+    )
+    return ProviderConfig(
+        server_capabilities=mask,
+        delayed_comms_seconds=delayed,
+        significant_comms_seconds=significant,
+        webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
+    )
 
 
 def load_config_with_overrides(
@@ -80,12 +99,32 @@ def load_config_with_overrides(
     if not capability_names:
         raise ValueError(f"{CFG_PROVIDER}.{CFG_SERVER_CAPABILITIES} must be a non-empty list")
     mask = parse_capabilities(capability_names, ServerCapabilities)
-    return ProviderConfig(server_capabilities=mask)
+    delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
+    significant = int(
+        provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
+    )
+    return ProviderConfig(
+        server_capabilities=mask,
+        delayed_comms_seconds=delayed,
+        significant_comms_seconds=significant,
+        webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
+    )
 
 
 def set_config(config: ProviderConfig) -> None:
     global CONFIG
     CONFIG = config
+
+
+def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig:
+    config = ProviderConfig(
+        server_capabilities=CONFIG.server_capabilities,
+        delayed_comms_seconds=delayed,
+        significant_comms_seconds=significant,
+        webui_port=CONFIG.webui_port,
+    )
+    set_config(config)
+    return config
 
 
 CONFIG = load_config()

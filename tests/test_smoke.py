@@ -10,13 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pathlib
-import sys
+from opamp.cli import main
 
 
-def pytest_configure() -> None:
-    root = pathlib.Path(__file__).resolve().parents[2]
-    src = root / "provider" / "src"
-    for path in (root, src):
-        if str(path) not in sys.path:
-            sys.path.insert(0, str(path))
+def test_main_runs(capsys) -> None:
+    main()
+    captured = capsys.readouterr()
+    assert "ready" in captured.out
