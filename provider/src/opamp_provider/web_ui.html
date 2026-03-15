@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpAMP Provider Console</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #1b1f24;
+      --muted: #4c5563;
+      --accent: #425cc7;
+      --accent-2: #f5a800;
+      --border: #d7deee;
+      --shadow: 0 24px 60px rgba(36, 58, 120, 0.15);
+      --amber: #f5a800;
+      --red: #e4574e;
+      --ok: #2e7d64;
+      --pending: #425cc7;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top left, #e7eeff 0%, #f5f7fb 55%, #fff4d8 100%);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 28px 36px 16px;
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2.2rem;
+      letter-spacing: -0.02em;
+    }
+
+    .meta-bar {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .pill {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      border-radius: 12px;
+      box-shadow: 0 10px 20px rgba(44, 31, 21, 0.06);
+      font-size: 0.95rem;
+    }
+
+    .pill strong { color: var(--accent); }
+
+    main {
+      padding: 0 36px 48px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .controls label {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    input, select, textarea {
+      font-family: "IBM Plex Mono", monospace;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    th, td {
+      text-align: left;
+      padding: 14px 18px;
+      border-bottom: 1px solid #eee3d8;
+      font-size: 0.95rem;
+    }
+
+    th {
+      background: #eef2ff;
+      cursor: pointer;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:hover {
+      background: #f2f5ff;
+    }
+
+    .status-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ok);
+    }
+
+    .late-amber .dot { background: var(--amber); }
+    .late-red .dot { background: var(--red); }
+
+    .pending-border {
+      border-left: 6px solid var(--pending);
+    }
+
+    .row-amber { background: rgba(243, 178, 75, 0.12); }
+    .row-red { background: rgba(239, 107, 91, 0.18); }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .pagination button {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    .pagination span {
+      color: var(--muted);
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(23, 19, 17, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 50;
+    }
+
+    .modal.open { display: flex; }
+
+    .modal-card {
+      background: var(--panel);
+      border: 3px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      width: min(820px, 95vw);
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-card.late-amber { border-color: var(--amber); }
+    .modal-card.late-red { border-color: var(--red); }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .modal-header h2 { margin: 0; }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .field {
+      background: #f7f9ff;
+      border: 1px solid #e1e7f5;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 0.9rem;
+    }
+
+    .field label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .modal-actions {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .modal-actions button {
+      border: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .save {
+      background: var(--accent-2);
+      color: #fff;
+    }
+
+    .cancel {
+      background: #e8ded4;
+      color: #4a3c30;
+    }
+
+    .fade-in {
+      animation: fadeIn 0.5s ease both;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .footer {
+      padding: 20px 36px 32px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <div>
+        <h1>OpAMP Provider Console</h1>
+        <div style="color: var(--muted); font-size: 0.95rem;">Client fleet, command queueing, and staged config control.</div>
+      </div>
+      <button id="helpBtn" class="pill" style="cursor: pointer;">Open Help</button>
+    </div>
+    <div class="meta-bar">
+      <div class="pill">Last Updated: <strong id="lastUpdated">--</strong></div>
+      <div class="pill">Agents: <strong id="agentCount">0</strong></div>
+      <div class="pill">Late (Amber): <strong id="amberCount">0</strong></div>
+      <div class="pill">Late (Red): <strong id="redCount">0</strong></div>
+    </div>
+  </header>
+  <main>
+    <div class="controls">
+      <label>Refresh (s)
+        <input id="refreshInput" type="number" min="5" value="30" />
+      </label>
+      <label>Page size
+        <input id="pageSizeInput" type="number" min="5" value="20" />
+      </label>
+      <span style="color: var(--muted);">Click headers to sort.</span>
+    </div>
+    <table class="table fade-in">
+      <thead>
+        <tr>
+          <th data-sort="client_id">Client ID</th>
+          <th data-sort="status">Status</th>
+          <th data-sort="last_communication">Last Seen</th>
+          <th data-sort="current_config_version">Config Version</th>
+          <th data-sort="client_version">Client Version</th>
+          <th>Pending</th>
+        </tr>
+      </thead>
+      <tbody id="clientBody"></tbody>
+    </table>
+    <div class="pagination">
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <span>Page <span id="pageNum">1</span> of <span id="pageTotal">1</span></span>
+      <label>Jump to
+        <input id="pageJump" type="number" min="1" value="1" style="width: 70px;" />
+      </label>
+    </div>
+  </main>
+  <footer class="footer">
+    <div>Licensed under Apache 2.0 • Attribution: mp3monster.org</div>
+  </footer>
+
+  <div id="modal" class="modal">
+    <div id="modalCard" class="modal-card">
+      <div class="modal-header">
+        <h2 id="modalTitle">Client</h2>
+        <button id="closeModal" class="cancel">Close</button>
+      </div>
+      <div class="modal-grid" id="modalFields"></div>
+      <div style="margin-top: 16px;">
+        <label style="font-size: 0.85rem; color: var(--muted);">Requested Configuration</label>
+        <textarea id="configInput" placeholder="Paste new configuration here..."></textarea>
+      </div>
+      <div style="margin-top: 16px;">
+        <label style="font-size: 0.85rem; color: var(--muted);">Command</label>
+        <input id="commandInput" type="text" placeholder="restart" style="width: 100%;" />
+      </div>
+      <div class="modal-actions">
+        <button id="saveBtn" class="save">Save</button>
+        <button id="cancelBtn" class="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      clients: [],
+      sortKey: "client_id",
+      sortDir: "asc",
+      page: 1,
+      pageSize: 20,
+      refreshSeconds: 30,
+      delayed: 60,
+      significant: 300,
+      timer: null,
+    };
+
+    const clientBody = document.getElementById("clientBody");
+    const lastUpdated = document.getElementById("lastUpdated");
+    const agentCount = document.getElementById("agentCount");
+    const amberCount = document.getElementById("amberCount");
+    const redCount = document.getElementById("redCount");
+    const pageNum = document.getElementById("pageNum");
+    const pageTotal = document.getElementById("pageTotal");
+    const pageJump = document.getElementById("pageJump");
+    const refreshInput = document.getElementById("refreshInput");
+    const pageSizeInput = document.getElementById("pageSizeInput");
+    const modal = document.getElementById("modal");
+    const modalCard = document.getElementById("modalCard");
+    const modalFields = document.getElementById("modalFields");
+    const modalTitle = document.getElementById("modalTitle");
+    const configInput = document.getElementById("configInput");
+    const commandInput = document.getElementById("commandInput");
+
+    let activeClient = null;
+
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        if (state.sortKey === key) {
+          state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.sortKey = key;
+          state.sortDir = "asc";
+        }
+        renderTable();
+      });
+    });
+
+    document.getElementById("prevBtn").addEventListener("click", () => {
+      state.page = Math.max(1, state.page - 1);
+      renderTable();
+    });
+    document.getElementById("nextBtn").addEventListener("click", () => {
+      state.page = Math.min(totalPages(), state.page + 1);
+      renderTable();
+    });
+    pageJump.addEventListener("change", () => {
+      const val = parseInt(pageJump.value, 10);
+      if (!Number.isNaN(val)) {
+        state.page = Math.min(Math.max(1, val), totalPages());
+        renderTable();
+      }
+    });
+
+    refreshInput.addEventListener("change", () => {
+      const val = parseInt(refreshInput.value, 10);
+      if (!Number.isNaN(val) && val >= 5) {
+        state.refreshSeconds = val;
+        scheduleRefresh();
+      }
+    });
+
+    pageSizeInput.addEventListener("change", () => {
+      const val = parseInt(pageSizeInput.value, 10);
+      if (!Number.isNaN(val) && val >= 5) {
+        state.pageSize = val;
+        state.page = 1;
+        renderTable();
+      }
+    });
+
+    document.getElementById("helpBtn").addEventListener("click", () => {
+      window.open("/help", "_blank");
+    });
+
+    document.getElementById("closeModal").addEventListener("click", closeModal);
+    document.getElementById("cancelBtn").addEventListener("click", closeModal);
+    document.getElementById("saveBtn").addEventListener("click", saveChanges);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeModal();
+      }
+    });
+
+    async function fetchSettings() {
+      const resp = await fetch("/api/settings/comms");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.delayed = data.delayed_comms_seconds ?? 60;
+      state.significant = data.significant_comms_seconds ?? 300;
+    }
+
+    async function fetchClients() {
+      const resp = await fetch("/api/clients");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.clients = data.clients || [];
+      lastUpdated.textContent = new Date().toLocaleTimeString();
+      agentCount.textContent = state.clients.length;
+      renderTable();
+    }
+
+    function totalPages() {
+      return Math.max(1, Math.ceil(state.clients.length / state.pageSize));
+    }
+
+    function computeStatus(client) {
+      if (!client.last_communication) {
+        return { label: "unknown", cls: "" };
+      }
+      const last = new Date(client.last_communication);
+      const delta = (Date.now() - last.getTime()) / 1000;
+      if (delta > state.significant) {
+        return { label: "late", cls: "late-red" };
+      }
+      if (delta > state.delayed) {
+        return { label: "delayed", cls: "late-amber" };
+      }
+      return { label: "ok", cls: "" };
+    }
+
+    function hasPending(client) {
+      const hasConfig = Boolean(client.requested_config);
+      const hasCommand = Array.isArray(client.commands) && client.commands.some(cmd => !cmd.sent_at);
+      return hasConfig || hasCommand;
+    }
+
+    function renderTable() {
+      const sorted = [...state.clients].sort((a, b) => {
+        const dir = state.sortDir === "asc" ? 1 : -1;
+        const av = a[state.sortKey] ?? "";
+        const bv = b[state.sortKey] ?? "";
+        return av > bv ? dir : av < bv ? -dir : 0;
+      });
+
+      const total = totalPages();
+      const pagination = document.querySelector(".pagination");
+      if (pagination) {
+        pagination.style.display = total > 1 ? "flex" : "none";
+      }
+      if (state.page > total) state.page = total;
+      const start = (state.page - 1) * state.pageSize;
+      const pageItems = sorted.slice(start, start + state.pageSize);
+
+      let amber = 0;
+      let red = 0;
+      clientBody.innerHTML = "";
+      pageItems.forEach(client => {
+        const status = computeStatus(client);
+        if (status.cls === "late-amber") amber += 1;
+        if (status.cls === "late-red") red += 1;
+
+        const tr = document.createElement("tr");
+        if (status.cls === "late-amber") tr.classList.add("row-amber");
+        if (status.cls === "late-red") tr.classList.add("row-red");
+        if (hasPending(client)) tr.classList.add("pending-border");
+        tr.addEventListener("click", () => openModal(client));
+
+        tr.innerHTML = `
+          <td>${client.client_id}</td>
+          <td><span class="status-dot ${status.cls}"><span class="dot"></span>${status.label}</span></td>
+          <td>${client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"}</td>
+          <td>${client.current_config_version ?? "--"}</td>
+          <td>${client.client_version ?? "--"}</td>
+          <td>${hasPending(client) ? "yes" : "no"}</td>
+        `;
+        clientBody.appendChild(tr);
+      });
+
+      amberCount.textContent = amber;
+      redCount.textContent = red;
+      pageNum.textContent = state.page;
+      pageTotal.textContent = total;
+      pageJump.value = state.page;
+    }
+
+    function openModal(client) {
+      activeClient = client;
+      modalTitle.textContent = `Client ${client.client_id}`;
+      const status = computeStatus(client);
+      modalCard.classList.remove("late-amber", "late-red");
+      if (status.cls === "late-amber") modalCard.classList.add("late-amber");
+      if (status.cls === "late-red") modalCard.classList.add("late-red");
+
+      modalFields.innerHTML = "";
+      const fields = [
+        ["Capabilities", (client.capabilities || []).join(", ") || "--"],
+        ["Node Age (s)", client.node_age_seconds?.toFixed?.(1) ?? "--"],
+        ["Last Communication", client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"],
+        ["Current Config", client.current_config_version ?? "--"],
+        ["Requested Config", client.requested_config_version ?? "--"],
+        ["Client Version", client.client_version ?? "--"],
+        ["Next Expected", client.next_expected_communication ? new Date(client.next_expected_communication).toLocaleString() : "--"],
+      ];
+      fields.forEach(([label, value]) => {
+        const div = document.createElement("div");
+        div.className = "field";
+        div.innerHTML = `<label>${label}</label><div>${value}</div>`;
+        modalFields.appendChild(div);
+      });
+
+      configInput.value = client.requested_config || "";
+      commandInput.value = "";
+      modal.classList.add("open");
+    }
+
+    function closeModal() {
+      modal.classList.remove("open");
+      activeClient = null;
+      configInput.value = "";
+      commandInput.value = "";
+    }
+
+    async function saveChanges() {
+      if (!activeClient) return;
+      const configValue = configInput.value.trim();
+      const commandValue = commandInput.value.trim();
+      if (!configValue && !commandValue) {
+        closeModal();
+        return;
+      }
+      if (configValue) {
+        await fetch(`/api/clients/${activeClient.client_id}/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config: configValue }),
+        });
+      }
+      if (commandValue) {
+        await fetch(`/api/clients/${activeClient.client_id}/commands`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: commandValue }),
+        });
+      }
+      closeModal();
+      await fetchClients();
+    }
+
+    function scheduleRefresh() {
+      if (state.timer) clearInterval(state.timer);
+      state.timer = setInterval(fetchClients, state.refreshSeconds * 1000);
+    }
+
+    async function init() {
+      await fetchSettings();
+      await fetchClients();
+      scheduleRefresh();
+    }
+
+    init();
+  </script>
+</body>
+</html>

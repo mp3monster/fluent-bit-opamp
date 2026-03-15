@@ -14,9 +14,15 @@ Example `opamp.json`:
 {
   "consumer": {
     "server_url": "http://localhost:4320",
+    "server_port": 4320,
+    "transport": "http",
+    "log_fluentbit_api_responses": false,
     "fluentbit_config_path": "./fluent-bit.conf",
     "additional_fluent_bit_params": ["-R"],
     "heartbeat_frequency": 30,
+    "log_level": "debug",
+    "service_name": "Fluentbit",
+    "service_namespace": "FluentBitNS",
     "agent_capabilities": [
       "ReportsStatus",
       "ReportsHealth",
@@ -30,12 +36,24 @@ Example `opamp.json`:
 
 - `consumer.server_url` (string, required)
   OpAMP server base URL.
+- `consumer.server_port` (integer, optional)
+  Optional server port override used when building default URLs.
+- `consumer.transport` (string, optional, default `http`)
+  Transport to use when sending OpAMP messages. Supported values: `http`, `websocket`.
+- `consumer.log_fluentbit_api_responses` (boolean, optional, default `false`)
+  When true, heartbeat polling logs full Fluent Bit API responses; when false, it logs response codes only.
 - `consumer.fluentbit_config_path` (string, required)
   Path to the Fluent Bit configuration file.
 - `consumer.additional_fluent_bit_params` (array of strings, required)
   Extra command-line arguments passed to `fluentbit`.
 - `consumer.heartbeat_frequency` (integer, optional, default `30`)
   Heartbeat interval in seconds.
+- `consumer.log_level` (string, optional, default `debug`)
+  Log level for the consumer (`debug`, `info`, `warning`, `error`, `critical`).
+- `consumer.service_name` (string, optional)
+  Service name reported in the agent description.
+- `consumer.service_namespace` (string, optional)
+  Service namespace reported in the agent description.
 - `consumer.agent_capabilities` (array of strings, required)
   Capabilities list. Names must match `AgentCapabilities` enum values in `shared/opamp_config.py`.
 

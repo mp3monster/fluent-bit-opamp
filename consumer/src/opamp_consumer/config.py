@@ -27,6 +27,8 @@ CFG_AGENT_CAPABILITIES = "agent_capabilities"
 CFG_LOG_LEVEL = "log_level"
 CFG_SERVICE_NAME = "service_name"
 CFG_SERVICE_NAMESPACE = "service_namespace"
+CFG_TRANSPORT = "transport"
+CFG_LOG_FLUENTBIT_API_RESPONSES = "log_fluentbit_api_responses"
 
 
 @dataclass
@@ -46,6 +48,8 @@ class ConsumerConfig:
     instance_uid: str | None = None
     service_name: str | None = None
     service_namespace: str | None = None
+    transport: str | None = None
+    log_fluentbit_api_responses: bool | None = None
     fluentbit_http_port: int | None = None
     fluentbit_http_listen: str | None = None
     fluentbit_http_server: str | None = None
@@ -109,6 +113,10 @@ def load_config() -> ConsumerConfig:
     server_port = consumer_raw.get(CFG_SERVER_PORT)
     service_name = consumer_raw.get(CFG_SERVICE_NAME)
     service_namespace = consumer_raw.get(CFG_SERVICE_NAMESPACE)
+    transport = consumer_raw.get(CFG_TRANSPORT, "http")
+    log_fluentbit_api_responses = consumer_raw.get(
+        CFG_LOG_FLUENTBIT_API_RESPONSES, False
+    )
     mask: None
 
     if not server_url:
@@ -127,6 +135,8 @@ def load_config() -> ConsumerConfig:
         )
 
     heartbeat_frequency = consumer_raw.get(CFG_HEARTBEAT_FREQUENCY, 30)
+    if heartbeat_frequency is None:
+        heartbeat_frequency = 30
     if heartbeat_frequency == 0:
         raise ValueError(
             f"{CFG_CONSUMER}.{CFG_HEARTBEAT_FREQUENCY} must be a non-negative integer"
@@ -146,6 +156,11 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer server_port: %s", server_port)
     logger.info("loaded consumer service_name: %s", service_name)
     logger.info("loaded consumer service_namespace: %s", service_namespace)
+    logger.info("loaded consumer transport: %s", transport)
+    logger.info(
+        "loaded consumer log_fluentbit_api_responses: %s",
+        log_fluentbit_api_responses,
+    )
     logger.info("loaded consumer fluentbit_config_path: %s", fluentbit_config_path)
     logger.info("loaded consumer additional_fluent_bit_params: %s", additional_params)
     logger.info("loaded consumer heartbeat_frequency: %s", heartbeat_frequency)
@@ -160,6 +175,8 @@ def load_config() -> ConsumerConfig:
         agent_capabilities=mask,
         service_name=service_name,
         service_namespace=service_namespace,
+        transport=transport,
+        log_fluentbit_api_responses=bool(log_fluentbit_api_responses),
     )
 
 
@@ -177,7 +194,6 @@ def apply_override(
         )
         config[key] = overrideValue
 
-    logging.getLogger(__name__).info("{key} set to {config[key]}")
     return config
 
 
@@ -195,18 +211,9 @@ def load_config_with_overrides(
     config: ConsumerConfig = ConsumerConfig(
         server_url,
     )
-    logger.error(msg="10")
     base_raw = _load_json(config_path or _config_path())
-    logger.error(msg="20")
     consumer_raw = base_raw.get(CFG_CONSUMER, {})
 
-    # if server_url is not None:
-    #    logger.info(
-    #        "cli override %s.%s; ignoring config value",
-    #        CFG_CONSUMER,
-    #        CFG_SERVER_URL,
-    #    )
-    #    consumer_raw[CFG_SERVER_URL] = server_url
     config = apply_override(
         CFG_SERVER_URL,
         CFG_CONSUMER,
@@ -215,13 +222,6 @@ def load_config_with_overrides(
         config,
     )
 
-    # if server_port is not None:
-    #    logger.info(
-    #        "cli override %s.%s; ignoring config value",
-    #        CFG_CONSUMER,
-    #        CFG_SERVER_PORT,
-    #    )
-    #    consumer_raw[CFG_SERVER_PORT] = server_port
     config = apply_override(
         CFG_SERVER_PORT,
         CFG_CONSUMER,
@@ -229,14 +229,21 @@ def load_config_with_overrides(
         consumer_raw.get(CFG_SERVER_PORT),
         config,
     )
+    config = apply_override(
+        CFG_TRANSPORT,
+        CFG_CONSUMER,
+        None,
+        consumer_raw.get(CFG_TRANSPORT, "http"),
+        config,
+    )
+    config = apply_override(
+        CFG_LOG_FLUENTBIT_API_RESPONSES,
+        CFG_CONSUMER,
+        None,
+        consumer_raw.get(CFG_LOG_FLUENTBIT_API_RESPONSES, False),
+        config,
+    )
 
-    # if fluentbit_config_path is not None:
-    #    logger.info(
-    #        "cli override %s.%s; ignoring config value",
-    #        CFG_CONSUMER,
-    #        CFG_FLUENTBIT_CONFIG_PATH,
-    #    )
-    #    consumer_raw[CFG_FLUENTBIT_CONFIG_PATH] = fluentbit_config_path
     config = apply_override(
         CFG_FLUENTBIT_CONFIG_PATH,
         CFG_CONSUMER,
@@ -259,20 +266,6 @@ def load_config_with_overrides(
             CFG_HEARTBEAT_FREQUENCY,
         )
         consumer_raw[CFG_HEARTBEAT_FREQUENCY] = heartbeat_frequency
-    # if agent_capabilities is not None:
-    #    logger.info(
-    #        "cli override %s.%s; ignoring config value",
-    #        CFG_CONSUMER,
-    #        CFG_AGENT_CAPABILITIES,
-    #    )
-    #    consumer_raw[CFG_AGENT_CAPABILITIES] = agent_capabilities
-    # if log_level is not None:
-    #    logger.info(
-    #        "cli override %s.%s; ignoring config value",
-    #        CFG_CONSUMER,
-    #        CFG_LOG_LEVEL,
-    #    )
-    #    consumer_raw[CFG_LOG_LEVEL] = log_level
 
     temp_raw = {CFG_CONSUMER: consumer_raw}
     raw = temp_raw
@@ -304,16 +297,18 @@ def load_config_with_overrides(
             f"{CFG_CONSUMER}.{CFG_ADDITIONAL_FLUENTBIT_PARAMS} must be a list"
         )
     heartbeat_frequency = raw.get(CFG_CONSUMER, {}).get(CFG_HEARTBEAT_FREQUENCY, 30)
+    if heartbeat_frequency is None:
+        heartbeat_frequency = 30
     if not isinstance(heartbeat_frequency, int) or heartbeat_frequency < 0:
         raise ValueError(
             f"{CFG_CONSUMER}.{CFG_HEARTBEAT_FREQUENCY} must be a non-negative integer"
         )
-    # capability_names = raw.get(CFG_CONSUMER, {}).get(CFG_AGENT_CAPABILITIES)
-    # if not capability_names:
-    #    raise ValueError(
-    #        f"{CFG_CONSUMER}.{CFG_AGENT_CAPABILITIES} must be a non-empty list"
-    #    )
-    # mask: int = parse_capabilities(capability_names, AgentCapabilities)
+    config.heartbeat_frequency = heartbeat_frequency
+    log_fluentbit_api_responses = raw.get(CFG_CONSUMER, {}).get(
+        CFG_LOG_FLUENTBIT_API_RESPONSES, False
+    )
+    config.log_fluentbit_api_responses = bool(log_fluentbit_api_responses)
+
     log_level = raw.get(CFG_CONSUMER, {}).get(CFG_LOG_LEVEL, "debug") or "debug"
     return config
 

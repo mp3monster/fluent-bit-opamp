@@ -10,27 +10,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["hatchling>=1.25"]
-build-backend = "hatchling.build"
+env:
+  flush_interval: 2
+  #instance_uid : 1234
 
-[project]
-name = "opamp-consumer"
-version = "0.1.0"
-description = "OpAMP consumer (client) skeleton using Quart transport semantics"
-readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
-authors = [{ name = "Your Name", email = "you@example.com" }]
-dependencies = [
-  "protobuf>=5.27",
-  "grpcio-tools>=1.60",
-  "httpx>=0.27",
-  "websockets>=12.0",
-]
+service:
+  flush: ${flush_interval}
+  log_level: error
+  http_server: on
+  http_port: 2020
 
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.0",
-  "pytest-asyncio>=0.23",
-]
+pipeline:
+  inputs:
+    - name: dummy
+      dummy: '{ "hello": "my world" }'
+      tag: dummy1
+
+  outputs:
+    - name: file
+      match: "*"
+      file: test.txt
+      format: out_file

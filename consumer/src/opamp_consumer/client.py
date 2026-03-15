@@ -16,22 +16,23 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import pathlib
+import platform
+import re
+import socket
 import subprocess
 import threading
 import time
-import platform
-import socket
-from typing import Optional
+import tracemalloc
+import asyncio
 
 import httpx
 import websockets
 from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
-from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, CONFIG
-from opamp_consumer.proto import opamp_pb2, anyvalue_pb2
+from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
+from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
@@ -40,6 +41,8 @@ from shared.opamp_config import (
 )
 
 HTTP_TIMEOUT_SECONDS = 5.0  # Timeout for local HTTP calls.
+TRANSPORT_HTTP = "http"
+TRANSPORT_WEBSOCKET = "websocket"
 HEARTBEAT_SKEW_SECONDS = 1  # Sleep interval is heartbeat_frequency minus this value.
 LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
 CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf payloads.
@@ -93,20 +96,16 @@ _HEARTBEAT_PATHS = (  # Local endpoints polled per heartbeat.
 class OpAMPClient:
     """Minimal OpAMP client supporting HTTP and WebSocket transports."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, config: ConsumerConfig) -> None:
         """Create a client bound to a base URL."""
         self.base_url = base_url.rstrip("/")
         self.last_heartbeat_results: dict[str, str] = {}
+        self.config = config
 
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response."""
-        # TODO(opamp): Populate AgentToServer with per-operation fields before sending:
-        # - agent_description, capabilities
-        # - health, effective_config, remote_config_status
-        # - package_statuses
-        # - connection_settings_request / connection_settings_status
-        # - custom_capabilities / custom_message / available_components
         url = f"{self.base_url}{OPAMP_HTTP_PATH}"
+        logging.getLogger(__name__).debug(f"Calling REST endpoint at {url}")
         payload = msg.SerializeToString()
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -117,36 +116,65 @@ class OpAMPClient:
             resp.raise_for_status()
             reply = opamp_pb2.ServerToAgent()
             reply.ParseFromString(resp.content)
-            # TODO(opamp): Handle per-operation ServerToAgent fields:
-            # - error_response
-            # - remote_config, connection_settings, packages_available
-            # - capabilities, agent_identification, command
-            # - custom_capabilities / custom_message
+            self._handle_server_to_agent(reply)
             return reply
 
-    async def send_ws(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
-        """Send an AgentToServer message via WebSocket and return the response."""
-        # TODO(opamp): Populate AgentToServer with per-operation fields before sending:
-        # - health, effective_config, remote_config_status
-        # - package_statuses
-        # - connection_settings_request / connection_settings_status
-        # - custom_capabilities / custom_message / available_components
-        if not msg.HasField("agent_description"):
-            msg.agent_description.CopyFrom(
-                self.get_agent_description(msg.instance_uid or None)
-            )
+    def _populate_agent_to_server(
+        self, msg: opamp_pb2.AgentToServer
+    ) -> opamp_pb2.AgentToServer:
+        msg.agent_description.CopyFrom(self.get_agent_description())
         msg.capabilities = self.get_agent_capabilities()
-        url = f"{self.base_url}{OPAMP_HTTP_PATH}"
-        async with websockets.connect(url) as ws:
-            await ws.send(encode_message(msg.SerializeToString()))
-            data = await ws.recv()
-        if isinstance(data, str):
-            data = data.encode(UTF8_ENCODING)
-        header, payload = decode_message(data)
-        if header != OPAMP_HEADER_NONE:
-            raise ValueError(ERR_UNSUPPORTED_HEADER)
-        reply = opamp_pb2.ServerToAgent()
-        reply.ParseFromString(payload)
+        instance_uid = self.config.instance_uid
+        if isinstance(instance_uid, str):
+            cleaned = instance_uid.strip()
+            if re.fullmatch(r"[0-9a-fA-F]+", cleaned):
+                msg.instance_uid = bytes.fromhex(cleaned)
+            else:
+                msg.instance_uid = cleaned.encode(UTF8_ENCODING)
+        elif instance_uid is not None:
+            msg.instance_uid = instance_uid
+        if self.last_heartbeat_results:
+            healthy = True
+            last_error = ""
+            for value in self.last_heartbeat_results.values():
+                text = str(value)
+                if text.startswith(ERR_PREFIX):
+                    healthy = False
+                    last_error = text
+                    break
+            msg.health.healthy = healthy
+            msg.health.status = "heartbeat"
+            msg.health.status_time_unix_nano = time.time_ns()
+            if not healthy and last_error:
+                msg.health.last_error = last_error
+        return msg
+
+    def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
+        logger = logging.getLogger(__name__)
+        successful_message = True
+
+        if reply is None:
+            logger.error("Been given None response")
+            return False
+
+        try:
+            if reply.HasField("instance_uid"):
+                if reply.instance_uid != self.config.instance_uid:
+                    logger.error(
+                        "Message doesn't have an instance uid or doesn't match our instance %s",
+                        self.config.instance_uid,
+                    )
+                    successful_message = False
+            else:
+                logging.getLogger(__name__).error(
+                    "Server didnt share instance_uid, my instance uid is %s",
+                    self.config.instance_uid,
+                )
+                successful_message = False
+        except ValueError:
+            logger.error("Could locate instance_uid in reply")
+            successful_message = False
+
         if reply.HasField("error_response"):
             self.handle_error_response(reply.error_response)
         if reply.HasField("remote_config"):
@@ -167,21 +195,53 @@ class OpAMPClient:
             self.handle_custom_capabilities(reply.custom_capabilities)
         if reply.HasField("custom_message"):
             self.handle_custom_message(reply.custom_message)
+        return successful_message
 
+    async def send(
+        self, msg: opamp_pb2.AgentToServer | None = None
+    ) -> opamp_pb2.ServerToAgent:
+        """Send an AgentToServer message using the configured transport."""
+        if msg is None:
+            msg = opamp_pb2.AgentToServer()
+            msg = self._populate_agent_to_server(msg)
+        transport = (self.config.transport or TRANSPORT_HTTP).strip().lower()
+        if transport == TRANSPORT_WEBSOCKET:
+            return await self.send_websocket(msg)
+        return await self.send_http(msg)
+
+    async def send_websocket(
+        self, msg: opamp_pb2.AgentToServer
+    ) -> opamp_pb2.ServerToAgent:
+        """Send an AgentToServer message via WebSocket and return the response."""
+        url = f"{self.base_url}{OPAMP_HTTP_PATH}"
+        logging.getLogger(__name__).debug(f"Calling web socket at {url}")
+
+        async with websockets.connect(url) as ws:
+            await ws.send(encode_message(msg.SerializeToString()))
+            data = await ws.recv()
+        if isinstance(data, str):
+            data = data.encode(UTF8_ENCODING)
+        header, payload = decode_message(data)
+        if header != OPAMP_HEADER_NONE:
+            raise ValueError(ERR_UNSUPPORTED_HEADER)
+        reply = opamp_pb2.ServerToAgent()
+        reply.ParseFromString(payload)
+
+        self._handle_server_to_agent(reply)
         return reply
 
-    def launch_fluent_bit(self) -> Boolean:
+    def launch_fluent_bit(self) -> bool:
         """Launch the Fluent Bit process using configured params."""
         launched = True
         logger = logging.getLogger(__name__)
         cmd = [
             FLUENTBIT_CMD,
-            *CONFIG.additional_fluent_bit_params,
+            *(self.config.additional_fluent_bit_params or []),
             FLUENTBIT_CONFIG_FLAG,
-            CONFIG.fluentbit_config_path,
+            self.config.fluentbit_config_path,
         ]
         logger.debug(
-            f"About to start Fluent Bit with {CONFIG.fluentbit_config_path} and cmd {cmd}"
+            f"About to start Fluent Bit with {self.config.fluentbit_config_path} and cmd {cmd}"
         )
 
         processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
@@ -192,18 +252,24 @@ class OpAMPClient:
         """Return the last URL path component as the dictionary key."""
         return path.rstrip("/").split("/")[-1]
 
-    def poll_local_status(self, port: int) -> dict[str, str]:
-        """Poll local health endpoints and return a map of key to response text."""
+    def poll_local_status_with_codes(
+        self, port: int
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Poll local health endpoints and return maps of response text and status code."""
         results: dict[str, str] = {}
+        codes: dict[str, str] = {}
         for path in _HEARTBEAT_PATHS:
             url = f"{LOCALHOST_BASE}:{port}{path}"
+            key = self._heartbeat_key(path)
             try:
                 resp = httpx.get(url, timeout=HTTP_TIMEOUT_SECONDS)
+                results[key] = resp.text
+                codes[key] = str(resp.status_code)
                 resp.raise_for_status()
-                results[self._heartbeat_key(path)] = resp.text
             except Exception as exc:  # pragma: no cover - error path varies by env
-                results[self._heartbeat_key(path)] = f"{ERR_PREFIX}{exc}"
-        return results
+                results[key] = f"{ERR_PREFIX}{exc}"
+                codes[key] = "error"
+        return results, codes
 
     def add_fluentbit_version(self, port: int) -> None:
         """Fetch Fluent Bit version endpoint and store in last heartbeat results."""
@@ -236,13 +302,11 @@ class OpAMPClient:
             value = f"{ERR_PREFIX}{exc}"
         self.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = value
 
-    def get_agent_description(
-        self, instance_uid: bytes | None = None
-    ) -> opamp_pb2.AgentDescription:
+    def get_agent_description(self) -> opamp_pb2.AgentDescription:
         """Build AgentDescription for outbound AgentToServer messages."""
         desc = opamp_pb2.AgentDescription()
-        service_name = CONFIG.service_name
-        service_namespace = CONFIG.service_namespace
+        service_name = self.config.service_name
+        service_namespace = self.config.service_namespace
         if service_name:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -265,11 +329,18 @@ class OpAMPClient:
                     value=anyvalue_pb2.AnyValue(string_value=value),
                 )
             )
+        instance_uid = self.config.instance_uid
         if instance_uid:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
                     key=KEY_SERVICE_INSTANCE_ID,
-                    value=anyvalue_pb2.AnyValue(string_value=instance_uid.hex()),
+                    value=anyvalue_pb2.AnyValue(
+                        string_value=(
+                            instance_uid.hex()
+                            if isinstance(instance_uid, (bytes, bytearray))
+                            else str(instance_uid)
+                        )
+                    ),
                 )
             )
         fluentbit_version = self.last_heartbeat_results.get(KEY_FLUENTBIT_VERSION)
@@ -284,7 +355,7 @@ class OpAMPClient:
 
     def get_agent_capabilities(self) -> int:
         """Return the configured agent capability bitmask."""
-        configured = CONFIG.agent_capabilities
+        configured = self.config.agent_capabilities
         if isinstance(configured, int):
             return configured
         if not configured:
@@ -311,12 +382,16 @@ class OpAMPClient:
             "hostname": socket.gethostname(),
         }
 
-    def handle_error_response(self, error_response: opamp_pb2.ServerErrorResponse) -> None:
+    def handle_error_response(
+        self, error_response: opamp_pb2.ServerErrorResponse
+    ) -> None:
         """Log details from a ServerErrorResponse."""
         logger = logging.getLogger(__name__)
         logger.warning("server error_response type=%s", error_response.type)
         if error_response.error_message:
-            logger.warning("server error_response message=%s", error_response.error_message)
+            logger.warning(
+                "server error_response message=%s", error_response.error_message
+            )
         if error_response.HasField("retry_info"):
             logger.warning(
                 "server error_response retry_after_nanoseconds=%s",
@@ -378,23 +453,27 @@ class OpAMPClient:
 
     def _heartbeat_loop(self, port: int) -> None:
         """Run a periodic polling loop that updates last heartbeat results."""
-        interval = max(0, int(CONFIG.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
         logger = logging.getLogger(__name__)
+        interval = max(0, int(self.config.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
         logger.debug(f"Heartbeat cycle start - checking every {interval}")
         while True:
             time.sleep(interval)
-            results = self.poll_local_status(port)
+            results, codes = self.poll_local_status_with_codes(port)
             self.last_heartbeat_results.clear()
             self.last_heartbeat_results.update(results)
-            logger.debug(f"Heartbeat outcome --> {results}")
+            if self.config.log_fluentbit_api_responses:
+                logger.info(f"Heartbeat outcome --> {results}")
+            else:
+                logger.info("Heartbeat response codes: %s", codes)
+            self.send()
 
-    def start_heartbeat_thread(self, port: int) -> "threading.Thread":
+    def start_heartbeat_thread(self, port: int) -> threading.Thread:
         """Start a daemon thread to poll local status endpoints."""
         thread = threading.Thread(
             target=self._heartbeat_loop, args=(port,), daemon=True
         )
         thread.start()
-        logging.getLogger(__name__).debug(f"Heatbeat thread launched")
+        logging.getLogger(__name__).debug("Heatbeat thread launched")
 
         return thread
 
@@ -415,9 +494,7 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
         r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
         re.IGNORECASE,
     )
-    section_header = re.compile(r"^\s*\[.*\]\s*$")
-
-    with open(path, "r", encoding=UTF8_ENCODING) as handle:
+    with open(path, encoding=UTF8_ENCODING) as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line:
@@ -443,38 +520,45 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                         port_value = int(value)
                         config.http_port = port_value
                         config.fluentbit_http_port = port_value
+                        logger.info(f"located >{key}< with value >{value}<")
                     elif key == KEY_HTTP_LISTEN:
                         config.http_listen = value
                         config.fluentbit_http_listen = value
+                        logger.info(f"located >{key}< with value >{value}<")
                     elif key == KEY_HTTP_SERVER:
                         config.http_server = value
                         config.fluentbit_http_server = value
+                        logger.info(f"located >{key}< with value >{value}<")
                     else:
                         config[key] = value
-                    logger.info(f"located >{key}< with value >{value}<")
+                        logger.info(f"located >{key}< with value >{value}<")
                     continue
                 except KeyError:
                     logger.error(f"barfed with config match {key} --> {value}")
                     continue
 
-            logger.debug(f"No matches for >>{line}<<")
     return config
 
 
 def build_minimal_agent(
-    instance_uid: Optional[bytes] = None,
+    instance_uid: bytes | None = None,
+    capabilities: int | None = None,
 ) -> opamp_pb2.AgentToServer:
     """Create a minimal AgentToServer message with configured capabilities."""
     msg = opamp_pb2.AgentToServer()
     if instance_uid is not None:
         msg.instance_uid = instance_uid
-    # Capabilities are read from config/opamp.json at startup.
-    msg.capabilities = CONFIG.agent_capabilities
+    msg.capabilities = capabilities or 0
     return msg
+
+
+async def run_client(client) -> None:
+    await client.send()
 
 
 def main() -> None:
     """Load config, read Fluent Bit settings, launch Fluent Bit, start heartbeat."""
+    tracemalloc.start()
     logger = logging.getLogger(__name__)
 
     logger.debug("prepping CLI parser")
@@ -497,9 +581,6 @@ def main() -> None:
         heartbeat_frequency=args.heartbeat_frequency,
     )
 
-    logger.warning("setting config")
-    consumer_config.set_config(config)
-
     logger.warning("about to process FLB config")
     config = load_fluentbit_config(config)
 
@@ -512,9 +593,12 @@ def main() -> None:
         raise ValueError("server_url is not configured")
 
     logger.debug(msg="setting up OpAMP")
-    client = OpAMPClient(config.server_url)
+    client = OpAMPClient(config.server_url, config)
 
     client.launch_fluent_bit()
+
+    logger.info("introducing self to server")
+    asyncio.run(run_client(client))
 
     # client.start_heartbeat_thread(config.http_port)
     client._heartbeat_loop(config.http_port)

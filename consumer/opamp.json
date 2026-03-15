@@ -1,0 +1,15 @@
+{
+  "consumer": {
+    "server_url": "http://localhost",
+    "http_port": 2020,
+    "transport": "http",
+    "log_fluentbit_api_responses": false,
+    "fluentbit_config_path": "d://dev//opamp//consumer//fluent-bit.yaml",
+    "additional_fluent_bit_params": [],
+    "heartbeat_frequency": 30,
+    "log_level": "debug",
+    "service_name": "Fluentbit",
+    "service_namespace": "FluentBitNS",
+    "agent_capabilities": ["ReportsStatus", "ReportsHealth", "ReportsHeartbeat"]
+  }
+}
