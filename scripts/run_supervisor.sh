@@ -3,6 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LOG_DIR="${REPO_ROOT}/logs"
+LOG_FILE="${LOG_DIR}/supervisor.log"
+
+if [[ -t 1 ]]; then
+  printf '\033]0;%s\007' "OpAMP Supervisor"
+fi
 
 if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
   # shellcheck disable=SC1091
@@ -21,4 +27,6 @@ fi
 export PYTHONPATH="${REPO_ROOT}/consumer/src"
 export OPAMP_CONFIG_PATH="${CONFIG_PATH}"
 python3 -m pip show httpx >/dev/null 2>&1 || python3 -m pip install -r "${REPO_ROOT}/consumer/requirements.txt"
-python3 -m opamp_consumer.client --config-path "${CONFIG_PATH}" --fluentbit-config-path "${FLUENTBIT_PATH}" "$@"
+mkdir -p "${LOG_DIR}"
+rm -f "${LOG_FILE}"
+python3 -m opamp_consumer.client --config-path "${CONFIG_PATH}" --fluentbit-config-path "${FLUENTBIT_PATH}" "$@" 2>&1 | tee "${LOG_FILE}"
