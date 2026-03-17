@@ -102,6 +102,10 @@ class ClientRecord(BaseModel):
     next_actions: Optional[list[str]] = None
     next_expected_communication: Optional[datetime] = None
     first_seen: datetime = Field(default_factory=_utc_now)
+    component_health: Optional[dict[str, dict[str, Optional[str]]]] = None
+    health: Optional[dict[str, Optional[str] | dict[str, dict[str, Optional[str]]]]] = (
+        None
+    )
 
 
 class ClientStore:
@@ -135,6 +139,30 @@ class ClientStore:
             record.node_age_seconds = (now - record.first_seen).total_seconds()
             record.capabilities = _capabilities_from_mask(agent_msg.capabilities)
             record.client_version = _extract_agent_version(agent_msg)
+            if agent_msg.HasField("health"):
+                component_health = {
+                    name: {
+                        "healthy": str(value.healthy),
+                        "status": value.status or None,
+                        "last_error": value.last_error or None,
+                        "start_time_unix_nano": str(value.start_time_unix_nano or 0),
+                        "status_time_unix_nano": str(value.status_time_unix_nano or 0),
+                    }
+                    for name, value in agent_msg.health.component_health_map.items()
+                }
+                record.component_health = component_health
+                record.health = {
+                    "healthy": str(agent_msg.health.healthy),
+                    "status": agent_msg.health.status or None,
+                    "last_error": agent_msg.health.last_error or None,
+                    "start_time_unix_nano": str(
+                        agent_msg.health.start_time_unix_nano or 0
+                    ),
+                    "status_time_unix_nano": str(
+                        agent_msg.health.status_time_unix_nano or 0
+                    ),
+                    "component_health_map": component_health,
+                }
             if agent_msg.HasField("agent_description"):
                 record.agent_description = text_format.MessageToString(
                     agent_msg.agent_description
@@ -209,6 +237,10 @@ class ClientStore:
             if not record.next_actions:
                 record.next_actions = None
             return action
+
+    def remove_client(self, client_id: str) -> Optional[ClientRecord]:
+        with self._lock:
+            return self._clients.pop(client_id, None)
 
 
 STORE = ClientStore()
