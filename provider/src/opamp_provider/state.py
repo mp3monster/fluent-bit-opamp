@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import threading
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
@@ -55,11 +57,20 @@ def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
 
 def _capabilities_from_mask(mask: int) -> list[str]:
     capabilities: list[str] = []
+    logging.getLogger(__name__).debug(f"Decoding capability --> {mask}")
     for enum_value in opamp_pb2.AgentCapabilities.DESCRIPTOR.values:
         if enum_value.number == 0:
             continue
         if mask & enum_value.number:
-            capabilities.append(enum_value.name)
+            raw_name = enum_value.name
+            if raw_name.startswith("AgentCapabilities_"):
+                raw_name = raw_name[len("AgentCapabilities_") :]
+            spaced = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", raw_name)
+            spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", spaced)
+            capabilities.append(spaced)
+            logging.getLogger(__name__).debug(
+                f"Capabilities include --> {capabilities[-1]}"
+            )
     return capabilities
 
 
@@ -109,7 +120,9 @@ class ClientStore:
     def upsert_from_agent_msg(
         self, agent_msg: opamp_pb2.AgentToServer, *, channel: Optional[str] = None
     ) -> ClientRecord:
-        client_id = agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
+        client_id = (
+            agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
+        )
         now = _utc_now()
         with self._lock:
             record = self._clients.get(client_id)
