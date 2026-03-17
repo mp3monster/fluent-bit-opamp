@@ -12,10 +12,15 @@
 
 import pytest
 
-from opamp_provider.app import app
+from opamp_provider.app import (
+    ACTION_APPLY_CONFIG,
+    ACTION_PACKAGE_AVAILABLE,
+    app,
+)
 from opamp_provider import config as provider_config
 from opamp_provider.config import ProviderConfig
 from opamp_provider.proto import opamp_pb2
+from opamp_provider.state import STORE
 from opamp_provider.transport import decode_message, encode_message
 
 
@@ -132,3 +137,58 @@ async def test_get_client_missing() -> None:
     async with app.test_client() as client:
         resp = await client.get("/api/clients/missing")
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_client_actions_and_http_consumes() -> None:
+    client_id = "1234"
+    STORE._clients.clear()
+
+    async with app.test_client() as client:
+        resp = await client.post(
+            f"/api/clients/{client_id}/actions",
+            json={"actions": [ACTION_APPLY_CONFIG, ACTION_PACKAGE_AVAILABLE]},
+        )
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+        assert payload["next_actions"] == [
+            ACTION_APPLY_CONFIG,
+            ACTION_PACKAGE_AVAILABLE,
+        ]
+
+        agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+        resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await resp.get_data())
+        assert server_msg.HasField("remote_config")
+        record = STORE.get(client_id)
+        assert record is not None
+        assert record.next_actions == [ACTION_PACKAGE_AVAILABLE]
+
+        resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await resp.get_data())
+        assert server_msg.HasField("packages_available")
+        record = STORE.get(client_id)
+        assert record is not None
+        assert record.next_actions is None
+
+
+@pytest.mark.asyncio
+async def test_set_client_actions_rejects_invalid() -> None:
+    client_id = "abcd"
+    async with app.test_client() as client:
+        resp = await client.post(
+            f"/api/clients/{client_id}/actions",
+            json={"actions": ["not-a-real-action"]},
+        )
+        assert resp.status_code == 400
