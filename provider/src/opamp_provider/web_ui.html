@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpAMP Provider Console</title>
+  <title>OpAMP Server Console</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -91,7 +91,7 @@
       background: #fff;
     }
     .short-input {
-      width: 5ch;
+      width: 7ch;
       text-align: center;
     }
     .input-suffix {
@@ -278,6 +278,90 @@
       color: #4a3c30;
     }
 
+    .data-toggle {
+      background: #eef2ff;
+      color: #2a3a6a;
+    }
+
+    .data-panel {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #f8f9ff;
+    }
+
+    .data-panel.hidden {
+      display: none;
+    }
+
+    .data-output {
+      margin: 10px 0 0;
+      max-height: 240px;
+      overflow: auto;
+      font-family: "IBM Plex Mono", "Courier New", monospace;
+      font-size: 0.82rem;
+      background: #fff;
+      border: 1px solid #e1e7f5;
+      border-radius: 10px;
+      padding: 10px;
+      white-space: pre-wrap;
+    }
+
+    .shutdown-button {
+      position: fixed;
+      right: 28px;
+      bottom: 24px;
+      background: var(--red);
+      color: #fff;
+      border: none;
+      padding: 12px 18px;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      box-shadow: 0 18px 40px rgba(228, 87, 78, 0.35);
+      cursor: pointer;
+      z-index: 20;
+    }
+
+    .shutdown-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .context-menu {
+      position: fixed;
+      min-width: 180px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 8px;
+      display: none;
+      z-index: 30;
+    }
+
+    .context-menu.open {
+      display: block;
+    }
+
+    .context-menu button {
+      width: 100%;
+      border: none;
+      background: none;
+      text-align: left;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      color: var(--red);
+      cursor: pointer;
+    }
+
+    .context-menu button:hover {
+      background: rgba(228, 87, 78, 0.1);
+    }
+
     .fade-in {
       animation: fadeIn 0.5s ease both;
     }
@@ -299,7 +383,7 @@
   <header>
     <div class="title">
       <div>
-        <h1>OpAMP Provider Console</h1>
+        <h1>OpAMP Server Console</h1>
         <div style="color: var(--muted); font-size: 0.95rem;">Client fleet, command queueing, and staged config control.</div>
       </div>
       <button id="helpBtn" class="pill" style="cursor: pointer;">Open Help</button>
@@ -355,6 +439,10 @@
         <button id="closeModal" class="cancel">Close</button>
       </div>
       <div class="modal-grid" id="modalFields"></div>
+      <div id="clientDataPanel" class="data-panel hidden">
+        <label style="font-size: 0.85rem; color: var(--muted);">Client Data (YAML)</label>
+        <pre id="clientDataYaml" class="data-output"></pre>
+      </div>
       <div style="margin-top: 16px;">
         <label style="font-size: 0.85rem; color: var(--muted);">Requested Configuration</label>
         <textarea id="configInput" placeholder="Paste new configuration here..."></textarea>
@@ -367,10 +455,16 @@
         </select>
       </div>
       <div class="modal-actions">
+        <button id="toggleDataBtn" class="data-toggle" type="button">View Data</button>
         <button id="saveBtn" class="save">Save</button>
         <button id="cancelBtn" class="cancel">Cancel</button>
       </div>
     </div>
+  </div>
+
+  <button id="shutdownButton" class="shutdown-button" type="button">Shutdown Server</button>
+  <div id="contextMenu" class="context-menu">
+    <button id="removeClientBtn" type="button">Remove Client</button>
   </div>
 
   <script>
@@ -402,8 +496,15 @@
     const modalTitle = document.getElementById("modalTitle");
     const configInput = document.getElementById("configInput");
     const commandInput = document.getElementById("commandInput");
+    const clientDataPanel = document.getElementById("clientDataPanel");
+    const clientDataYaml = document.getElementById("clientDataYaml");
+    const toggleDataBtn = document.getElementById("toggleDataBtn");
+    const shutdownButton = document.getElementById("shutdownButton");
+    const contextMenu = document.getElementById("contextMenu");
+    const removeClientBtn = document.getElementById("removeClientBtn");
 
     let activeClient = null;
+    let contextClient = null;
 
     document.querySelectorAll("th[data-sort]").forEach(th => {
       th.addEventListener("click", () => {
@@ -539,6 +640,13 @@
         if (status.cls === "late-red") tr.classList.add("row-red");
         if (hasPending(client)) tr.classList.add("pending-border");
         tr.addEventListener("click", () => openModal(client));
+        tr.addEventListener("contextmenu", event => {
+          event.preventDefault();
+          contextClient = client;
+          contextMenu.style.left = `${event.clientX}px`;
+          contextMenu.style.top = `${event.clientY}px`;
+          contextMenu.classList.add("open");
+        });
 
         tr.innerHTML = `
           <td>${client.client_id}</td>
@@ -567,6 +675,9 @@
       if (status.cls === "late-red") modalCard.classList.add("late-red");
 
       modalFields.innerHTML = "";
+      clientDataPanel.classList.add("hidden");
+      clientDataYaml.textContent = "";
+      toggleDataBtn.textContent = "View Data";
       const agentDesc = client.agent_description || "";
       const serviceName = extractAgentField(agentDesc, "service.name");
       const hostType = extractAgentField(agentDesc, "os_type");
@@ -606,6 +717,113 @@
       configInput.value = "";
       commandInput.value = "";
       updateConfigLock();
+    }
+
+    function yamlScalar(value) {
+      if (value === null || value === undefined) return "null";
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      if (typeof value === "string") {
+        if (value.includes("\n")) {
+          return `|\n${value.split("\n").map(line => `  ${line}`).join("\n")}`;
+        }
+        const needsQuote = value === "" || /[:#\\[\\]{}&,*!?|>\\-]|^\\s|\\s$/.test(value);
+        if (!needsQuote) return value;
+        return `'${value.replace(/'/g, "''")}'`;
+      }
+      return String(value);
+    }
+
+    function toYaml(value, indent = 0) {
+      const pad = " ".repeat(indent);
+      if (Array.isArray(value)) {
+        if (value.length === 0) return `${pad}[]`;
+        return value
+          .map(item => {
+            if (item && typeof item === "object") {
+              return `${pad}-\n${toYaml(item, indent + 2)}`;
+            }
+            return `${pad}- ${yamlScalar(item)}`;
+          })
+          .join("\n");
+      }
+      if (value && typeof value === "object") {
+        const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+        if (entries.length === 0) return `${pad}{}`;
+        return entries
+          .map(([key, val]) => {
+            if (val && typeof val === "object") {
+              return `${pad}${key}:\n${toYaml(val, indent + 2)}`;
+            }
+            const scalar = yamlScalar(val);
+            if (typeof val === "string" && scalar.startsWith("|\n")) {
+              return `${pad}${key}: ${scalar.replace(/\n/g, `\n${pad}  `)}`;
+            }
+            return `${pad}${key}: ${scalar}`;
+          })
+          .join("\n");
+      }
+      return `${pad}${yamlScalar(value)}`;
+    }
+
+    function normalizeClientData(client) {
+      const clone = JSON.parse(JSON.stringify(client));
+      const parseAgentDescription = (text) => {
+        if (!text || typeof text !== "string") return text;
+        const attrs = [];
+        const patterns = [
+          { type: "string", regex: /key: "([^"]+)"[\s\S]*?string_value: "([^"]*)"/g },
+          { type: "bytes", regex: /key: "([^"]+)"[\s\S]*?bytes_value: "([^"]*)"/g },
+          { type: "int", regex: /key: "([^"]+)"[\s\S]*?int_value: ([0-9-]+)/g },
+          { type: "bool", regex: /key: "([^"]+)"[\s\S]*?bool_value: (true|false)/g },
+          { type: "double", regex: /key: "([^"]+)"[\s\S]*?double_value: ([0-9eE+\\.-]+)/g },
+        ];
+        for (const pattern of patterns) {
+          let match;
+          while ((match = pattern.regex.exec(text)) !== null) {
+            const key = match[1];
+            let value = match[2];
+            if (pattern.type === "int") value = parseInt(value, 10);
+            if (pattern.type === "double") value = parseFloat(value);
+            if (pattern.type === "bool") value = value === "true";
+            attrs.push({ key, value, type: pattern.type });
+          }
+        }
+        if (attrs.length === 0) return text;
+        const map = {};
+        attrs.forEach(item => {
+          map[item.key] = item.value;
+        });
+        return { attributes: attrs, map };
+      };
+      const parseIfJson = (value) => {
+        if (typeof value !== "string") return value;
+        const trimmed = value.trim();
+        if (!trimmed) return value;
+        if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return value;
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          return value;
+        }
+      };
+      clone.agent_description = parseAgentDescription(clone.agent_description);
+      clone.current_config = parseIfJson(clone.current_config);
+      clone.requested_config = parseIfJson(clone.requested_config);
+      return clone;
+    }
+
+    function toggleClientData() {
+      if (!activeClient) return;
+      const hidden = clientDataPanel.classList.contains("hidden");
+      if (hidden) {
+        clientDataYaml.textContent = toYaml(normalizeClientData(activeClient));
+        clientDataPanel.classList.remove("hidden");
+        toggleDataBtn.textContent = "Hide Data";
+      } else {
+        clientDataPanel.classList.add("hidden");
+        clientDataYaml.textContent = "";
+        toggleDataBtn.textContent = "View Data";
+      }
     }
 
     async function saveChanges() {
@@ -664,6 +882,41 @@
         : "Paste new configuration here...";
     }
 
+    function hideContextMenu() {
+      contextMenu.classList.remove("open");
+      contextClient = null;
+    }
+
+    async function removeClient() {
+      if (!contextClient) return;
+      const ok = window.confirm(`Remove client ${contextClient.client_id} from the server?`);
+      if (!ok) return;
+      const resp = await fetch(`/api/clients/${contextClient.client_id}`, { method: "DELETE" });
+      hideContextMenu();
+      if (!resp.ok) {
+        window.alert("Failed to remove client.");
+        return;
+      }
+      await fetchClients();
+    }
+
+    async function requestShutdown() {
+      const ok = window.confirm("Shutdown the OpAMP server? This will stop the process.");
+      if (!ok) return;
+      shutdownButton.disabled = true;
+      shutdownButton.textContent = "Shutting down...";
+      const resp = await fetch("/api/shutdown", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!resp.ok) {
+        shutdownButton.disabled = false;
+        shutdownButton.textContent = "Shutdown Server";
+        window.alert("Shutdown request failed.");
+      }
+    }
+
     function scheduleRefresh() {
       if (state.timer) clearInterval(state.timer);
       state.timer = setInterval(fetchClients, state.refreshSeconds * 1000);
@@ -674,6 +927,15 @@
       await fetchClients();
       scheduleRefresh();
     }
+
+    shutdownButton.addEventListener("click", requestShutdown);
+    toggleDataBtn.addEventListener("click", toggleClientData);
+    removeClientBtn.addEventListener("click", removeClient);
+    document.addEventListener("click", event => {
+      if (!contextMenu.contains(event.target)) hideContextMenu();
+    });
+    window.addEventListener("resize", hideContextMenu);
+    window.addEventListener("scroll", hideContextMenu);
 
     init();
   </script>
