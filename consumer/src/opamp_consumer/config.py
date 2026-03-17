@@ -45,7 +45,7 @@ class ConsumerConfig:
     log_level: str | None = None
     fluentbit_config_text: str | None = None
     agent_description: str | None = None
-    instance_uid: str | None = None
+    service_instance_id: str | None = None
     service_name: str | None = None
     service_namespace: str | None = None
     transport: str | None = None

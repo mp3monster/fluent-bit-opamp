@@ -12,7 +12,7 @@
 
 env:
   flush_interval: 2
-  #instance_uid : 1234
+  #service_instance_id : 1234
 
 service:
   flush: ${flush_interval}
