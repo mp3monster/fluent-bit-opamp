@@ -15,7 +15,11 @@ from opamp_provider.config import CONFIG
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE, CommandRecord
 from opamp_provider.transport import decode_message, encode_message
-from shared.opamp_config import OPAMP_HTTP_PATH, OPAMP_TRANSPORT_HEADER_NONE, UTF8_ENCODING
+from shared.opamp_config import (
+    OPAMP_HTTP_PATH,
+    OPAMP_TRANSPORT_HEADER_NONE,
+    UTF8_ENCODING,
+)
 
 app = Quart(__name__)
 logger = logging.getLogger(__name__)
@@ -30,15 +34,100 @@ LOG_SEND_COMMAND = "sent command to client %s at %s"
 OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
 
 COMMAND_RESTART = "restart"
+CHANNEL_HTTP = "HTTP"
+CHANNEL_WEBSOCKET = "WebSocket"
+ACTION_APPLY_CONFIG = "apply_config"
+ACTION_CHANGE_CONNECTIONS = "change_connections"
+ACTION_PACKAGE_AVAILABLE = "package_availabe"
+ACTION_COMMAND_AGENT = "command_agent"
+ACTION_CUSTOM_AGENT_COMMAND = "custom_agent_command"
+ACTION_OPTIONS = {
+    ACTION_APPLY_CONFIG,
+    ACTION_CHANGE_CONNECTIONS,
+    ACTION_PACKAGE_AVAILABLE,
+    ACTION_COMMAND_AGENT,
+    ACTION_CUSTOM_AGENT_COMMAND,
+}
+
+
+def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:
+    logger.info("building next action payload: %s", ACTION_APPLY_CONFIG)
+    response.remote_config.SetInParent()
+    return response
+
+
+def _build_change_connections(
+    response: opamp_pb2.ServerToAgent,
+) -> opamp_pb2.ServerToAgent:
+    logger.info("building next action payload: %s", ACTION_CHANGE_CONNECTIONS)
+    response.connection_settings.SetInParent()
+    return response
+
+
+def _build_package_available(
+    response: opamp_pb2.ServerToAgent,
+) -> opamp_pb2.ServerToAgent:
+    logger.info("building next action payload: %s", ACTION_PACKAGE_AVAILABLE)
+    response.packages_available.SetInParent()
+    return response
+
+
+def _build_command_agent(
+    response: opamp_pb2.ServerToAgent, pending_command: CommandRecord | None
+) -> opamp_pb2.ServerToAgent:
+    logger.info("building next action payload: %s", ACTION_COMMAND_AGENT)
+    if (
+        pending_command is not None
+        and pending_command.command.lower() == COMMAND_RESTART
+    ):
+        response.command.type = opamp_pb2.CommandType.CommandType_Restart
+    else:
+        response.command.SetInParent()
+    return response
+
+
+def _build_custom_agent_command(
+    response: opamp_pb2.ServerToAgent,
+) -> opamp_pb2.ServerToAgent:
+    logger.info("building next action payload: %s", ACTION_CUSTOM_AGENT_COMMAND)
+    response.custom_message.SetInParent()
+    return response
+
+
+def _apply_next_action(
+    response: opamp_pb2.ServerToAgent,
+    *,
+    action: str,
+    pending_command: CommandRecord | None,
+) -> opamp_pb2.ServerToAgent:
+    if action == ACTION_APPLY_CONFIG:
+        return _build_apply_config(response)
+    if action == ACTION_CHANGE_CONNECTIONS:
+        return _build_change_connections(response)
+    if action == ACTION_PACKAGE_AVAILABLE:
+        return _build_package_available(response)
+    if action == ACTION_COMMAND_AGENT:
+        return _build_command_agent(response, pending_command)
+    if action == ACTION_CUSTOM_AGENT_COMMAND:
+        return _build_custom_agent_command(response)
+    logger.warning("unknown next action: %s", action)
+    return response
 
 
 def _build_response(
     request_msg: opamp_pb2.AgentToServer,
     pending_command: CommandRecord | None,
+    client_id: str | None = None,
+    channel: str | None = None,
 ) -> opamp_pb2.ServerToAgent:
     """Build a minimal ServerToAgent response for a request."""
     response = opamp_pb2.ServerToAgent()
-    response.instance_uid = request_msg.instance_uid
+    if request_msg.instance_uid:
+        response.instance_uid = request_msg.instance_uid
+        logger.info("set response to: %s", response.instance_uid)
+    else:
+        logger.warning("Cant set response instance_uid")
+
     # Capabilities are read from config/opamp.json at startup.
     response.capabilities = CONFIG.server_capabilities
     # TODO(opamp): Implement operations that respond to AgentToServer fields:
@@ -48,7 +137,13 @@ def _build_response(
     # - commands (ServerToAgentCommand)
     # - custom capabilities and custom messages
     # - instance UID reassignment (AgentIdentification)
-    if pending_command is not None:
+    if channel == CHANNEL_HTTP and client_id:
+        next_action = STORE.pop_next_action(client_id)
+        if next_action:
+            response = _apply_next_action(
+                response, action=next_action, pending_command=pending_command
+            )
+    if pending_command is not None and not response.HasField("command"):
         if pending_command.command.lower() == COMMAND_RESTART:
             response.command.type = opamp_pb2.CommandType.CommandType_Restart
     return response
@@ -73,7 +168,7 @@ async def opamp_http() -> Response:
         agent_msg.ParseFromString(data)
 
     logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
-    client = STORE.upsert_from_agent_msg(agent_msg)
+    client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
     pending_command = STORE.next_pending_command(client.client_id)
 
     # TODO(opamp): Implement per-operation processing for HTTP transport:
@@ -83,7 +178,12 @@ async def opamp_http() -> Response:
     # - package statuses
     # - connection settings requests and status
     # - custom messages
-    response_msg = _build_response(agent_msg, pending_command)
+    response_msg = _build_response(
+        agent_msg,
+        pending_command,
+        client.client_id,
+        channel=CHANNEL_HTTP,
+    )
     payload = response_msg.SerializeToString()
     if pending_command is not None and response_msg.HasField("command"):
         STORE.mark_command_sent(client.client_id, pending_command)
@@ -107,7 +207,9 @@ async def opamp_ws() -> None:
                 if payload:
                     agent_msg.ParseFromString(payload)
                 logger.info(LOG_WS_MSG, text_format.MessageToString(agent_msg))
-                client = STORE.upsert_from_agent_msg(agent_msg)
+                client = STORE.upsert_from_agent_msg(
+                    agent_msg, channel=CHANNEL_WEBSOCKET
+                )
                 pending_command = STORE.next_pending_command(client.client_id)
                 # TODO(opamp): Implement per-operation processing for WebSocket transport:
                 # - status/health updates
@@ -116,7 +218,12 @@ async def opamp_ws() -> None:
                 # - package statuses
                 # - connection settings requests and status
                 # - custom messages
-                response_msg = _build_response(agent_msg, pending_command)
+                response_msg = _build_response(
+                    agent_msg,
+                    pending_command,
+                    client.client_id,
+                    channel=CHANNEL_WEBSOCKET,
+                )
         except ValueError as exc:
             response_msg = _build_error(str(exc))
 
@@ -157,6 +264,41 @@ async def queue_command(client_id: str) -> Response:
     return jsonify(cmd.model_dump(mode="json")), 201
 
 
+@app.post("/api/clients/<client_id>/actions")
+async def set_client_actions(client_id: str) -> Response:
+    """Set next actions for a client."""
+    payload = await request.get_json(silent=True)
+    if payload is None:
+        return jsonify({"error": "payload is required"}), 400
+    raw_actions = payload.get("actions")
+    if raw_actions is None:
+        return jsonify({"error": "actions is required"}), 400
+    if isinstance(raw_actions, str):
+        actions = [raw_actions]
+    elif isinstance(raw_actions, list):
+        actions = raw_actions
+    else:
+        return jsonify({"error": "actions must be a list or string"}), 400
+    actions = [str(action).strip() for action in actions if str(action).strip()]
+    if not actions:
+        record = STORE.set_next_actions(client_id, None)
+        return jsonify(record.model_dump(mode="json"))
+    invalid = [action for action in actions if action not in ACTION_OPTIONS]
+    if invalid:
+        return (
+            jsonify(
+                {
+                    "error": "invalid actions",
+                    "invalid": invalid,
+                    "allowed": sorted(ACTION_OPTIONS),
+                }
+            ),
+            400,
+        )
+    record = STORE.set_next_actions(client_id, actions)
+    return jsonify(record.model_dump(mode="json"))
+
+
 @app.get("/api/settings/comms")
 async def get_comms_settings() -> Response:
     """Get communication threshold settings."""
@@ -175,7 +317,9 @@ async def update_comms_settings() -> Response:
     if not payload:
         return jsonify({"error": "payload is required"}), 400
     try:
-        delayed = int(payload.get("delayed_comms_seconds", CONFIG.delayed_comms_seconds))
+        delayed = int(
+            payload.get("delayed_comms_seconds", CONFIG.delayed_comms_seconds)
+        )
         significant = int(
             payload.get("significant_comms_seconds", CONFIG.significant_comms_seconds)
         )
@@ -238,7 +382,10 @@ async def web_ui() -> Response:
 @app.get("/help")
 async def help_page() -> Response:
     """Serve a simple help page."""
-    return Response(_HELP_HTML, content_type="text/html; charset=utf-8")
+    html = _HELP_HTML.replace(
+        "__DELAYED_SECONDS__", str(CONFIG.delayed_comms_seconds)
+    ).replace("__SIGNIFICANT_SECONDS__", str(CONFIG.significant_comms_seconds))
+    return Response(html, content_type="text/html; charset=utf-8")
 
 
 _WEB_UI_PATH = pathlib.Path(__file__).with_name("web_ui.html")
