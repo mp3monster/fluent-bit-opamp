@@ -79,6 +79,7 @@ class ClientRecord(BaseModel):
     agent_description: Optional[str] = None
     node_age_seconds: Optional[float] = None
     last_communication: Optional[datetime] = None
+    last_channel: Optional[str] = None
     current_config: Optional[str] = None
     current_config_version: Optional[str] = None
     requested_config: Optional[str] = None
@@ -87,6 +88,7 @@ class ClientRecord(BaseModel):
     client_version: Optional[str] = None
     features: list[str] = Field(default_factory=list)
     commands: list[CommandRecord] = Field(default_factory=list)
+    next_actions: Optional[list[str]] = None
     next_expected_communication: Optional[datetime] = None
     first_seen: datetime = Field(default_factory=_utc_now)
 
@@ -104,7 +106,9 @@ class ClientStore:
         with self._lock:
             return list(self._clients.values())
 
-    def upsert_from_agent_msg(self, agent_msg: opamp_pb2.AgentToServer) -> ClientRecord:
+    def upsert_from_agent_msg(
+        self, agent_msg: opamp_pb2.AgentToServer, *, channel: Optional[str] = None
+    ) -> ClientRecord:
         client_id = agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
         now = _utc_now()
         with self._lock:
@@ -113,6 +117,8 @@ class ClientStore:
                 record = ClientRecord(client_id=client_id)
                 self._clients[client_id] = record
             record.last_communication = now
+            if channel:
+                record.last_channel = channel
             record.node_age_seconds = (now - record.first_seen).total_seconds()
             record.capabilities = _capabilities_from_mask(agent_msg.capabilities)
             record.client_version = _extract_agent_version(agent_msg)
@@ -150,6 +156,17 @@ class ClientStore:
             record.requested_config_apply_at = apply_at
             return record
 
+    def set_next_actions(
+        self, client_id: str, actions: Optional[list[str]]
+    ) -> ClientRecord:
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                record = ClientRecord(client_id=client_id)
+                self._clients[client_id] = record
+            record.next_actions = actions if actions else None
+            return record
+
     def next_pending_command(self, client_id: str) -> Optional[CommandRecord]:
         with self._lock:
             record = self._clients.get(client_id)
@@ -169,6 +186,16 @@ class ClientStore:
                 if cmd is command:
                     cmd.sent_at = _utc_now()
                     return
+
+    def pop_next_action(self, client_id: str) -> Optional[str]:
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None or not record.next_actions:
+                return None
+            action = record.next_actions.pop(0)
+            if not record.next_actions:
+                record.next_actions = None
+            return action
 
 
 STORE = ClientStore()
