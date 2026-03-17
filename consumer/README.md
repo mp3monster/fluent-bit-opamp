@@ -1,6 +1,6 @@
 # OpAMP Consumer Configuration
 
-This document describes how to configure the OpAMP consumer using a config file or CLI overrides.
+This document describes how to configure and run the OpAMP consumer using a config file or CLI overrides.
 
 ## Config file
 
@@ -80,3 +80,12 @@ python -m opamp_consumer.client \
 - `--additional-fluent-bit-params` Override `consumer.additional_fluent_bit_params`.
 - `--heartbeat-frequency` Override `consumer.heartbeat_frequency`.
 - `--agent-capabilities` Override `consumer.agent_capabilities`.
+
+## Run scripts
+
+Helper scripts live in `scripts/` at the repo root:
+
+- Windows CMD: `scripts/run_supervisor.cmd`
+- Bash: `scripts/run_supervisor.sh`
+
+Both scripts write logs to `logs/supervisor.log` and rotate it on startup.

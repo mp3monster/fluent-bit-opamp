@@ -1,101 +1,27 @@
-# OpAMP Provider + Consumer
+# OpAMP Workspace
 
-This repo contains a small OpAMP provider (server) and consumer (client) setup. You can run them independently or together.
+This repository hosts a small OpAMP provider (server) and consumer (client) setup plus supporting tools, docs, and tests.
 
-## Prerequisites
+## Docs
 
-- Python 3.10+ installed
-- `pip` available
+- [docs/README.md](docs/README.md) — full setup and run instructions.
+- [docs/index.md](docs/index.md) — documentation landing page and project overview.
+- [docs/features.md](docs/features.md) — feature notes and design direction.
+- [docs/scripts.md](docs/scripts.md) — script reference table by platform.
+- [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.
+- [provider/README.md](provider/README.md) — provider configuration and web UI notes.
+- [shared/scripts/notes.md](shared/scripts/notes.md) — shared script notes.
+- [future_features.md](future_features.md) — backlog and ideas for future work.
 
-## Quick start (provider only)
+## Folder summary
 
-### PowerShell (Windows)
-
-```powershell
-cd D:\dev\opamp
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r provider\requirements.txt
-scripts\run_provider.cmd
-```
-
-### Bash (Linux/macOS)
-
-```bash
-cd /path/to/opamp
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r provider/requirements.txt
-./scripts/run_provider.sh
-```
-
-The provider will start on the configured `webui_port` (default `8080`) unless you pass `--port`.
-
-## Quick start (consumer only)
-
-### PowerShell (Windows)
-
-```powershell
-cd D:\dev\opamp
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r consumer\requirements.txt
-python -m opamp_consumer.client --config-path config\opamp.json
-```
-
-### Bash (Linux/macOS)
-
-```bash
-cd /path/to/opamp
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r consumer/requirements.txt
-python3 -m opamp_consumer.client --config-path config/opamp.json
-```
-
-## Run provider + consumer together
-
-### PowerShell (Windows)
-
-```powershell
-cd D:\dev\opamp
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r provider\requirements.txt
-python -m pip install -r consumer\requirements.txt
-scripts\run_provider.cmd
-```
-
-In a new PowerShell window:
-
-```powershell
-cd D:\dev\opamp
-.venv\Scripts\Activate.ps1
-python -m opamp_consumer.client --config-path config\opamp.json
-```
-
-### Bash (Linux/macOS)
-
-```bash
-cd /path/to/opamp
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r provider/requirements.txt
-python3 -m pip install -r consumer/requirements.txt
-./scripts/run_provider.sh
-```
-
-In a new shell:
-
-```bash
-cd /path/to/opamp
-source .venv/bin/activate
-python3 -m opamp_consumer.client --config-path config/opamp.json
-```
-
-## Notes
-
-- Provider Web UI: http://localhost:8080/ui
-- Help page: http://localhost:8080/help
-- If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.
-- For Windows CMD usage, the commands are similar but use `\.venv\Scripts\activate.bat` to activate the venv.
+- `config` — default configuration files (including `opamp.json`).
+- `consumer` — the OpAMP consumer (client) package, tests, and config samples.
+- `docs` — project documentation.
+- `logs` — runtime logs created by scripts.
+- `proto` — protobuf definitions and generated artifacts.
+- `provider` — the OpAMP provider (server) package, UI, and tests.
+- `scripts` — helper run and shutdown scripts.
+- `shared` — shared utilities used by provider/consumer.
+- `src` — top-level Python package glue (if needed for tooling).
+- `tests` — repository-level tests.

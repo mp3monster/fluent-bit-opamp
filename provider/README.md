@@ -1,6 +1,6 @@
 # OpAMP Provider
 
-Quart-based OpAMP server skeleton.
+Quart-based OpAMP server skeleton and web UI.
 
 ## Configuration
 
@@ -31,7 +31,16 @@ Example `opamp.json`:
 - `provider.webui_port` (integer, optional, default `8080`)
   Port for the provider UI and HTTP server.
 
-## Quickstart
+## Run scripts
+
+Helper scripts live in `scripts/` at the repo root:
+
+- Windows CMD: `scripts/run_opamp_server.cmd`
+- Bash: `scripts/run_opamp_server.sh`
+
+Both scripts write logs to `logs/opamp_server.log` and rotate it on startup.
+
+## Quickstart (manual)
 
 ```bash
 python -m venv .venv
@@ -49,4 +58,18 @@ Run the server:
 
 ```bash
 quart --app opamp_provider.app:app run --port 4320
+```
+
+## Web UI
+
+- Console: `http://localhost:8080/ui`
+- Help: `http://localhost:8080/help`
+
+The UI includes a shutdown button that prompts for confirmation and calls the shutdown API.
+
+## Shutdown API
+
+```
+POST /api/shutdown
+{"confirm": true}
 ```
