@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import pathlib
+import signal
 import tracemalloc
 from datetime import datetime, timezone
 
 from google.protobuf import text_format
 from quart import Quart, Response, jsonify, redirect, request, websocket
+from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
 from opamp_provider.config import CONFIG
@@ -48,6 +52,27 @@ ACTION_OPTIONS = {
     ACTION_COMMAND_AGENT,
     ACTION_CUSTOM_AGENT_COMMAND,
 }
+_SHUTDOWN_REQUESTED = False
+
+
+def _request_process_shutdown() -> None:
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+    except Exception:
+        os._exit(0)
+
+
+async def _shutdown_after_response() -> None:
+    await asyncio.sleep(0.2)
+    _request_process_shutdown()
+
+
+@app.errorhandler(Exception)
+async def handle_unexpected_error(error: Exception) -> Response:
+    if isinstance(error, HTTPException):
+        return error
+    logger.exception("Unhandled app error", exc_info=error)
+    return jsonify({"error": "internal server error"}), 500
 
 
 def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:
@@ -162,39 +187,46 @@ def _build_error(message: str) -> opamp_pb2.ServerToAgent:
 @app.post(OPAMP_HTTP_PATH)
 async def opamp_http() -> Response:
     """Handle OpAMP HTTP POST requests."""
-    data = await request.get_data()
-    agent_msg = opamp_pb2.AgentToServer()
-    if data:
-        agent_msg.ParseFromString(data)
+    try:
+        data = await request.get_data()
+        agent_msg = opamp_pb2.AgentToServer()
+        if data:
+            agent_msg.ParseFromString(data)
 
-    logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
-    client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
-    pending_command = STORE.next_pending_command(client.client_id)
+        logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
+        client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
+        pending_command = STORE.next_pending_command(client.client_id)
 
-    # TODO(opamp): Implement per-operation processing for HTTP transport:
-    # - status/health updates
-    # - effective config reporting
-    # - remote config status
-    # - package statuses
-    # - connection settings requests and status
-    # - custom messages
-    response_msg = _build_response(
-        agent_msg,
-        pending_command,
-        client.client_id,
-        channel=CHANNEL_HTTP,
-    )
-    payload = response_msg.SerializeToString()
-    if pending_command is not None and response_msg.HasField("command"):
-        STORE.mark_command_sent(client.client_id, pending_command)
-        logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
-    return Response(payload, content_type=CONTENT_TYPE_PROTO)
+        # TODO(opamp): Implement per-operation processing for HTTP transport:
+        # - status/health updates
+        # - effective config reporting
+        # - remote config status
+        # - package statuses
+        # - connection settings requests and status
+        # - custom messages
+        response_msg = _build_response(
+            agent_msg,
+            pending_command,
+            client.client_id,
+            channel=CHANNEL_HTTP,
+        )
+        payload = response_msg.SerializeToString()
+        if pending_command is not None and response_msg.HasField("command"):
+            STORE.mark_command_sent(client.client_id, pending_command)
+            logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
+        return Response(payload, content_type=CONTENT_TYPE_PROTO)
+    except Exception as exc:
+        logger.exception("Unhandled HTTP error", exc_info=exc)
+        response_msg = _build_error("internal server error")
+        payload = response_msg.SerializeToString()
+        return Response(payload, content_type=CONTENT_TYPE_PROTO, status=500)
 
 
 @app.websocket(OPAMP_HTTP_PATH)
 async def opamp_ws() -> None:
     """Handle OpAMP WebSocket connections."""
     while True:
+        pending_command = None
         data = await websocket.receive()
         if isinstance(data, str):
             data = data.encode(UTF8_ENCODING)
@@ -225,7 +257,11 @@ async def opamp_ws() -> None:
                     channel=CHANNEL_WEBSOCKET,
                 )
         except ValueError as exc:
+            logger.warning("OpAMP websocket value error: %s", exc)
             response_msg = _build_error(str(exc))
+        except Exception as exc:
+            logger.exception("Unhandled websocket error", exc_info=exc)
+            response_msg = _build_error("internal server error")
 
         out_payload = response_msg.SerializeToString()
         await websocket.send(encode_message(out_payload))
@@ -248,6 +284,20 @@ async def get_client(client_id: str) -> Response:
     if record is None:
         return jsonify({"error": "client not found"}), 404
     return jsonify(record.model_dump(mode="json"))
+
+
+@app.delete("/api/clients/<client_id>")
+async def delete_client(client_id: str) -> Response:
+    """Remove a client from memory."""
+    record = STORE.remove_client(client_id)
+    if record is None:
+        return jsonify({"error": "client not found"}), 404
+    logger.warning(
+        "client removed from store client_id=%s last_state=%s",
+        client_id,
+        record.model_dump(mode="json"),
+    )
+    return jsonify({"status": "removed"})
 
 
 @app.post("/api/clients/<client_id>/commands")
@@ -386,6 +436,20 @@ async def help_page() -> Response:
         "__DELAYED_SECONDS__", str(CONFIG.delayed_comms_seconds)
     ).replace("__SIGNIFICANT_SECONDS__", str(CONFIG.significant_comms_seconds))
     return Response(html, content_type="text/html; charset=utf-8")
+
+
+@app.post("/api/shutdown")
+async def shutdown_server() -> Response:
+    """Shutdown the server if explicitly confirmed."""
+    payload = await request.get_json(silent=True) or {}
+    confirm = payload.get("confirm") is True
+    if not confirm:
+        return jsonify({"error": "confirm is required"}), 400
+    global _SHUTDOWN_REQUESTED
+    _SHUTDOWN_REQUESTED = True
+    logger.warning("shutdown requested via API")
+    asyncio.create_task(_shutdown_after_response())
+    return jsonify({"status": "shutting down"})
 
 
 _WEB_UI_PATH = pathlib.Path(__file__).with_name("web_ui.html")
