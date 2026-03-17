@@ -30,6 +30,13 @@ import httpx
 import websockets
 from google.protobuf import text_format
 
+try:
+    from uuid_v7.base import uuid7
+except ImportError:  # pragma: no cover - environment-dependent
+    uuid7 = None
+
+import uuid
+
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
@@ -52,7 +59,9 @@ FLUENTBIT_CMD = "fluent-bit"  # Fluent Bit executable name.
 FLUENTBIT_CONFIG_FLAG = "-c"  # Fluent Bit config flag.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
 KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key for agent description.
-KEY_INSTANCE_UID = "instance_uid"  # Comment key for instance UID.
+KEY_SERVICE_INSTANCE_ID_COMMENT = (
+    "service_instance_id"  # Comment key for service instance ID.
+)
 KEY_HTTP_PORT = "http_port"  # Fluent Bit HTTP port config key.
 KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit HTTP listen config key.
 KEY_HTTP_SERVER = "http_server"  # Fluent Bit HTTP server config key.
@@ -96,11 +105,27 @@ _HEARTBEAT_PATHS = (  # Local endpoints polled per heartbeat.
 class OpAMPClient:
     """Minimal OpAMP client supporting HTTP and WebSocket transports."""
 
-    def __init__(self, base_url: str, config: ConsumerConfig) -> None:
+    def __init__(self, base_url: str, config: ConsumerConfig | None = None) -> None:
         """Create a client bound to a base URL."""
+        self.allow_heartbeat: bool = True
+        self.msg_sequence_number = 0
+
+        if config is None:
+            config = globals().get("CONFIG") or consumer_config.CONFIG
+        if config is None:
+            logging.getLogger(__name__).warning("No config supplied to OpAMPClient")
+            raise ValueError("OpAMP client requires a consumer config")
+        self.config = config
+
         self.base_url = base_url.rstrip("/")
         self.last_heartbeat_results: dict[str, str] = {}
-        self.config = config
+        if uuid7 is None:
+            logging.getLogger(__name__).warning(
+                "uuid_v7 not available; falling back to uuid4"
+            )
+            self.uid_instance = uuid.uuid4().bytes
+        else:
+            self.uid_instance = uuid7().bytes
 
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response."""
@@ -124,15 +149,12 @@ class OpAMPClient:
     ) -> opamp_pb2.AgentToServer:
         msg.agent_description.CopyFrom(self.get_agent_description())
         msg.capabilities = self.get_agent_capabilities()
-        instance_uid = self.config.instance_uid
-        if isinstance(instance_uid, str):
-            cleaned = instance_uid.strip()
-            if re.fullmatch(r"[0-9a-fA-F]+", cleaned):
-                msg.instance_uid = bytes.fromhex(cleaned)
-            else:
-                msg.instance_uid = cleaned.encode(UTF8_ENCODING)
-        elif instance_uid is not None:
-            msg.instance_uid = instance_uid
+        msg.sequence_num = self.msg_sequence_number
+        if self.uid_instance is not None:
+            msg.instance_uid = self.uid_instance
+        else:
+            logging.getLogger(__name__).error("No UID set")
+
         if self.last_heartbeat_results:
             healthy = True
             last_error = ""
@@ -159,20 +181,20 @@ class OpAMPClient:
 
         try:
             if reply.HasField("instance_uid"):
-                if reply.instance_uid != self.config.instance_uid:
+                if reply.instance_uid != self.config.service_instance_id:
                     logger.error(
-                        "Message doesn't have an instance uid or doesn't match our instance %s",
-                        self.config.instance_uid,
+                        "Message doesn't have an instance uid or doesn't match our service instance id %s",
+                        self.config.service_instance_id,
                     )
                     successful_message = False
             else:
                 logging.getLogger(__name__).error(
-                    "Server didnt share instance_uid, my instance uid is %s",
-                    self.config.instance_uid,
+                    "Server didnt share instance_uid, my service instance id is %s",
+                    self.config.service_instance_id,
                 )
                 successful_message = False
         except ValueError:
-            logger.error("Could locate instance_uid in reply")
+            logger.error("Couldn't locate instance_uid in reply")
             successful_message = False
 
         if reply.HasField("error_response"):
@@ -216,9 +238,9 @@ class OpAMPClient:
         url = f"{self.base_url}{OPAMP_HTTP_PATH}"
         logging.getLogger(__name__).debug(f"Calling web socket at {url}")
 
-        async with websockets.connect(url) as ws:
-            await ws.send(encode_message(msg.SerializeToString()))
-            data = await ws.recv()
+        async with websockets.connect(url) as web_socket:
+            await web_socket.send(encode_message(msg.SerializeToString()))
+            data = await web_socket.recv()
         if isinstance(data, str):
             data = data.encode(UTF8_ENCODING)
         header, payload = decode_message(data)
@@ -302,11 +324,17 @@ class OpAMPClient:
             value = f"{ERR_PREFIX}{exc}"
         self.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = value
 
-    def get_agent_description(self) -> opamp_pb2.AgentDescription:
+    def get_agent_description(
+        self, instance_uid: bytes | str | None = None
+    ) -> opamp_pb2.AgentDescription:
         """Build AgentDescription for outbound AgentToServer messages."""
+        logger = logging.getLogger(__name__)
         desc = opamp_pb2.AgentDescription()
         service_name = self.config.service_name
         service_namespace = self.config.service_namespace
+        fluentbit_version = self.last_heartbeat_results.get(KEY_FLUENTBIT_VERSION)
+        metadata = self.get_host_metadata()
+
         if service_name:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -314,6 +342,9 @@ class OpAMPClient:
                     value=anyvalue_pb2.AnyValue(string_value=service_name),
                 )
             )
+        else:
+            logger.warning("No Service name to provide")
+
         if service_namespace:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -321,7 +352,9 @@ class OpAMPClient:
                     value=anyvalue_pb2.AnyValue(string_value=service_namespace),
                 )
             )
-        metadata = self.get_host_metadata()
+        else:
+            logger.warning("No Service Namespace to provide")
+
         for key, value in metadata.items():
             desc.non_identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -329,21 +362,33 @@ class OpAMPClient:
                     value=anyvalue_pb2.AnyValue(string_value=value),
                 )
             )
-        instance_uid = self.config.instance_uid
-        if instance_uid:
+
+        desc.identifying_attributes.append(
+            anyvalue_pb2.KeyValue(
+                key="service.type",
+                value=anyvalue_pb2.AnyValue(string_value="Fluent Bit"),
+            )
+        )
+
+        service_instance_id = (
+            instance_uid
+            if instance_uid is not None
+            else self.config.service_instance_id
+        )
+        if service_instance_id:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
                     key=KEY_SERVICE_INSTANCE_ID,
                     value=anyvalue_pb2.AnyValue(
                         string_value=(
-                            instance_uid.hex()
-                            if isinstance(instance_uid, (bytes, bytearray))
-                            else str(instance_uid)
+                            service_instance_id.hex()
+                            if isinstance(service_instance_id, (bytes, bytearray))
+                            else str(service_instance_id)
                         )
                     ),
                 )
             )
-        fluentbit_version = self.last_heartbeat_results.get(KEY_FLUENTBIT_VERSION)
+
         if fluentbit_version:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -351,6 +396,11 @@ class OpAMPClient:
                     value=anyvalue_pb2.AnyValue(string_value=fluentbit_version),
                 )
             )
+        else:
+            logger.warning("No Client version to provide")
+
+        logger.debug(f"Agent description is :{desc}")
+
         return desc
 
     def get_agent_capabilities(self) -> int:
@@ -451,31 +501,22 @@ class OpAMPClient:
             "server custom_message:\n%s", text_format.MessageToString(custom_message)
         )
 
-    def _heartbeat_loop(self, port: int) -> None:
+    async def _heartbeat_loop(self, port: int) -> None:
         """Run a periodic polling loop that updates last heartbeat results."""
         logger = logging.getLogger(__name__)
         interval = max(0, int(self.config.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
         logger.debug(f"Heartbeat cycle start - checking every {interval}")
-        while True:
+        while self.allow_heartbeat:
             time.sleep(interval)
             results, codes = self.poll_local_status_with_codes(port)
             self.last_heartbeat_results.clear()
             self.last_heartbeat_results.update(results)
+            self.add_fluentbit_version(port)
             if self.config.log_fluentbit_api_responses:
                 logger.info(f"Heartbeat outcome --> {results}")
             else:
                 logger.info("Heartbeat response codes: %s", codes)
-            self.send()
-
-    def start_heartbeat_thread(self, port: int) -> threading.Thread:
-        """Start a daemon thread to poll local status endpoints."""
-        thread = threading.Thread(
-            target=self._heartbeat_loop, args=(port,), daemon=True
-        )
-        thread.start()
-        logging.getLogger(__name__).debug("Heatbeat thread launched")
-
-        return thread
+            self._handle_server_to_agent(await self.send())
 
 
 def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
@@ -487,7 +528,7 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
         raise ValueError(f"{CFG_FLUENTBIT_CONFIG_PATH} is not set")
 
     comment_kv = re.compile(
-        r"^\s*#\s*(?P<key>agent_description|instance_uid)\s*[:=]\s*(?P<value>.+?)\s*$",
+        rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*[:=]\s*(?P<value>.+?)\s*$",
         re.IGNORECASE,
     )
     config_kv = re.compile(
@@ -596,12 +637,12 @@ def main() -> None:
     client = OpAMPClient(config.server_url, config)
 
     client.launch_fluent_bit()
+    client.add_fluentbit_version(config.http_port)
 
     logger.info("introducing self to server")
     asyncio.run(run_client(client))
 
-    # client.start_heartbeat_thread(config.http_port)
-    client._heartbeat_loop(config.http_port)
+    asyncio.run(client._heartbeat_loop(config.http_port))
 
 
 if __name__ == "__main__":

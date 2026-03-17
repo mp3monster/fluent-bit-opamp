@@ -27,6 +27,7 @@ dependencies = [
   "grpcio-tools>=1.60",
   "httpx>=0.27",
   "websockets>=12.0",
+  "uuid_v7>=0.1",
 ]
 
 [project.optional-dependencies]
