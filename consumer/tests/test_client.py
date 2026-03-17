@@ -26,6 +26,7 @@ from opamp_consumer.proto import opamp_pb2, anyvalue_pb2
 
 
 def _set_config(agent_capabilities) -> None:
+    """Install a test config with the requested agent capabilities."""
     config = ConsumerConfig(
         server_url="http://localhost",
         fluentbit_config_path="unused",
@@ -40,6 +41,7 @@ def _set_config(agent_capabilities) -> None:
 
 
 def test_get_agent_capabilities_from_names(caplog) -> None:
+    """Build a bitmask from named capabilities and ignore unknowns."""
     _set_config(["ReportsStatus", "ReportsHealth", "ReportsHeartbeat"])
     caplog.set_level(logging.WARNING)
     instance = client.OpAMPClient("http://localhost")
@@ -56,6 +58,7 @@ def test_get_agent_capabilities_from_names(caplog) -> None:
 
 
 def test_get_agent_capabilities_warns_unknown(caplog) -> None:
+    """Log a warning when unknown capability names are provided."""
     _set_config(["ReportsStatus", "UnknownCapability"])
     caplog.set_level(logging.WARNING)
     instance = client.OpAMPClient("http://localhost")
@@ -67,9 +70,10 @@ def test_get_agent_capabilities_warns_unknown(caplog) -> None:
 
 
 def test_get_agent_description_includes_config_and_version(monkeypatch) -> None:
+    """Include configured service info and Fluent Bit version in AgentDescription."""
     _set_config(["ReportsStatus"])
     instance = client.OpAMPClient("http://localhost")
-    instance.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = "3.0.0 (classic)"
+    instance.data.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = "3.0.0 (classic)"
 
     monkeypatch.setattr(
         instance,
@@ -103,6 +107,7 @@ def test_get_agent_description_includes_config_and_version(monkeypatch) -> None:
 
 
 def test_handle_error_response_logs(caplog) -> None:
+    """Log server error response details including message and retry info."""
     instance = client.OpAMPClient("http://localhost")
     caplog.set_level(logging.WARNING)
 
