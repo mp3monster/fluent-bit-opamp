@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+from ast import List
 import logging
 import pathlib
 import platform
@@ -116,6 +117,7 @@ class OpAMPClient:
             logging.getLogger(__name__).warning("No config supplied to OpAMPClient")
             raise ValueError("OpAMP client requires a consumer config")
         self.config = config
+        self._ensure_reports_status_capability()
 
         self.base_url = base_url.rstrip("/")
         self.last_heartbeat_results: dict[str, str] = {}
@@ -126,6 +128,27 @@ class OpAMPClient:
             self.uid_instance = uuid.uuid4().bytes
         else:
             self.uid_instance = uuid7().bytes
+
+    def _ensure_reports_status_capability(self) -> None:
+        """Ensure ReportsStatus is set on the client configuration."""
+        required_bit = CAPABILITIES_MAP.get("ReportsStatus", 0)
+        configured = self.config.agent_capabilities
+        logger = logging.getLogger(__name__)
+        if isinstance(configured, int):
+            if required_bit and (configured & required_bit) == 0:
+                self.config.agent_capabilities = configured | required_bit
+                logger.info("Added ReportsStatus to agent capabilities bitmask")
+            return
+        if not configured:
+            self.config.agent_capabilities = required_bit
+            logger.info("Defaulted agent capabilities to ReportsStatus")
+            return
+        if isinstance(configured, (list, tuple, set)):
+            if "ReportsStatus" not in {str(name) for name in configured}:
+                updated = list(configured)
+                updated.append("ReportsStatus")
+                self.config.agent_capabilities = updated
+                logger.info("Added ReportsStatus to agent capabilities list")
 
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response."""
@@ -228,8 +251,20 @@ class OpAMPClient:
             msg = self._populate_agent_to_server(msg)
         transport = (self.config.transport or TRANSPORT_HTTP).strip().lower()
         if transport == TRANSPORT_WEBSOCKET:
-            return await self.send_websocket(msg)
-        return await self.send_http(msg)
+            try:
+                return await self.send_websocket(msg)
+            except:
+                logging.getLogger(__name__).warning(
+                    "Error sending websocket client-to-server message"
+                )
+
+        try:
+            return await self.send_http(msg)
+        except Exception as err:
+            logging.getLogger(__name__).warning(
+                f"Error sending HTTP client-to-server message\n {err}"
+            )
+        return None
 
     async def send_websocket(
         self, msg: opamp_pb2.AgentToServer
@@ -407,10 +442,11 @@ class OpAMPClient:
         """Return the configured agent capability bitmask."""
         configured = self.config.agent_capabilities
         if isinstance(configured, int):
+            logging.getLogger(__name__).debug(f"Capabilities named - {configured}")
             return configured
         if not configured:
             logging.getLogger(__name__).warning(
-                "No capabilities configuration available"
+                "No capabilities configuration available applying required"
             )
             return 0
         mask = 0
@@ -422,6 +458,7 @@ class OpAMPClient:
                 )
                 continue
             mask |= value
+            logging.getLogger(__name__).debug(f"Added to mask {name} - code now {mask}")
         return mask
 
     def get_host_metadata(self) -> dict[str, str]:
