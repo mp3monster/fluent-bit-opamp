@@ -32,6 +32,27 @@
     p { color: var(--muted); line-height: 1.5; }
     ul { padding-left: 18px; }
     .tag { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #e3e8ff; color: #2f3f8f; font-size: 0.85rem; }
+    footer.footer {
+      text-align: center;
+      color: var(--muted);
+      padding: 18px 0 28px;
+    }
+    .thresholds {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 18px 0 8px;
+    }
+    .threshold-card {
+      background: #f1f5ff;
+      border: 1px solid #d7deee;
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+    .threshold-card strong {
+      display: block;
+      margin-bottom: 4px;
+    }
   </style>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
 </head>
@@ -45,6 +66,16 @@
       <li>Red rows are past the significant comms threshold.</li>
       <li>Rows with pending config or commands show a colored border.</li>
     </ul>
+    <div class="thresholds">
+      <div class="threshold-card">
+        <strong>Amber Threshold</strong>
+        <div>__DELAYED_SECONDS__ seconds</div>
+      </div>
+      <div class="threshold-card">
+        <strong>Red Threshold</strong>
+        <div>__SIGNIFICANT_SECONDS__ seconds</div>
+      </div>
+    </div>
     <p>Use the main page to open an agent, paste config/commands, and save. Changes are queued until the next agent check-in.</p>
   </main>
   <footer class="footer">

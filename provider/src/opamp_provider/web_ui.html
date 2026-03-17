@@ -84,11 +84,20 @@
     }
 
     input, select, textarea {
-      font-family: "IBM Plex Mono", monospace;
+      font-family: inherit;
       padding: 8px 10px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: #fff;
+    }
+    .short-input {
+      width: 5ch;
+      text-align: center;
+    }
+    .input-suffix {
+      margin-left: 6px;
+      font-size: 0.85rem;
+      color: var(--muted);
     }
 
     .table {
@@ -234,6 +243,22 @@
       gap: 10px;
       justify-content: flex-end;
     }
+    .cap-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .cap-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: #f0f3fb;
+      color: #1f2a37;
+      text-transform: none;
+    }
 
     .modal-actions button {
       border: none;
@@ -288,11 +313,12 @@
   </header>
   <main>
     <div class="controls">
-      <label>Refresh (s)
-        <input id="refreshInput" type="number" min="5" value="30" />
+      <label>Refresh
+        <input id="refreshInput" class="short-input" type="number" min="5" value="30" />
+        <span class="input-suffix">seconds</span>
       </label>
       <label>Page size
-        <input id="pageSizeInput" type="number" min="5" value="20" />
+        <input id="pageSizeInput" class="short-input" type="number" min="5" value="20" />
       </label>
       <span style="color: var(--muted);">Click headers to sort.</span>
     </div>
@@ -314,7 +340,7 @@
       <button id="nextBtn">Next</button>
       <span>Page <span id="pageNum">1</span> of <span id="pageTotal">1</span></span>
       <label>Jump to
-        <input id="pageJump" type="number" min="1" value="1" style="width: 70px;" />
+        <input id="pageJump" class="short-input" type="number" min="1" value="1" />
       </label>
     </div>
   </main>
@@ -335,7 +361,10 @@
       </div>
       <div style="margin-top: 16px;">
         <label style="font-size: 0.85rem; color: var(--muted);">Command</label>
-        <input id="commandInput" type="text" placeholder="restart" style="width: 100%;" />
+        <select id="commandInput" style="width: 100%;">
+          <option value="">-- select --</option>
+          <option value="restart">restart</option>
+        </select>
       </div>
       <div class="modal-actions">
         <button id="saveBtn" class="save">Save</button>
@@ -421,6 +450,8 @@
         renderTable();
       }
     });
+
+    commandInput.addEventListener("change", updateConfigLock);
 
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
@@ -536,15 +567,26 @@
       if (status.cls === "late-red") modalCard.classList.add("late-red");
 
       modalFields.innerHTML = "";
+      const agentDesc = client.agent_description || "";
+      const serviceName = extractAgentField(agentDesc, "service.name");
+      const hostType = extractAgentField(agentDesc, "os_type");
+      const hostVersion = extractAgentField(agentDesc, "os_version");
+      const hostName = extractAgentField(agentDesc, "hostname");
+      const nextExpected = computeNextExpected(client);
+
       const fields = [
-        ["Capabilities", (client.capabilities || []).join(", ") || "--"],
-        ["Node Age (s)", client.node_age_seconds?.toFixed?.(1) ?? "--"],
+        ["First Registered", client.first_seen ? new Date(client.first_seen).toLocaleString() : "--"],
         ["Last Communication", client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"],
-        ["Current Config", client.current_config_version ?? "--"],
+        ["Next Expected", nextExpected ? new Date(nextExpected).toLocaleString() : "--"],
         ["Requested Config", client.requested_config_version ?? "--"],
         ["Client Version", client.client_version ?? "--"],
-        ["Next Expected", client.next_expected_communication ? new Date(client.next_expected_communication).toLocaleString() : "--"],
+        ["Last Channel", client.last_channel ?? "--"],
+        ["Capabilities", renderCapabilitiesList(client.capabilities)],
       ];
+      if (serviceName) fields.splice(1, 0, ["Service Name", serviceName]);
+      if (hostType) fields.splice(2, 0, ["Host Type", hostType]);
+      if (hostVersion) fields.splice(3, 0, ["Host Version", hostVersion]);
+      if (hostName) fields.splice(4, 0, ["Host Name", hostName]);
       fields.forEach(([label, value]) => {
         const div = document.createElement("div");
         div.className = "field";
@@ -554,6 +596,7 @@
 
       configInput.value = client.requested_config || "";
       commandInput.value = "";
+      updateConfigLock();
       modal.classList.add("open");
     }
 
@@ -562,6 +605,7 @@
       activeClient = null;
       configInput.value = "";
       commandInput.value = "";
+      updateConfigLock();
     }
 
     async function saveChanges() {
@@ -588,6 +632,36 @@
       }
       closeModal();
       await fetchClients();
+    }
+
+    function extractAgentField(text, key) {
+      if (!text) return "";
+      const regex = new RegExp(`key: \\"${key}\\"[\\s\\S]*?string_value: \\"([^\\"]*)\\"`);
+      const match = text.match(regex);
+      return match ? match[1] : "";
+    }
+
+    function renderCapabilitiesList(capabilities) {
+      if (!capabilities || capabilities.length === 0) return "--";
+      return `<div class="cap-list">${capabilities
+        .map(cap => `<span class="cap-pill">${cap}</span>`)
+        .join("")}</div>`;
+    }
+
+    function computeNextExpected(client) {
+      if (!client.last_communication) return null;
+      const last = new Date(client.last_communication);
+      if (Number.isNaN(last.getTime())) return null;
+      const intervalSeconds = client.heartbeat_frequency ?? state.refreshSeconds;
+      return new Date(last.getTime() + intervalSeconds * 1000).toISOString();
+    }
+
+    function updateConfigLock() {
+      const hasCommand = Boolean(commandInput.value.trim());
+      configInput.disabled = hasCommand;
+      configInput.placeholder = hasCommand
+        ? "Disabled while a command is selected..."
+        : "Paste new configuration here...";
     }
 
     function scheduleRefresh() {
