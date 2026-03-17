@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 from ast import List
+from ctypes import string_at
 import logging
+from os import strerror
 import pathlib
 import platform
 import re
@@ -110,6 +112,8 @@ class OpAMPClient:
         """Create a client bound to a base URL."""
         self.allow_heartbeat: bool = True
         self.msg_sequence_number = 0
+        self.last_heartbeat_http_codes = None
+        self.last_heartbeat_call = 0
 
         if config is None:
             config = globals().get("CONFIG") or consumer_config.CONFIG
@@ -167,6 +171,62 @@ class OpAMPClient:
             self._handle_server_to_agent(reply)
             return reply
 
+    def _populate_agent_to_server_health(
+        self, msg: opamp_pb2.AgentToServer
+    ) -> opamp_pb2.AgentToServer:
+        healthy = True
+        if self.last_heartbeat_results:
+            healthy = (
+                self.last_heartbeat_http_codes is not None
+                and self.last_heartbeat_http_codes["health"]
+            )
+            last_error = ""
+            for value in self.last_heartbeat_results.values():
+                text = str(value)
+                logging.getLogger(__name__).debug(f"Evaluating for health>>{text}")
+                if text.startswith(ERR_PREFIX):
+                    healthy = False
+                    last_error = text
+
+                msg = self._health_from_metrics(msg, text)
+
+            msg.health.status = "heartbeat"
+            if not healthy and last_error:
+                msg.health.last_error = last_error
+        else:
+            healthy = False
+            msg.health.last_error = "Supervisor has not state"
+
+        msg.health.start_time_unix_nano = time.time_ns() - self.launched_at
+        msg.health.status_time_unix_nano = time.time_ns()
+        msg.health.healthy = int(healthy)
+        logging.getLogger(__name__).debug(f"Health info sending is >{msg.health}<")
+        return msg
+
+    def _health_from_metrics(self, msg, text) -> opamp_pb2.AgentToServer:
+        lines = text.splitlines()
+        METRIC_STR: str = 'errors_total{name="'
+        for line in lines:
+            line_idx = line.find(METRIC_STR)
+            if line_idx >= 0:
+                # fluentbit_output_errors_total{name="file.0"} 0
+                name_start: int = line_idx + len(METRIC_STR)
+                name_end: int = line.index('"', name_start)
+                component_name: str = line[name_start:name_end]
+                last_num_text = re.findall(r"\d+(?:\.\d+)?", line[name_end:])[-1]
+                last_num = int(last_num_text)
+                msg.health.component_health_map[component_name].CopyFrom(
+                    opamp_pb2.ComponentHealth(
+                        healthy=(last_num == 0),
+                        status=f"error count={last_num_text}",
+                    )
+                )
+                logging.getLogger(__name__).debug(
+                    "Component metric %s",
+                    msg.health.component_health_map[component_name],
+                )
+        return msg
+
     def _populate_agent_to_server(
         self, msg: opamp_pb2.AgentToServer
     ) -> opamp_pb2.AgentToServer:
@@ -178,20 +238,7 @@ class OpAMPClient:
         else:
             logging.getLogger(__name__).error("No UID set")
 
-        if self.last_heartbeat_results:
-            healthy = True
-            last_error = ""
-            for value in self.last_heartbeat_results.values():
-                text = str(value)
-                if text.startswith(ERR_PREFIX):
-                    healthy = False
-                    last_error = text
-                    break
-            msg.health.healthy = healthy
-            msg.health.status = "heartbeat"
-            msg.health.status_time_unix_nano = time.time_ns()
-            if not healthy and last_error:
-                msg.health.last_error = last_error
+        msg = self._populate_agent_to_server_health(msg)
         return msg
 
     def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
@@ -302,6 +349,7 @@ class OpAMPClient:
         )
 
         processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
+        self.launched_at = time.time_ns()
         logger.info(f"Launch result = {processResponse}")
         return launched
 
@@ -545,14 +593,20 @@ class OpAMPClient:
         logger.debug(f"Heartbeat cycle start - checking every {interval}")
         while self.allow_heartbeat:
             time.sleep(interval)
-            results, codes = self.poll_local_status_with_codes(port)
-            self.last_heartbeat_results.clear()
-            self.last_heartbeat_results.update(results)
-            self.add_fluentbit_version(port)
-            if self.config.log_fluentbit_api_responses:
-                logger.info(f"Heartbeat outcome --> {results}")
-            else:
-                logger.info("Heartbeat response codes: %s", codes)
+            try:
+                results, codes = self.poll_local_status_with_codes(port)
+                self.last_heartbeat_results.clear()
+                self.last_heartbeat_results.update(results)
+                self.add_fluentbit_version(port)
+                self.last_heartbeat_http_codes = codes
+                if self.config.log_fluentbit_api_responses:
+                    logger.info(f"Heartbeat outcome --> {results}")
+                else:
+                    logger.info("Heartbeat response codes: %s", codes)
+            except:
+                self.last_heartbeat_results = None
+                self.last_heartbeat_http_codes = None
+
             self._handle_server_to_agent(await self.send())
 
 
