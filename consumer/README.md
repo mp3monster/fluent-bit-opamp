@@ -89,3 +89,6 @@ Helper scripts live in `scripts/` at the repo root:
 - Bash: `scripts/run_supervisor.sh`
 
 Both scripts write logs to `logs/supervisor.log` and rotate it on startup.
+
+You can also gracefully stop the supervisor by creating a semaphore file named
+`OpAMPSupervisor.signal` in the folder where the supervisor was started.
