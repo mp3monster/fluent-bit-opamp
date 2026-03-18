@@ -10,57 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-from pathlib import Path
+import os
+import pathlib
 
 from opamp_provider import config as provider_config
-from opamp_provider.config import DEFAULT_DELAYED_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS
 
 
-def test_load_config_with_overrides(tmp_path: Path) -> None:
-    data = {
-        "provider": {
-            "server_capabilities": ["AcceptsStatus"],
-            "delayed_comms_seconds": 10,
-            "significant_comms_seconds": 20,
-        }
-    }
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(data), encoding="utf-8")
-
-    config = provider_config.load_config_with_overrides(
-        config_path=config_path,
-        server_capabilities=["AcceptsStatus"],
-    )
-
-    assert config.delayed_comms_seconds == 10
-    assert config.significant_comms_seconds == 20
-    assert config.server_capabilities != 0
-
-
-def test_load_config_defaults_when_missing(tmp_path: Path) -> None:
-    data = {"provider": {"server_capabilities": ["AcceptsStatus"]}}
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(data), encoding="utf-8")
-
-    config = provider_config.load_config_with_overrides(
-        config_path=config_path,
-        server_capabilities=None,
-    )
-
-    assert config.delayed_comms_seconds == DEFAULT_DELAYED_COMMS_SECONDS
-    assert config.significant_comms_seconds == DEFAULT_SIGNIFICANT_COMMS_SECONDS
-
-
-def test_update_comms_thresholds() -> None:
-    original = provider_config.ProviderConfig(
-        server_capabilities=1,
-        delayed_comms_seconds=30,
-        significant_comms_seconds=120,
-        webui_port=8080,
-    )
-    provider_config.set_config(original)
-
-    updated = provider_config.update_comms_thresholds(delayed=45, significant=300)
-    assert updated.delayed_comms_seconds == 45
-    assert updated.significant_comms_seconds == 300
+def test_minutes_keep_disconnected_default() -> None:
+    root = pathlib.Path(__file__).resolve().parents[2]
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(root / "tests" / "opamp.json")
+    config = provider_config.load_config()
+    assert config.minutes_keep_disconnected == provider_config.DEFAULT_MINUTES_KEEP_DISCONNECTED

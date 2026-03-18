@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import pathlib
 import sys
 
@@ -20,3 +21,4 @@ def pytest_configure() -> None:
     for path in (root, src):
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
+    os.environ.setdefault("OPAMP_CONFIG_PATH", str(root / "tests" / "opamp.json"))
