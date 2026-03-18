@@ -15,7 +15,8 @@ Example `opamp.json`:
     "server_capabilities": ["AcceptsStatus"],
     "delayed_comms_seconds": 60,
     "significant_comms_seconds": 300,
-    "webui_port": 8080
+    "webui_port": 8080,
+    "minutes_keep_disconnected": 5
   }
 }
 ```
@@ -30,6 +31,9 @@ Example `opamp.json`:
   Time in seconds before a client is marked significantly delayed (red).
 - `provider.webui_port` (integer, optional, default `8080`)
   Port for the provider UI and HTTP server.
+- `provider.minutes_keep_disconnected` (integer, optional, default `30`)
+  Minutes to retain disconnected clients before purging. Disconnections are
+  purged during UI refresh at half this interval.
 
 ## Run scripts
 
