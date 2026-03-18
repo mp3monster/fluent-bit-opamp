@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpAMP Provider Help</title>
+  <title>OpAMP Server Help</title>
   <style>
     :root {
       color-scheme: light;
@@ -58,13 +58,16 @@
 </head>
 <body>
   <main>
-    <span class="tag">OpAMP Provider UI</span>
+    <span class="tag">OpAMP Server UI</span>
     <h1>Help</h1>
     <p>This console monitors connected agents, highlights late communications, and lets you queue commands or staged configurations.</p>
     <ul>
       <li>Amber rows are past the delayed comms threshold.</li>
       <li>Red rows are past the significant comms threshold.</li>
-      <li>Rows with pending config or commands show a colored border.</li>
+      <li>Rows with pending config or commands show a colored border (pending indicator).</li>
+      <li>The pending indicator means the server has queued a change for that agent but has not yet sent it.</li>
+      <li>Disconnected status means the agent explicitly sent an OpAMP disconnect message and will be purged after the configured retention period.</li>
+      <li>Disconnected agents are excluded from late/overdue counts and are tinted electric blue in the table.</li>
     </ul>
     <div class="thresholds">
       <div class="threshold-card">
@@ -79,7 +82,7 @@
     <p>Use the main page to open an agent, paste config/commands, and save. Changes are queued until the next agent check-in.</p>
   </main>
   <footer class="footer">
-    <div>Licensed under Apache 2.0 • Attribution: mp3monster.org</div>
+    <div>Licensed under Apache 2.0 • Attribution: <a href="https://mp3monster.org" target="_blank" rel="noopener noreferrer">mp3monster.org</a></div>
   </footer>
 </body>
 </html>

@@ -144,6 +144,7 @@
 
     .late-amber .dot { background: var(--amber); }
     .late-red .dot { background: var(--red); }
+    .disconnected .dot { background: #2f6bff; }
 
     .pending-border {
       border-left: 6px solid var(--pending);
@@ -151,6 +152,7 @@
 
     .row-amber { background: rgba(243, 178, 75, 0.12); }
     .row-red { background: rgba(239, 107, 91, 0.18); }
+    .row-disconnected { background: rgba(47, 107, 255, 0.14); }
 
     .pagination {
       display: flex;
@@ -414,7 +416,6 @@
           <th data-sort="last_communication">Last Seen</th>
           <th data-sort="current_config_version">Config Version</th>
           <th data-sort="client_version">Client Version</th>
-          <th>Pending</th>
         </tr>
       </thead>
       <tbody id="clientBody"></tbody>
@@ -429,7 +430,8 @@
     </div>
   </main>
   <footer class="footer">
-    <div>Licensed under Apache 2.0 • Attribution: mp3monster.org</div>
+    <div>Licensed under Apache 2.0 • Attribution: <a href="https://mp3monster.org" target="_blank" rel="noopener noreferrer">mp3monster.org</a></div>
+    <div><a href="https://opentelemetry.io/docs/specs/opamp/" target="_blank" rel="noopener noreferrer">OpAMP Specification</a></div>
   </footer>
 
   <div id="modal" class="modal">
@@ -465,6 +467,7 @@
   <button id="shutdownButton" class="shutdown-button" type="button">Shutdown Server</button>
   <div id="contextMenu" class="context-menu">
     <button id="removeClientBtn" type="button">Remove Client</button>
+    <button id="issueIdBtn" type="button">Issue New Unique ID</button>
   </div>
 
   <script>
@@ -502,6 +505,7 @@
     const shutdownButton = document.getElementById("shutdownButton");
     const contextMenu = document.getElementById("contextMenu");
     const removeClientBtn = document.getElementById("removeClientBtn");
+    const issueIdBtn = document.getElementById("issueIdBtn");
 
     let activeClient = null;
     let contextClient = null;
@@ -590,6 +594,9 @@
     }
 
     function computeStatus(client) {
+      if (client.disconnected) {
+        return { label: "disconnected", cls: "disconnected" };
+      }
       if (!client.last_communication) {
         return { label: "unknown", cls: "" };
       }
@@ -632,12 +639,15 @@
       clientBody.innerHTML = "";
       pageItems.forEach(client => {
         const status = computeStatus(client);
-        if (status.cls === "late-amber") amber += 1;
-        if (status.cls === "late-red") red += 1;
+        if (!client.disconnected) {
+          if (status.cls === "late-amber") amber += 1;
+          if (status.cls === "late-red") red += 1;
+        }
 
         const tr = document.createElement("tr");
         if (status.cls === "late-amber") tr.classList.add("row-amber");
         if (status.cls === "late-red") tr.classList.add("row-red");
+        if (status.cls === "disconnected") tr.classList.add("row-disconnected");
         if (hasPending(client)) tr.classList.add("pending-border");
         tr.addEventListener("click", () => openModal(client));
         tr.addEventListener("contextmenu", event => {
@@ -654,7 +664,6 @@
           <td>${client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"}</td>
           <td>${client.current_config_version ?? "--"}</td>
           <td>${client.client_version ?? "--"}</td>
-          <td>${hasPending(client) ? "yes" : "no"}</td>
         `;
         clientBody.appendChild(tr);
       });
@@ -670,9 +679,10 @@
       activeClient = client;
       modalTitle.textContent = `Client ${client.client_id}`;
       const status = computeStatus(client);
-      modalCard.classList.remove("late-amber", "late-red");
+      modalCard.classList.remove("late-amber", "late-red", "row-disconnected");
       if (status.cls === "late-amber") modalCard.classList.add("late-amber");
       if (status.cls === "late-red") modalCard.classList.add("late-red");
+      if (status.cls === "disconnected") modalCard.classList.add("row-disconnected");
 
       modalFields.innerHTML = "";
       clientDataPanel.classList.add("hidden");
@@ -900,6 +910,23 @@
       await fetchClients();
     }
 
+    async function issueNewId() {
+      if (!contextClient) return;
+      const ok = window.confirm(
+        `Issue a new unique ID for client ${contextClient.client_id}?`
+      );
+      if (!ok) return;
+      const resp = await fetch(`/api/clients/${contextClient.client_id}/identify`, {
+        method: "POST",
+      });
+      hideContextMenu();
+      if (!resp.ok) {
+        window.alert("Failed to issue new unique ID.");
+        return;
+      }
+      await fetchClients();
+    }
+
     async function requestShutdown() {
       const ok = window.confirm("Shutdown the OpAMP server? This will stop the process.");
       if (!ok) return;
@@ -931,6 +958,7 @@
     shutdownButton.addEventListener("click", requestShutdown);
     toggleDataBtn.addEventListener("click", toggleClientData);
     removeClientBtn.addEventListener("click", removeClient);
+    issueIdBtn.addEventListener("click", issueNewId);
     document.addEventListener("click", event => {
       if (!contextMenu.contains(event.target)) hideContextMenu();
     });
