@@ -120,3 +120,53 @@ def test_handle_error_response_logs(caplog) -> None:
 
     assert "error_response" in caplog.text
     assert "boom" in caplog.text
+
+
+def test_send_as_is_skips_population(monkeypatch) -> None:
+    """Send with send_as_is True should skip population."""
+    instance = client.OpAMPClient("http://localhost")
+    called = {"count": 0}
+
+    def _populate(msg):
+        called["count"] += 1
+        return msg
+
+    async def _fake_send_http(msg):
+        return None
+
+    monkeypatch.setattr(instance, "_populate_agent_to_server", _populate)
+    monkeypatch.setattr(instance, "send_http", _fake_send_http)
+
+    msg = opamp_pb2.AgentToServer()
+    import asyncio
+
+    asyncio.run(instance.send(msg, send_as_is=True))
+    assert called["count"] == 0
+
+
+def test_populate_disconnect_sets_instance_uid() -> None:
+    """Disconnect population should ensure instance UID and agent_disconnect."""
+    instance = client.OpAMPClient("http://localhost")
+    msg = opamp_pb2.AgentToServer()
+    instance._populate_disconnect(msg)
+    assert msg.instance_uid == instance.data.uid_instance
+    assert msg.HasField("agent_disconnect")
+
+
+def test_terminate_fluent_bit_terminates_only_launched_process(monkeypatch) -> None:
+    """Terminate only the Fluent Bit process launched by the client."""
+    instance = client.OpAMPClient("http://localhost")
+    called = {"terminate": 0}
+
+    class FakeProcess:
+        def terminate(self) -> None:
+            called["terminate"] += 1
+
+    monkeypatch.setattr(client.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+
+    instance.launch_fluent_bit()
+    assert instance.data.fluentbit_process is not None
+
+    instance.terminate_fluent_bit()
+    assert called["terminate"] == 1
+    assert instance.data.fluentbit_process is None

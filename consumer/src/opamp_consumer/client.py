@@ -20,6 +20,7 @@ from ctypes import string_at
 from dataclasses import dataclass, field
 import logging
 from os import strerror
+import os
 import pathlib
 import platform
 import re
@@ -29,6 +30,9 @@ import threading
 import time
 import tracemalloc
 import asyncio
+from venv import logger
+import traceback
+
 
 import httpx
 import websockets
@@ -119,6 +123,8 @@ class OpAMPClientData:
     last_heartbeat_call: int = 0
     last_heartbeat_results: dict[str, str] | None = field(default_factory=dict)
     launched_at: int = 0
+    fluentbit_process: subprocess.Popen[bytes] | None = None
+    logFLB = False
 
 
 class OpAMPClient:
@@ -204,7 +210,7 @@ class OpAMPClient:
             last_error = ""
             for value in self.data.last_heartbeat_results.values():
                 text = str(value)
-                logging.getLogger(__name__).debug(f"Evaluating for health>>{text}")
+                # logging.getLogger(__name__).debug(f"Evaluating for health>>{text}")
                 if text.startswith(ERR_PREFIX):
                     healthy = False
                     last_error = text
@@ -266,13 +272,14 @@ class OpAMPClient:
         logger = logging.getLogger(__name__)
         successful_message = True
 
+        logger.debug(f"Handling Server to agent payload:{reply}")
         if reply is None:
             logger.error("Been given None response")
             return False
 
         try:
             if reply.HasField("instance_uid"):
-                if reply.instance_uid != self.config.service_instance_id:
+                if reply.instance_uid != self.data.uid_instance:
                     logger.error(
                         "Message doesn't have an instance uid or doesn't match our service instance id %s",
                         self.config.service_instance_id,
@@ -311,11 +318,15 @@ class OpAMPClient:
         return successful_message
 
     async def send(
-        self, msg: opamp_pb2.AgentToServer | None = None
-    ) -> opamp_pb2.ServerToAgent:
+        self,
+        msg: opamp_pb2.AgentToServer | None = None,
+        *,
+        send_as_is: bool = False,
+    ) -> opamp_pb2.ServerToAgent | None:
         """Send an AgentToServer message using the configured transport."""
-        if msg is None:
-            msg = opamp_pb2.AgentToServer()
+        if not send_as_is:
+            if msg is None:
+                msg = opamp_pb2.AgentToServer()
             msg = self._populate_agent_to_server(msg)
         transport = (self.config.transport or TRANSPORT_HTTP).strip().lower()
         if transport == TRANSPORT_WEBSOCKET:
@@ -334,6 +345,65 @@ class OpAMPClient:
             )
         return None
 
+    def _populate_disconnect(
+        self, msg: opamp_pb2.AgentToServer
+    ) -> opamp_pb2.AgentToServer:
+        """Populate disconnect data and ensure instance UID is set."""
+        if self.data.uid_instance is not None:
+            msg.instance_uid = self.data.uid_instance
+            logging.getLogger(__name__).warning(
+                f"Set disconnect message instance UID to %s", self.data.uid_instance
+            )
+        msg.agent_disconnect.SetInParent()
+        return msg
+
+    async def send_disconnect(self) -> None:
+        """Send a disconnect message without modifying the payload."""
+        msg = self._populate_disconnect(opamp_pb2.AgentToServer())
+        logging.getLogger(__name__).debug("Built disconnect message")
+
+        try:
+            await self.send(msg, send_as_is=True)
+        except Exception:
+            logging.getLogger(__name__).warning("Failed to send disconnect message")
+
+    async def _send_disconnect_with_timeout(self, timeout_seconds: float = 1.0) -> None:
+        """Best-effort disconnect send with a short timeout."""
+        try:
+            logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
+            await asyncio.wait_for(self.send_disconnect(), timeout=timeout_seconds)
+        except Exception:
+            logging.getLogger(__name__).warning("Disconnect send timed out")
+        logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
+
+    def finalize(self) -> None:
+        """Best-effort finalizer to send disconnect."""
+        try:
+            loop = asyncio.get_running_loop()
+            logging.getLogger(__name__).debug(f"finalize - got loop")
+        except RuntimeError:
+
+            def _runner() -> None:
+                try:
+                    logging.getLogger(__name__).debug(
+                        "About to send disconnect message"
+                    )
+                    asyncio.run(self._send_disconnect_with_timeout())
+                except Exception as err:
+                    logging.getLogger(__name__).error(
+                        f"Failed to send disconnect message, error is:\n {err}"
+                    )
+                    return
+
+            thread = threading.Thread(target=_runner, daemon=True)
+            thread.start()
+        else:
+            loop.create_task(self._send_disconnect_with_timeout())
+
+    def __del__(self) -> None:
+        print("FINALIZER triggered")
+        self.finalize()
+
     async def send_websocket(
         self, msg: opamp_pb2.AgentToServer
     ) -> opamp_pb2.ServerToAgent:
@@ -344,6 +414,8 @@ class OpAMPClient:
         async with websockets.connect(url) as web_socket:
             await web_socket.send(encode_message(msg.SerializeToString()))
             data = await web_socket.recv()
+            await web_socket.close(code=1000)
+            await web_socket.wait_closed()
         if isinstance(data, str):
             data = data.encode(UTF8_ENCODING)
         header, payload = decode_message(data)
@@ -370,9 +442,18 @@ class OpAMPClient:
         )
 
         processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
+        self.data.fluentbit_process = processResponse
         self.data.launched_at = time.time_ns()
         logger.info(f"Launch result = {processResponse}")
         return launched
+
+    def terminate_fluent_bit(self) -> None:
+        """Terminate the launched Fluent Bit process if available."""
+        process = self.data.fluentbit_process
+        if process is None:
+            return
+        process.terminate()
+        self.data.fluentbit_process = None
 
     def _heartbeat_key(self, path: str) -> str:
         """Return the last URL path component as the dictionary key."""
@@ -546,7 +627,8 @@ class OpAMPClient:
         logger.warning("server error_response type=%s", error_response.type)
         if error_response.error_message:
             logger.warning(
-                "server error_response message=%s", error_response.error_message
+                "*******/nserver error_response message=%s/n*******",
+                error_response.error_message,
             )
         if error_response.HasField("retry_info"):
             logger.warning(
@@ -593,6 +675,7 @@ class OpAMPClient:
             "server agent_identification:\n%s",
             text_format.MessageToString(agent_identification),
         )
+        self.data.uid_instance = agent_identification.new_instance_uid
 
     def handle_custom_capabilities(
         self, custom_capabilities: opamp_pb2.CustomCapabilities
@@ -612,23 +695,47 @@ class OpAMPClient:
         logger = logging.getLogger(__name__)
         interval = max(0, int(self.config.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
         logger.debug(f"Heartbeat cycle start - checking every {interval}")
-        while self.data.allow_heartbeat:
-            time.sleep(interval)
-            try:
-                results, codes = self.poll_local_status_with_codes(port)
-                self.data.last_heartbeat_results.clear()
-                self.data.last_heartbeat_results.update(results)
-                self.add_fluentbit_version(port)
-                self.data.last_heartbeat_http_codes = codes
-                if self.config.log_fluentbit_api_responses:
-                    logger.info(f"Heartbeat outcome --> {results}")
-                else:
-                    logger.info("Heartbeat response codes: %s", codes)
-            except:
-                self.data.last_heartbeat_results = None
-                self.data.last_heartbeat_http_codes = None
+        try:
+            while self.data.allow_heartbeat:
+                time.sleep(interval)
+                if check_semaphore():
+                    await self._send_disconnect_with_timeout()
+                    self.data.allow_heartbeat = False
+                try:
+                    results, codes = self.poll_local_status_with_codes(port)
+                    self.data.last_heartbeat_results.clear()
+                    self.data.last_heartbeat_results.update(results)
+                    self.add_fluentbit_version(port)
+                    self.data.last_heartbeat_http_codes = codes
+                    if self.config.log_fluentbit_api_responses and self.data.logFLB:
+                        logger.debug(f"Heartbeat outcome --> {results}")
 
-            self._handle_server_to_agent(await self.send())
+                    logger.info("Heartbeat response codes: %s", codes)
+
+                except KeyboardInterrupt as kb:
+                    logger.error(f"Error - a disturbance in the force\n {kb}")
+                    self.data.allow_heartbeat = False
+                    await self._send_disconnect_with_timeout()
+                    break
+                except Exception as err:
+                    logger.error(f"Something stumbled - we catch and carry on\n {err}")
+                    self.data.last_heartbeat_results = None
+                    self.data.last_heartbeat_http_codes = None
+
+                self._handle_server_to_agent(await self.send())
+        except BaseException as err:
+            await self._send_disconnect_with_timeout()
+            logger.error(
+                f"heartbeat outer error trap triggered by:\n{err}\n {traceback.format_exc()}"
+            )
+            print("...ouch, bye")
+
+
+def check_semaphore() -> bool:
+    if os.path.isfile("OpAMPSupervisor.signal"):
+        logging.getLogger(__name__).warning("Spotted Semaphore file")
+        return True
+    return False
 
 
 def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
@@ -711,52 +818,62 @@ async def run_client(client) -> None:
 
 def main() -> None:
     """Load config, read Fluent Bit settings, launch Fluent Bit, start heartbeat."""
-    tracemalloc.start()
-    logger = logging.getLogger(__name__)
+    try:
+        tracemalloc.start()
+        logger = logging.getLogger(__name__)
 
-    logger.debug("prepping CLI parser")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-path", type=str)
-    parser.add_argument("--server-url", type=str)
-    parser.add_argument("--server-port", type=int)
-    parser.add_argument("--fluentbit-config-path", type=str)
-    parser.add_argument("--additional-fluent-bit-params", nargs="*")
-    parser.add_argument("--heartbeat-frequency", type=int)
-    args = parser.parse_args()
+        logger.debug("prepping CLI parser")
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--config-path", type=str)
+        parser.add_argument("--server-url", type=str)
+        parser.add_argument("--server-port", type=int)
+        parser.add_argument("--fluentbit-config-path", type=str)
+        parser.add_argument("--additional-fluent-bit-params", nargs="*")
+        parser.add_argument("--heartbeat-frequency", type=int)
+        args = parser.parse_args()
 
-    logger.debug("about to load with CLI overrides")
-    config = consumer_config.load_config_with_overrides(
-        config_path=pathlib.Path(args.config_path) if args.config_path else None,
-        server_url=args.server_url,
-        server_port=args.server_port,
-        fluentbit_config_path=args.fluentbit_config_path,
-        additional_fluent_bit_params=args.additional_fluent_bit_params,
-        heartbeat_frequency=args.heartbeat_frequency,
-    )
+        logger.debug("about to load with CLI overrides")
+        config = consumer_config.load_config_with_overrides(
+            config_path=pathlib.Path(args.config_path) if args.config_path else None,
+            server_url=args.server_url,
+            server_port=args.server_port,
+            fluentbit_config_path=args.fluentbit_config_path,
+            additional_fluent_bit_params=args.additional_fluent_bit_params,
+            heartbeat_frequency=args.heartbeat_frequency,
+        )
 
-    logger.warning("about to process FLB config")
-    config = load_fluentbit_config(config)
+        logger.warning("about to process FLB config")
+        config = load_fluentbit_config(config)
 
-    if config.http_port is None:
-        raise ValueError("http_port not found in Fluent Bit config")
+        if config.http_port is None:
+            raise ValueError("http_port not found in Fluent Bit config")
 
-    if config.server_url is None and config.server_port is not None:
-        config.server_url = f"{LOCALHOST_BASE}:{config.server_port}"
-    if config.server_url is None:
-        raise ValueError("server_url is not configured")
+        if config.server_url is None and config.server_port is not None:
+            config.server_url = f"{LOCALHOST_BASE}:{config.server_port}"
+        if config.server_url is None:
+            raise ValueError("server_url is not configured")
 
-    logger.debug(msg="setting up OpAMP")
-    client = OpAMPClient(config.server_url, config)
+        logger.debug(msg="setting up OpAMP")
+        client = OpAMPClient(config.server_url, config)
 
-    client.launch_fluent_bit()
-    client.add_fluentbit_version(config.http_port)
+        client.launch_fluent_bit()
+        client.add_fluentbit_version(config.http_port)
 
-    logger.info("introducing self to server")
-    asyncio.run(run_client(client))
+        logger.info("introducing self to server")
+        asyncio.run(run_client(client))
 
-    asyncio.run(client._heartbeat_loop(config.http_port))
+        asyncio.run(client._heartbeat_loop(config.http_port))
+
+    except KeyboardInterrupt as kb:
+        print(f"... bzzzz keyboard\n{kb}")
+    except SystemExit:
+        print(f"... bzzzz brutal exit\n{kb}")
+
+    except:
+        print(f"... bzzzzzzzzzzz")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     main()
+    print("... Bye")
