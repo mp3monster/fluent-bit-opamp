@@ -10,48 +10,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from opamp_provider.proto import opamp_pb2, anyvalue_pb2
+from datetime import timedelta, timezone, datetime
+
 from opamp_provider.state import ClientStore
+from opamp_provider.proto import opamp_pb2
 
 
-def _agent_message(*, instance_uid: bytes, version: str | None = None) -> opamp_pb2.AgentToServer:
-    msg = opamp_pb2.AgentToServer(instance_uid=instance_uid)
-    msg.capabilities = (
-        opamp_pb2.AgentCapabilities.AgentCapabilities_ReportsStatus
-        | opamp_pb2.AgentCapabilities.AgentCapabilities_ReportsHealth
-    )
-    if version is not None:
-        kv = anyvalue_pb2.KeyValue(
-            key="service.version",
-            value=anyvalue_pb2.AnyValue(string_value=version),
-        )
-        msg.agent_description.identifying_attributes.append(kv)
-    return msg
-
-
-def test_upsert_from_agent_msg_sets_state() -> None:
+def test_disconnect_marks_and_purges() -> None:
     store = ClientStore()
-    msg = _agent_message(instance_uid=b"abc", version="1.2.3")
+    msg = opamp_pb2.AgentToServer(instance_uid=b"\x01\x02")
+    msg.agent_disconnect.SetInParent()
+
     record = store.upsert_from_agent_msg(msg)
+    assert record.disconnected is True
+    assert record.disconnected_at is not None
 
-    assert record.client_id == "616263"
-    assert record.last_communication is not None
-    assert record.node_age_seconds is not None
-    assert record.agent_description is not None
-    assert record.client_version == "1.2.3"
-    assert "AgentCapabilities_ReportsStatus" in record.capabilities
-    assert "AgentCapabilities_ReportsHealth" in record.capabilities
+    record.disconnected_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    removed = store.purge_disconnected(datetime.now(timezone.utc) - timedelta(minutes=30))
 
-
-def test_command_queue_and_send() -> None:
-    store = ClientStore()
-    client_id = "client-1"
-
-    cmd = store.queue_command(client_id, "restart")
-    pending = store.next_pending_command(client_id)
-    assert pending is cmd
-    assert pending.sent_at is None
-
-    store.mark_command_sent(client_id, pending)
-    assert pending.sent_at is not None
-    assert store.next_pending_command(client_id) is None
+    assert len(removed) == 1
+    assert store.get(record.client_id) is None

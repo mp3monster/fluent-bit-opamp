@@ -21,6 +21,7 @@
     ],
     "delayed_comms_seconds": 60,
     "significant_comms_seconds": 300,
-    "webui_port": 8080
+    "webui_port": 8080,
+    "minutes_keep_disconnected": 5
   }
 }
