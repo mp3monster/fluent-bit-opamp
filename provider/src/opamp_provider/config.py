@@ -22,10 +22,12 @@ CFG_SERVER_CAPABILITIES = "server_capabilities"
 CFG_DELAYED_COMMS_SECONDS = "delayed_comms_seconds"
 CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"
 CFG_WEBUI_PORT = "webui_port"
+CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
 DEFAULT_WEBUI_PORT = 8080
+DEFAULT_MINUTES_KEEP_DISCONNECTED = 30
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class ProviderConfig:
     delayed_comms_seconds: int
     significant_comms_seconds: int
     webui_port: int
+    minutes_keep_disconnected: int
 
 
 def _repo_root() -> pathlib.Path:
@@ -75,6 +78,9 @@ def load_config() -> ProviderConfig:
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
+        minutes_keep_disconnected=int(
+            provider_raw.get(CFG_MINUTES_KEEP_DISCONNECTED, DEFAULT_MINUTES_KEEP_DISCONNECTED)
+        ),
     )
 
 
@@ -108,6 +114,9 @@ def load_config_with_overrides(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
+        minutes_keep_disconnected=int(
+            provider_raw.get(CFG_MINUTES_KEEP_DISCONNECTED, DEFAULT_MINUTES_KEEP_DISCONNECTED)
+        ),
     )
 
 
@@ -122,6 +131,7 @@ def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=CONFIG.webui_port,
+        minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
     )
     set_config(config)
     return config

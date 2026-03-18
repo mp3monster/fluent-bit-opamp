@@ -17,6 +17,9 @@ from __future__ import annotations
 import threading
 import logging
 import re
+import secrets
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
@@ -27,10 +30,12 @@ from opamp_provider.proto import opamp_pb2
 
 
 def _utc_now() -> datetime:
+    """Return the current UTC timestamp."""
     return datetime.now(timezone.utc)
 
 
 def _anyvalue_to_string(value: opamp_pb2.AnyValue) -> Optional[str]:
+    """Convert a protobuf AnyValue into a string representation."""
     kind = value.WhichOneof("value")
     if kind == "string_value":
         return value.string_value
@@ -46,6 +51,7 @@ def _anyvalue_to_string(value: opamp_pb2.AnyValue) -> Optional[str]:
 
 
 def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
+    """Extract the agent service.version string from the agent description."""
     agent_desc = agent_msg.agent_description
     if not agent_desc.identifying_attributes:
         return None
@@ -55,7 +61,23 @@ def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
     return None
 
 
+def _uuid7_bytes() -> bytes:
+    """Generate UUIDv7 bytes."""
+    timestamp_ms = int(time.time_ns() / 1_000_000)
+    rand_a = secrets.randbits(12)
+    rand_b = secrets.randbits(62)
+    uuid_int = (
+        (timestamp_ms & ((1 << 48) - 1)) << 80
+        | (0x7 << 76)
+        | (rand_a << 64)
+        | (0x2 << 62)
+        | rand_b
+    )
+    return uuid.UUID(int=uuid_int).bytes
+
+
 def _capabilities_from_mask(mask: int) -> list[str]:
+    """Decode an agent capability bitmask into enum names."""
     capabilities: list[str] = []
     logging.getLogger(__name__).debug(f"Decoding capability --> {mask}")
     for enum_value in opamp_pb2.AgentCapabilities.DESCRIPTOR.values:
@@ -106,24 +128,31 @@ class ClientRecord(BaseModel):
     health: Optional[dict[str, Optional[str] | dict[str, dict[str, Optional[str]]]]] = (
         None
     )
+    disconnected: bool = False
+    disconnected_at: Optional[datetime] = None
+    pending_agent_identification: Optional[bytes] = None
 
 
 class ClientStore:
     def __init__(self) -> None:
+        """Initialize the in-memory client store."""
         self._lock = threading.Lock()
         self._clients: dict[str, ClientRecord] = {}
 
     def get(self, client_id: str) -> Optional[ClientRecord]:
+        """Return a client record by ID if it exists."""
         with self._lock:
             return self._clients.get(client_id)
 
     def list(self) -> list[ClientRecord]:
+        """Return a snapshot list of all client records."""
         with self._lock:
             return list(self._clients.values())
 
     def upsert_from_agent_msg(
         self, agent_msg: opamp_pb2.AgentToServer, *, channel: Optional[str] = None
     ) -> ClientRecord:
+        """Create or update a client record from an AgentToServer message."""
         client_id = (
             agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
         )
@@ -133,43 +162,82 @@ class ClientStore:
             if record is None:
                 record = ClientRecord(client_id=client_id)
                 self._clients[client_id] = record
-            record.last_communication = now
-            if channel:
-                record.last_channel = channel
-            record.node_age_seconds = (now - record.first_seen).total_seconds()
-            record.capabilities = _capabilities_from_mask(agent_msg.capabilities)
-            record.client_version = _extract_agent_version(agent_msg)
-            if agent_msg.HasField("health"):
-                component_health = {
-                    name: {
-                        "healthy": str(value.healthy),
-                        "status": value.status or None,
-                        "last_error": value.last_error or None,
-                        "start_time_unix_nano": str(value.start_time_unix_nano or 0),
-                        "status_time_unix_nano": str(value.status_time_unix_nano or 0),
-                    }
-                    for name, value in agent_msg.health.component_health_map.items()
-                }
-                record.component_health = component_health
-                record.health = {
-                    "healthy": str(agent_msg.health.healthy),
-                    "status": agent_msg.health.status or None,
-                    "last_error": agent_msg.health.last_error or None,
-                    "start_time_unix_nano": str(
-                        agent_msg.health.start_time_unix_nano or 0
-                    ),
-                    "status_time_unix_nano": str(
-                        agent_msg.health.status_time_unix_nano or 0
-                    ),
-                    "component_health_map": component_health,
-                }
-            if agent_msg.HasField("agent_description"):
-                record.agent_description = text_format.MessageToString(
-                    agent_msg.agent_description
-                )
+            self._apply_comm_metadata(record, now, channel)
+            self._apply_capabilities(record, agent_msg)
+            self._apply_client_version(record, agent_msg)
+            self._apply_health(record, agent_msg)
+            self._apply_agent_description(record, agent_msg)
+            self._apply_disconnect(record, agent_msg, now)
         return record
 
+    def _apply_comm_metadata(
+        self, record: ClientRecord, now: datetime, channel: Optional[str]
+    ) -> None:
+        """Apply last communication metadata to the client record."""
+        record.last_communication = now
+        if channel:
+            record.last_channel = channel
+        record.node_age_seconds = (now - record.first_seen).total_seconds()
+
+    def _apply_capabilities(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
+    ) -> None:
+        """Apply agent capability bitmask to the record."""
+        record.capabilities = _capabilities_from_mask(agent_msg.capabilities)
+
+    def _apply_client_version(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
+    ) -> None:
+        """Apply the client version extracted from the agent description."""
+        record.client_version = _extract_agent_version(agent_msg)
+
+    def _apply_health(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
+    ) -> None:
+        """Apply agent health and component health maps when provided."""
+        if not agent_msg.HasField("health"):
+            return
+        component_health = {
+            name: {
+                "healthy": str(value.healthy),
+                "status": value.status or None,
+                "last_error": value.last_error or None,
+                "start_time_unix_nano": str(value.start_time_unix_nano or 0),
+                "status_time_unix_nano": str(value.status_time_unix_nano or 0),
+            }
+            for name, value in agent_msg.health.component_health_map.items()
+        }
+        record.component_health = component_health
+        record.health = {
+            "healthy": str(agent_msg.health.healthy),
+            "status": agent_msg.health.status or None,
+            "last_error": agent_msg.health.last_error or None,
+            "start_time_unix_nano": str(agent_msg.health.start_time_unix_nano or 0),
+            "status_time_unix_nano": str(
+                agent_msg.health.status_time_unix_nano or 0
+            ),
+            "component_health_map": component_health,
+        }
+
+    def _apply_agent_description(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
+    ) -> None:
+        """Apply agent description text to the record."""
+        if agent_msg.HasField("agent_description"):
+            record.agent_description = text_format.MessageToString(
+                agent_msg.agent_description
+            )
+
+    def _apply_disconnect(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer, now: datetime
+    ) -> None:
+        """Mark a record as disconnected when an agent disconnect is received."""
+        if agent_msg.HasField("agent_disconnect"):
+            record.disconnected = True
+            record.disconnected_at = now
+
     def queue_command(self, client_id: str, command: str) -> CommandRecord:
+        """Queue a command for a client and return the command record."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -187,6 +255,7 @@ class ClientStore:
         version: Optional[str],
         apply_at: Optional[datetime],
     ) -> ClientRecord:
+        """Store a requested configuration payload for a client."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -200,6 +269,7 @@ class ClientStore:
     def set_next_actions(
         self, client_id: str, actions: Optional[list[str]]
     ) -> ClientRecord:
+        """Set the next actions to be sent to a client."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -209,6 +279,7 @@ class ClientStore:
             return record
 
     def next_pending_command(self, client_id: str) -> Optional[CommandRecord]:
+        """Return the next unsent command for a client, if any."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -219,6 +290,7 @@ class ClientStore:
         return None
 
     def mark_command_sent(self, client_id: str, command: CommandRecord) -> None:
+        """Mark a queued command as sent."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -229,6 +301,7 @@ class ClientStore:
                     return
 
     def pop_next_action(self, client_id: str) -> Optional[str]:
+        """Pop the next queued action for a client."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None or not record.next_actions:
@@ -239,8 +312,56 @@ class ClientStore:
             return action
 
     def remove_client(self, client_id: str) -> Optional[ClientRecord]:
+        """Remove and return a client record by ID if it exists."""
         with self._lock:
             return self._clients.pop(client_id, None)
+
+    def set_agent_identification(
+        self, client_id: str, new_instance_uid: bytes
+    ) -> Optional[ClientRecord]:
+        """Attach a pending agent identification message to a client."""
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                return None
+            record.pending_agent_identification = new_instance_uid
+            return record
+
+    def pop_agent_identification(self, client_id: str) -> Optional[bytes]:
+        """Pop the pending agent identification value for a client."""
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                return None
+            pending = record.pending_agent_identification
+            record.pending_agent_identification = None
+            return pending
+
+    def generate_unique_instance_uid(self) -> bytes:
+        """Generate a UUIDv7 that does not collide with existing client IDs."""
+        with self._lock:
+            existing_ids = set(self._clients.keys())
+            while True:
+                candidate = _uuid7_bytes()
+                if candidate.hex() not in existing_ids:
+                    return candidate
+
+    def purge_disconnected(self, cutoff: datetime) -> list[ClientRecord]:
+        """Remove disconnected clients older than the cutoff timestamp."""
+        removed: list[ClientRecord] = []
+        with self._lock:
+            to_remove = [
+                client_id
+                for client_id, record in self._clients.items()
+                if record.disconnected
+                and record.disconnected_at is not None
+                and record.disconnected_at <= cutoff
+            ]
+            for client_id in to_remove:
+                removed_record = self._clients.pop(client_id, None)
+                if removed_record is not None:
+                    removed.append(removed_record)
+        return removed
 
 
 STORE = ClientStore()

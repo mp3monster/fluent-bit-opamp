@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Set
 import logging
 import os
 import pathlib
 import signal
 import tracemalloc
-from datetime import datetime, timezone
+from http import HTTPStatus
+from datetime import datetime, timedelta, timezone
 
 from google.protobuf import text_format
 from quart import Quart, Response, jsonify, redirect, request, websocket
@@ -53,6 +55,8 @@ ACTION_OPTIONS = {
     ACTION_CUSTOM_AGENT_COMMAND,
 }
 _SHUTDOWN_REQUESTED = False
+_LAST_DISCONNECT_PURGE: datetime | None = None
+_WEBSOCKET_CLIENTS: dict[object, str | None] = {}
 
 
 def _request_process_shutdown() -> None:
@@ -72,7 +76,7 @@ async def handle_unexpected_error(error: Exception) -> Response:
     if isinstance(error, HTTPException):
         return error
     logger.exception("Unhandled app error", exc_info=error)
-    return jsonify({"error": "internal server error"}), 500
+    return jsonify({"error": "internal server error"}), HTTPStatus.INTERNAL_SERVER_ERROR
 
 
 def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:
@@ -155,6 +159,10 @@ def _build_response(
 
     # Capabilities are read from config/opamp.json at startup.
     response.capabilities = CONFIG.server_capabilities
+    if client_id:
+        pending_identification = STORE.pop_agent_identification(client_id)
+        if pending_identification:
+            response.agent_identification.new_instance_uid = pending_identification
     # TODO(opamp): Implement operations that respond to AgentToServer fields:
     # - remote config offers (AgentRemoteConfig)
     # - connection settings offers (ConnectionSettingsOffers)
@@ -174,9 +182,13 @@ def _build_response(
     return response
 
 
-def _build_error(message: str) -> opamp_pb2.ServerToAgent:
+def _build_error(
+    message: str, instance_uid: bytes | None = None
+) -> opamp_pb2.ServerToAgent:
     """Build a ServerToAgent error response."""
     response = opamp_pb2.ServerToAgent()
+    if instance_uid:
+        response.instance_uid = instance_uid
     response.error_response.type = (
         opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
     )
@@ -219,60 +231,112 @@ async def opamp_http() -> Response:
         logger.exception("Unhandled HTTP error", exc_info=exc)
         response_msg = _build_error("internal server error")
         payload = response_msg.SerializeToString()
-        return Response(payload, content_type=CONTENT_TYPE_PROTO, status=500)
+        return Response(
+            payload,
+            content_type=CONTENT_TYPE_PROTO,
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
 
 @app.websocket(OPAMP_HTTP_PATH)
 async def opamp_ws() -> None:
     """Handle OpAMP WebSocket connections."""
-    while True:
-        pending_command = None
-        data = await websocket.receive()
-        if isinstance(data, str):
-            data = data.encode(UTF8_ENCODING)
-        try:
-            header, payload = decode_message(data)
-            if header != OPAMP_HEADER_NONE:
-                response_msg = _build_error(ERR_UNSUPPORTED_HEADER)
-            else:
-                agent_msg = opamp_pb2.AgentToServer()
-                if payload:
-                    agent_msg.ParseFromString(payload)
-                logger.info(LOG_WS_MSG, text_format.MessageToString(agent_msg))
-                client = STORE.upsert_from_agent_msg(
-                    agent_msg, channel=CHANNEL_WEBSOCKET
+    _WEBSOCKET_CLIENTS[websocket] = None
+    try:
+        while True:
+            pending_command = None
+            data = await websocket.receive()
+            if isinstance(data, str):
+                data = data.encode(UTF8_ENCODING)
+            try:
+                header, payload = decode_message(data)
+                if header != OPAMP_HEADER_NONE:
+                    response_msg = _build_error(
+                        ERR_UNSUPPORTED_HEADER,
+                        agent_msg.instance_uid if "agent_msg" in locals() else None,
+                    )
+                else:
+                    agent_msg = opamp_pb2.AgentToServer()
+                    if payload:
+                        agent_msg.ParseFromString(payload)
+                    logger.info(LOG_WS_MSG, text_format.MessageToString(agent_msg))
+                    client = STORE.upsert_from_agent_msg(
+                        agent_msg, channel=CHANNEL_WEBSOCKET
+                    )
+                    _WEBSOCKET_CLIENTS[websocket] = client.client_id
+                    pending_command = STORE.next_pending_command(client.client_id)
+                    # TODO(opamp): Implement per-operation processing for WebSocket transport:
+                    # - status/health updates
+                    # - effective config reporting
+                    # - remote config status
+                    # - package statuses
+                    # - connection settings requests and status
+                    # - custom messages
+                    response_msg = _build_response(
+                        agent_msg,
+                        pending_command,
+                        client.client_id,
+                        channel=CHANNEL_WEBSOCKET,
+                    )
+            except ValueError as exc:
+                logger.warning("OpAMP websocket value error: %s", exc)
+                response_msg = _build_error(
+                    str(exc),
+                    agent_msg.instance_uid if "agent_msg" in locals() else None,
                 )
-                pending_command = STORE.next_pending_command(client.client_id)
-                # TODO(opamp): Implement per-operation processing for WebSocket transport:
-                # - status/health updates
-                # - effective config reporting
-                # - remote config status
-                # - package statuses
-                # - connection settings requests and status
-                # - custom messages
-                response_msg = _build_response(
-                    agent_msg,
-                    pending_command,
-                    client.client_id,
-                    channel=CHANNEL_WEBSOCKET,
+            except Exception as exc:
+                logger.exception("Unhandled websocket error", exc_info=exc)
+                response_msg = _build_error(
+                    "internal server error",
+                    agent_msg.instance_uid if "agent_msg" in locals() else None,
                 )
-        except ValueError as exc:
-            logger.warning("OpAMP websocket value error: %s", exc)
-            response_msg = _build_error(str(exc))
-        except Exception as exc:
-            logger.exception("Unhandled websocket error", exc_info=exc)
-            response_msg = _build_error("internal server error")
 
-        out_payload = response_msg.SerializeToString()
-        await websocket.send(encode_message(out_payload))
-        if response_msg.HasField("command"):
-            STORE.mark_command_sent(client.client_id, pending_command)
-            logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
+            out_payload = response_msg.SerializeToString()
+            await websocket.send(encode_message(out_payload))
+            if response_msg.HasField("command"):
+                STORE.mark_command_sent(client.client_id, pending_command)
+                logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
+    finally:
+        _WEBSOCKET_CLIENTS.pop(websocket, None)
+
+
+async def _close_websockets() -> None:
+    """Close all active WebSocket connections."""
+    if not _WEBSOCKET_CLIENTS:
+        return
+    async def _close_one(ws: object, client_id: str | None) -> None:
+        try:
+            await ws.close(code=1001)
+            if client_id:
+                logger.info("closed websocket for client %s", client_id)
+            else:
+                logger.info("closed websocket for unknown client")
+        except Exception:
+            logger.warning("failed to close websocket for client %s", client_id)
+
+    await asyncio.gather(
+        *[
+            _close_one(ws, client_id)
+            for ws, client_id in list(_WEBSOCKET_CLIENTS.items())
+            if ws is not None
+        ],
+        return_exceptions=True,
+    )
 
 
 @app.get("/api/clients")
 async def list_clients() -> Response:
     """List all tracked clients."""
+    global _LAST_DISCONNECT_PURGE
+    now = datetime.now(timezone.utc)
+    keep_minutes = max(1, int(CONFIG.minutes_keep_disconnected))
+    purge_interval = timedelta(minutes=keep_minutes / 2)
+    if _LAST_DISCONNECT_PURGE is None or now - _LAST_DISCONNECT_PURGE >= purge_interval:
+        cutoff = now - timedelta(minutes=keep_minutes)
+        removed = STORE.purge_disconnected(cutoff)
+        if removed:
+            logger.info("purged %s disconnected clients", len(removed))
+        _LAST_DISCONNECT_PURGE = now
     clients = [client.model_dump(mode="json") for client in STORE.list()]
     return jsonify({"clients": clients, "total": len(clients)})
 
@@ -282,7 +346,7 @@ async def get_client(client_id: str) -> Response:
     """Get a single client record."""
     record = STORE.get(client_id)
     if record is None:
-        return jsonify({"error": "client not found"}), 404
+        return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
     return jsonify(record.model_dump(mode="json"))
 
 
@@ -291,7 +355,7 @@ async def delete_client(client_id: str) -> Response:
     """Remove a client from memory."""
     record = STORE.remove_client(client_id)
     if record is None:
-        return jsonify({"error": "client not found"}), 404
+        return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
     logger.warning(
         "client removed from store client_id=%s last_state=%s",
         client_id,
@@ -305,13 +369,13 @@ async def queue_command(client_id: str) -> Response:
     """Queue a command for a client."""
     payload = await request.get_json(silent=True)
     if not payload or "command" not in payload:
-        return jsonify({"error": "command is required"}), 400
+        return jsonify({"error": "command is required"}), HTTPStatus.BAD_REQUEST
     command = str(payload["command"]).strip()
     if not command:
-        return jsonify({"error": "command is required"}), 400
+        return jsonify({"error": "command is required"}), HTTPStatus.BAD_REQUEST
     cmd = STORE.queue_command(client_id, command)
     logger.info(LOG_REST_COMMAND, client_id, cmd.received_at)
-    return jsonify(cmd.model_dump(mode="json")), 201
+    return jsonify(cmd.model_dump(mode="json")), HTTPStatus.CREATED
 
 
 @app.post("/api/clients/<client_id>/actions")
@@ -319,16 +383,16 @@ async def set_client_actions(client_id: str) -> Response:
     """Set next actions for a client."""
     payload = await request.get_json(silent=True)
     if payload is None:
-        return jsonify({"error": "payload is required"}), 400
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
     raw_actions = payload.get("actions")
     if raw_actions is None:
-        return jsonify({"error": "actions is required"}), 400
+        return jsonify({"error": "actions is required"}), HTTPStatus.BAD_REQUEST
     if isinstance(raw_actions, str):
         actions = [raw_actions]
     elif isinstance(raw_actions, list):
         actions = raw_actions
     else:
-        return jsonify({"error": "actions must be a list or string"}), 400
+        return jsonify({"error": "actions must be a list or string"}), HTTPStatus.BAD_REQUEST
     actions = [str(action).strip() for action in actions if str(action).strip()]
     if not actions:
         record = STORE.set_next_actions(client_id, None)
@@ -343,10 +407,22 @@ async def set_client_actions(client_id: str) -> Response:
                     "allowed": sorted(ACTION_OPTIONS),
                 }
             ),
-            400,
+            HTTPStatus.BAD_REQUEST,
         )
     record = STORE.set_next_actions(client_id, actions)
     return jsonify(record.model_dump(mode="json"))
+
+
+@app.post("/api/clients/<client_id>/identify")
+async def issue_agent_identification(client_id: str) -> Response:
+    """Issue a new instance UID for a client."""
+    record = STORE.get(client_id)
+    if record is None:
+        return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
+    new_uid = STORE.generate_unique_instance_uid()
+    STORE.set_agent_identification(client_id, new_uid)
+    logger.info("issued new instance uid for client %s", client_id)
+    return jsonify({"status": "queued", "new_instance_uid": new_uid.hex()})
 
 
 @app.get("/api/settings/comms")
@@ -365,7 +441,7 @@ async def update_comms_settings() -> Response:
     """Update communication threshold settings."""
     payload = await request.get_json(silent=True)
     if not payload:
-        return jsonify({"error": "payload is required"}), 400
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
     try:
         delayed = int(
             payload.get("delayed_comms_seconds", CONFIG.delayed_comms_seconds)
@@ -374,11 +450,14 @@ async def update_comms_settings() -> Response:
             payload.get("significant_comms_seconds", CONFIG.significant_comms_seconds)
         )
     except (TypeError, ValueError):
-        return jsonify({"error": "thresholds must be integers"}), 400
+        return jsonify({"error": "thresholds must be integers"}), HTTPStatus.BAD_REQUEST
     if delayed <= 0 or significant <= 0:
-        return jsonify({"error": "thresholds must be positive"}), 400
+        return jsonify({"error": "thresholds must be positive"}), HTTPStatus.BAD_REQUEST
     if delayed >= significant:
-        return jsonify({"error": "significant must be greater than delayed"}), 400
+        return (
+            jsonify({"error": "significant must be greater than delayed"}),
+            HTTPStatus.BAD_REQUEST,
+        )
     config = provider_config.update_comms_thresholds(
         delayed=delayed,
         significant=significant,
@@ -396,10 +475,10 @@ async def set_requested_config(client_id: str) -> Response:
     """Set requested configuration for a client."""
     payload = await request.get_json(silent=True)
     if not payload:
-        return jsonify({"error": "payload is required"}), 400
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
     config_text = str(payload.get("config", "")).strip()
     if not config_text:
-        return jsonify({"error": "config is required"}), 400
+        return jsonify({"error": "config is required"}), HTTPStatus.BAD_REQUEST
     version = payload.get("version")
     apply_at_raw = payload.get("apply_at")
     apply_at = None
@@ -407,7 +486,10 @@ async def set_requested_config(client_id: str) -> Response:
         try:
             apply_at = datetime.fromisoformat(str(apply_at_raw))
         except ValueError:
-            return jsonify({"error": "apply_at must be ISO 8601"}), 400
+            return (
+                jsonify({"error": "apply_at must be ISO 8601"}),
+                HTTPStatus.BAD_REQUEST,
+            )
     record = STORE.set_requested_config(
         client_id,
         config_text=config_text,
@@ -444,10 +526,11 @@ async def shutdown_server() -> Response:
     payload = await request.get_json(silent=True) or {}
     confirm = payload.get("confirm") is True
     if not confirm:
-        return jsonify({"error": "confirm is required"}), 400
+        return jsonify({"error": "confirm is required"}), HTTPStatus.BAD_REQUEST
     global _SHUTDOWN_REQUESTED
     _SHUTDOWN_REQUESTED = True
     logger.warning("shutdown requested via API")
+    await _close_websockets()
     asyncio.create_task(_shutdown_after_response())
     return jsonify({"status": "shutting down"})
 
