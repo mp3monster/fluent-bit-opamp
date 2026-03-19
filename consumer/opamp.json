@@ -3,7 +3,7 @@
     "server_url": "http://localhost",
     "http_port": 2020,
     "transport": "http",
-    "log_fluentbit_api_responses": false,
+    "log_agent_api_responses": false,
     "fluentbit_config_path": "d://dev//opamp//consumer//fluent-bit.yaml",
     "additional_fluent_bit_params": [],
     "heartbeat_frequency": 30,
