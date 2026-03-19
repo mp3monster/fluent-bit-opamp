@@ -707,7 +707,7 @@ class OpAMPClient:
                     self.data.last_heartbeat_results.update(results)
                     self.add_fluentbit_version(port)
                     self.data.last_heartbeat_http_codes = codes
-                    if self.config.log_fluentbit_api_responses and self.data.logFLB:
+                    if self.config.log_agent_api_responses and self.data.logFLB:
                         logger.debug(f"Heartbeat outcome --> {results}")
 
                     logger.info("Heartbeat response codes: %s", codes)

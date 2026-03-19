@@ -1,9 +1,22 @@
+# Copyright 2026 mp3monster.org
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """OpAMP WebSocket transport helpers (header + protobuf payload)."""
 
 from __future__ import annotations
 
 
 def encode_varint(value: int) -> bytes:
+    """Encode an integer into varint bytes."""
     if value < 0:
         raise ValueError("varint cannot be negative")
     out = bytearray()
@@ -19,6 +32,7 @@ def encode_varint(value: int) -> bytes:
 
 
 def decode_varint(data: bytes) -> tuple[int, int]:
+    """Decode a varint from bytes and return (value, bytes_consumed)."""
     result = 0
     shift = 0
     for idx, byte in enumerate(data):
@@ -32,9 +46,11 @@ def decode_varint(data: bytes) -> tuple[int, int]:
 
 
 def encode_message(payload: bytes, header: int = 0) -> bytes:
+    """Prefix a payload with a varint header."""
     return encode_varint(header) + payload
 
 
 def decode_message(message: bytes) -> tuple[int, bytes]:
+    """Split a header-prefixed message into (header, payload)."""
     header, offset = decode_varint(message)
     return header, message[offset:]

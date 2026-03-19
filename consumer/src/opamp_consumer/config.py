@@ -1,3 +1,15 @@
+# Copyright 2026 mp3monster.org
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Configuration loader for the OpAMP consumer."""
 
 from __future__ import annotations
@@ -28,7 +40,7 @@ CFG_LOG_LEVEL = "log_level"
 CFG_SERVICE_NAME = "service_name"
 CFG_SERVICE_NAMESPACE = "service_namespace"
 CFG_TRANSPORT = "transport"
-CFG_LOG_FLUENTBIT_API_RESPONSES = "log_fluentbit_api_responses"
+CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"
 
 
 @dataclass
@@ -49,7 +61,7 @@ class ConsumerConfig:
     service_name: str | None = None
     service_namespace: str | None = None
     transport: str | None = None
-    log_fluentbit_api_responses: bool | None = None
+    log_agent_api_responses: bool | None = None
     fluentbit_http_port: int | None = None
     fluentbit_http_listen: str | None = None
     fluentbit_http_server: str | None = None
@@ -59,6 +71,7 @@ class ConsumerConfig:
 
 
 def resolve_log_level(log_level: str) -> int:
+    """Map a string log level to a logging module constant."""
     normalized_level = log_level.strip().upper()
     level_map = {
         "CRITICAL": logging.CRITICAL,
@@ -71,14 +84,17 @@ def resolve_log_level(log_level: str) -> int:
 
 
 def _repo_root() -> pathlib.Path:
+    """Return the repository root path."""
     return ROOT_PATH
 
 
 def _ensure_shared_on_path() -> None:
+    """Compatibility no-op for shared import handling."""
     return None
 
 
 def _config_path() -> pathlib.Path:
+    """Resolve the consumer config path from environment or working directory."""
     path = os.environ.get(ENV_OPAMP_CONFIG_PATH)
     logger = logging.getLogger(__name__)
     if path:
@@ -89,6 +105,7 @@ def _config_path() -> pathlib.Path:
 
 
 def _load_json(path: pathlib.Path) -> dict[str, Any]:
+    """Load JSON config from disk, raising for missing files."""
     logger = logging.getLogger(__name__)
 
     if not path:
@@ -106,6 +123,7 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
 
 
 def load_config() -> ConsumerConfig:
+    """Load consumer configuration from disk."""
     logger = logging.getLogger(__name__)
     raw = _load_json(_config_path())
     consumer_raw = raw.get(CFG_CONSUMER, {})
@@ -114,8 +132,8 @@ def load_config() -> ConsumerConfig:
     service_name = consumer_raw.get(CFG_SERVICE_NAME)
     service_namespace = consumer_raw.get(CFG_SERVICE_NAMESPACE)
     transport = consumer_raw.get(CFG_TRANSPORT, "http")
-    log_fluentbit_api_responses = consumer_raw.get(
-        CFG_LOG_FLUENTBIT_API_RESPONSES, False
+    log_agent_api_responses = consumer_raw.get(
+        CFG_LOG_AGENT_API_RESPONSES, False
     )
     mask: None
 
@@ -158,8 +176,8 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer service_namespace: %s", service_namespace)
     logger.info("loaded consumer transport: %s", transport)
     logger.info(
-        "loaded consumer log_fluentbit_api_responses: %s",
-        log_fluentbit_api_responses,
+        "loaded consumer log_agent_api_responses: %s",
+        log_agent_api_responses,
     )
     logger.info("loaded consumer fluentbit_config_path: %s", fluentbit_config_path)
     logger.info("loaded consumer additional_fluent_bit_params: %s", additional_params)
@@ -176,7 +194,7 @@ def load_config() -> ConsumerConfig:
         service_name=service_name,
         service_namespace=service_namespace,
         transport=transport,
-        log_fluentbit_api_responses=bool(log_fluentbit_api_responses),
+        log_agent_api_responses=bool(log_agent_api_responses),
     )
 
 
@@ -187,6 +205,7 @@ def apply_override(
     configValue: any | None,
     config: ConsumerConfig,
 ) -> ConsumerConfig:
+    """Apply a CLI override when provided and return the updated config."""
     config[key] = configValue
     if overrideValue is not None:
         logging.getLogger(__name__).info(
@@ -206,6 +225,7 @@ def load_config_with_overrides(
     additional_fluent_bit_params: list[str] | None,
     heartbeat_frequency: int | None,
 ) -> ConsumerConfig:
+    """Load config and apply CLI overrides for the consumer."""
     logger = logging.getLogger(__name__)
 
     config: ConsumerConfig = ConsumerConfig(
@@ -237,10 +257,10 @@ def load_config_with_overrides(
         config,
     )
     config = apply_override(
-        CFG_LOG_FLUENTBIT_API_RESPONSES,
+        CFG_LOG_AGENT_API_RESPONSES,
         CFG_CONSUMER,
         None,
-        consumer_raw.get(CFG_LOG_FLUENTBIT_API_RESPONSES, False),
+        consumer_raw.get(CFG_LOG_AGENT_API_RESPONSES, False),
         config,
     )
 
@@ -304,16 +324,17 @@ def load_config_with_overrides(
             f"{CFG_CONSUMER}.{CFG_HEARTBEAT_FREQUENCY} must be a non-negative integer"
         )
     config.heartbeat_frequency = heartbeat_frequency
-    log_fluentbit_api_responses = raw.get(CFG_CONSUMER, {}).get(
-        CFG_LOG_FLUENTBIT_API_RESPONSES, False
+    log_agent_api_responses = raw.get(CFG_CONSUMER, {}).get(
+        CFG_LOG_AGENT_API_RESPONSES, False
     )
-    config.log_fluentbit_api_responses = bool(log_fluentbit_api_responses)
+    config.log_agent_api_responses = bool(log_agent_api_responses)
 
     log_level = raw.get(CFG_CONSUMER, {}).get(CFG_LOG_LEVEL, "debug") or "debug"
     return config
 
 
 def set_config(config: ConsumerConfig) -> None:
+    """Update the module-level config singleton."""
     global CONFIG
     CONFIG = config
 

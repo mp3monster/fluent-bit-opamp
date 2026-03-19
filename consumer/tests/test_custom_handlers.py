@@ -22,6 +22,7 @@ from opamp_consumer.custom_handlers import (
 
 
 def _make_client_data() -> OpAMPClientData:
+    """Create a minimal OpAMPClientData instance for handler tests."""
     config = ConsumerConfig(
         server_url="http://localhost",
         fluentbit_config_path="unused",
@@ -34,6 +35,7 @@ def _make_client_data() -> OpAMPClientData:
 
 
 def test_chatops_command_logs(caplog) -> None:
+    """Verify ChatOpsCommand logs each stub method invocation."""
     caplog.set_level(logging.INFO)
     handler = ChatOpsCommand()
     handler.set_client_data(_make_client_data())
@@ -48,6 +50,7 @@ def test_chatops_command_logs(caplog) -> None:
 
 
 def test_registry_discovers_and_creates_handlers(tmp_path) -> None:
+    """Discover handlers from a folder and instantiate by FQDN."""
     handler_code = '''
 from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
 
@@ -76,6 +79,7 @@ class SampleHandler(CustomMessageHandlerInterface):
 
 
 def test_registry_ignores_missing_folder(tmp_path) -> None:
+    """Return empty results when the handler folder is missing."""
     missing = tmp_path / "missing"
     registry = discover_handlers(missing, client_data=_make_client_data())
     assert registry == {}
@@ -83,6 +87,7 @@ def test_registry_ignores_missing_folder(tmp_path) -> None:
 
 
 def test_registry_ignores_non_handler_classes(tmp_path) -> None:
+    """Ignore classes that do not implement the handler interface."""
     handler_code = '''\nclass NotAHandler:\n    pass\n'''
     handler_path = tmp_path / "not_handler.py"
     handler_path.write_text(handler_code)
@@ -92,6 +97,7 @@ def test_registry_ignores_non_handler_classes(tmp_path) -> None:
 
 
 def test_registry_skips_broken_module(tmp_path) -> None:
+    """Skip modules that fail to import without raising."""
     handler_code = "raise RuntimeError('boom')\n"
     handler_path = tmp_path / "broken.py"
     handler_path.write_text(handler_code)

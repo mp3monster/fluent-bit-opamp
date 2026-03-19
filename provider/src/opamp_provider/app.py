@@ -1,3 +1,15 @@
+# Copyright 2026 mp3monster.org
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Quart OpAMP server skeleton."""
 
 from __future__ import annotations
@@ -61,6 +73,7 @@ _WEBSOCKET_CLIENTS: dict[object, str | None] = {}
 
 
 def _request_process_shutdown() -> None:
+    """Trigger a process shutdown via SIGINT (fallback to immediate exit)."""
     try:
         os.kill(os.getpid(), signal.SIGINT)
     except Exception:
@@ -68,12 +81,14 @@ def _request_process_shutdown() -> None:
 
 
 async def _shutdown_after_response() -> None:
+    """Delay briefly to flush responses before shutting down."""
     await asyncio.sleep(0.2)
     _request_process_shutdown()
 
 
 @app.errorhandler(Exception)
 async def handle_unexpected_error(error: Exception) -> Response:
+    """Return JSON for unexpected errors while preserving HTTPException behavior."""
     if isinstance(error, HTTPException):
         return error
     logger.exception("Unhandled app error", exc_info=error)
@@ -81,6 +96,7 @@ async def handle_unexpected_error(error: Exception) -> Response:
 
 
 def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:
+    """Attach a remote_config action to the ServerToAgent response."""
     logger.info("building next action payload: %s", ACTION_APPLY_CONFIG)
     response.remote_config.SetInParent()
     return response
@@ -89,6 +105,7 @@ def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerTo
 def _build_change_connections(
     response: opamp_pb2.ServerToAgent,
 ) -> opamp_pb2.ServerToAgent:
+    """Return a not-available error for change connections action."""
     logger.info("building next action payload: %s", ACTION_CHANGE_CONNECTIONS)
     # response.connection_settings.SetInParent()
     response = _build_error(
@@ -100,6 +117,7 @@ def _build_change_connections(
 def _build_package_available(
     response: opamp_pb2.ServerToAgent,
 ) -> opamp_pb2.ServerToAgent:
+    """Return a not-available error for package availability action."""
     logger.info("building next action payload: %s", ACTION_PACKAGE_AVAILABLE)
     # response.packages_available.SetInParent()
     response = _build_error(
@@ -111,6 +129,7 @@ def _build_package_available(
 def _build_command_agent(
     response: opamp_pb2.ServerToAgent, pending_command: CommandRecord | None
 ) -> opamp_pb2.ServerToAgent:
+    """Attach a command payload when a pending command exists."""
     logger.info("building next action payload: %s", ACTION_COMMAND_AGENT)
     if (
         pending_command is not None
@@ -125,6 +144,7 @@ def _build_command_agent(
 def _build_custom_agent_command(
     response: opamp_pb2.ServerToAgent,
 ) -> opamp_pb2.ServerToAgent:
+    """Attach a custom message payload to the response."""
     logger.info("building next action payload: %s", ACTION_CUSTOM_AGENT_COMMAND)
     response.custom_message.SetInParent()
     return response
@@ -136,6 +156,7 @@ def _apply_next_action(
     action: str,
     pending_command: CommandRecord | None,
 ) -> opamp_pb2.ServerToAgent:
+    """Dispatch the next action string to the correct builder."""
     if action == ACTION_APPLY_CONFIG:
         return _build_apply_config(response)
     if action == ACTION_CHANGE_CONNECTIONS:
@@ -196,7 +217,7 @@ def _build_error(
     ),
     error_message: str = "Bad Request",
 ) -> opamp_pb2.ServerToAgent:
-    """Build a ServerToAgent error response."""
+    """Build an error response and append error details to the message."""
     response = msg
     if not response.instance_uid:
         raise ServerToAgentException("no instance UID set")
