@@ -100,6 +100,9 @@ class CommandRecord(BaseModel):
     model_config = ConfigDict(frozen=False)
 
     command: str
+    classifier: str
+    action: str
+    key_value_pairs: list[dict[str, str]] = Field(default_factory=list)
     received_at: datetime = Field(default_factory=_utc_now)
     sent_at: Optional[datetime] = None
 
@@ -121,6 +124,7 @@ class ClientRecord(BaseModel):
     client_version: Optional[str] = None
     features: list[str] = Field(default_factory=list)
     commands: list[CommandRecord] = Field(default_factory=list)
+    events: list[dict[str, str]] = Field(default_factory=list)
     next_actions: Optional[list[str]] = None
     next_expected_communication: Optional[datetime] = None
     first_seen: datetime = Field(default_factory=_utc_now)
@@ -236,14 +240,26 @@ class ClientStore:
             record.disconnected = True
             record.disconnected_at = now
 
-    def queue_command(self, client_id: str, command: str) -> CommandRecord:
+    def queue_command(
+        self,
+        client_id: str,
+        *,
+        classifier: str,
+        action: str,
+        key_value_pairs: list[dict[str, str]],
+    ) -> CommandRecord:
         """Queue a command for a client and return the command record."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
                 record = ClientRecord(client_id=client_id)
                 self._clients[client_id] = record
-            cmd = CommandRecord(command=command)
+            cmd = CommandRecord(
+                command=action,
+                classifier=classifier,
+                action=action,
+                key_value_pairs=key_value_pairs,
+            )
             record.commands.append(cmd)
             return cmd
 
@@ -276,6 +292,22 @@ class ClientStore:
                 record = ClientRecord(client_id=client_id)
                 self._clients[client_id] = record
             record.next_actions = actions if actions else None
+            return record
+
+    def add_event(
+        self, client_id: str, *, description: str, max_events: int
+    ) -> ClientRecord:
+        """Append an event and retain only the latest max_events entries."""
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                record = ClientRecord(client_id=client_id)
+                self._clients[client_id] = record
+            event_time = _utc_now().isoformat()
+            record.events.append({event_time: description})
+            keep = max(1, int(max_events))
+            if len(record.events) > keep:
+                record.events = record.events[-keep:]
             return record
 
     def next_pending_command(self, client_id: str) -> Optional[CommandRecord]:

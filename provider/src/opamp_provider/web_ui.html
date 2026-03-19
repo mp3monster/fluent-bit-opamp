@@ -194,9 +194,11 @@
       border-radius: 20px;
       padding: 24px;
       width: min(820px, 95vw);
-      max-height: 90vh;
-      overflow-y: auto;
+      height: min(820px, 90vh);
+      overflow: hidden;
       box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
     }
 
     .modal-card.late-amber { border-color: var(--amber); }
@@ -207,6 +209,7 @@
       justify-content: space-between;
       align-items: center;
       gap: 12px;
+      flex: 0 0 auto;
     }
 
     .modal-header h2 { margin: 0; }
@@ -216,6 +219,59 @@
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 12px;
       margin-top: 16px;
+    }
+
+    .modal-tabs {
+      display: flex;
+      gap: 0;
+      margin-top: 14px;
+      border-bottom: 1px solid #cfd7ea;
+      flex: 0 0 auto;
+    }
+
+    .tab-button {
+      border: 1px solid #cfd7ea;
+      border-bottom: none;
+      background: #e9eefb;
+      color: #445070;
+      padding: 10px 16px;
+      border-radius: 10px 10px 0 0;
+      cursor: pointer;
+      font-weight: 600;
+      position: relative;
+      margin-right: 4px;
+      margin-bottom: -1px;
+    }
+
+    .tab-button.active {
+      background: var(--panel);
+      color: var(--text);
+      border-color: #cfd7ea;
+      z-index: 2;
+    }
+
+    .modal-tab-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .tab-panel {
+      display: none;
+      height: 100%;
+      overflow-y: auto;
+      padding-top: 12px;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .tab-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
     }
 
     .field {
@@ -244,6 +300,7 @@
       display: flex;
       gap: 10px;
       justify-content: flex-end;
+      flex: 0 0 auto;
     }
     .cap-list {
       display: flex;
@@ -262,7 +319,47 @@
       text-transform: none;
     }
 
-    .modal-actions button {
+    .command-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .command-btn {
+      border: 1px solid #d0d8f2;
+      background: #f6f8ff;
+      color: #1f2a44;
+      padding: 12px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .command-btn small {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .history-panel {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px dashed #c9d4f5;
+      background: #f7f9ff;
+    }
+
+    .history-panel ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .modal button.cancel,
+    .modal button.save,
+    .modal button.data-toggle {
       border: none;
       padding: 10px 16px;
       border-radius: 10px;
@@ -294,6 +391,10 @@
     }
 
     .data-panel.hidden {
+      display: none;
+    }
+
+    .hidden {
       display: none;
     }
 
@@ -440,26 +541,64 @@
         <h2 id="modalTitle">Client</h2>
         <button id="closeModal" class="cancel">Close</button>
       </div>
-      <div class="modal-grid" id="modalFields"></div>
-      <div id="clientDataPanel" class="data-panel hidden">
-        <label style="font-size: 0.85rem; color: var(--muted);">Client Data (YAML)</label>
-        <pre id="clientDataYaml" class="data-output"></pre>
+      <div class="modal-tabs">
+        <button class="tab-button active" data-tab="summary">Summary</button>
+        <button class="tab-button" data-tab="commands">Commands</button>
+        <button class="tab-button" data-tab="config">Configuration</button>
+        <button id="historyTabBtn" class="tab-button hidden" data-tab="history">History</button>
+        <button id="commandHistoryTabBtn" class="tab-button hidden" data-tab="command-history">Command History</button>
       </div>
-      <div style="margin-top: 16px;">
-        <label style="font-size: 0.85rem; color: var(--muted);">Requested Configuration</label>
-        <textarea id="configInput" placeholder="Paste new configuration here..."></textarea>
-      </div>
-      <div style="margin-top: 16px;">
-        <label style="font-size: 0.85rem; color: var(--muted);">Command</label>
-        <select id="commandInput" style="width: 100%;">
-          <option value="">-- select --</option>
-          <option value="restart">restart</option>
-        </select>
+      <div class="modal-tab-body">
+        <div id="tab-summary" class="tab-panel active">
+          <div class="modal-grid" id="modalFields"></div>
+          <div id="clientDataPanel" class="data-panel hidden">
+            <label style="font-size: 0.85rem; color: var(--muted);">Client Data (YAML)</label>
+            <pre id="clientDataYaml" class="data-output"></pre>
+          </div>
+          <div class="tab-actions">
+            <button id="toggleDataBtn" class="data-toggle" type="button">View Data</button>
+          </div>
+        </div>
+        <div id="tab-commands" class="tab-panel">
+          <div class="command-grid" id="commandButtons"></div>
+        </div>
+        <div id="tab-command-history" class="tab-panel">
+          <div class="history-panel">
+            <label style="font-size: 0.85rem; color: var(--muted);">Command History</label>
+            <table class="table" style="margin-top: 10px;">
+              <thead>
+                <tr>
+                  <th>Date/Time</th>
+                  <th>Classifier</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="commandHistoryList"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="tab-config" class="tab-panel">
+          <div>
+            <label style="font-size: 0.85rem; color: var(--muted);">Current Configuration</label>
+            <pre id="currentConfigOutput" class="data-output"></pre>
+          </div>
+          <div style="margin-top: 16px;">
+            <label style="font-size: 0.85rem; color: var(--muted);">Requested Configuration</label>
+            <textarea id="configInput" placeholder="Paste new configuration here..."></textarea>
+          </div>
+          <div class="tab-actions">
+            <button id="saveConfigBtn" class="save">Save Configuration</button>
+          </div>
+        </div>
+        <div id="tab-history" class="tab-panel">
+          <div class="history-panel">
+            <label style="font-size: 0.85rem; color: var(--muted);">Event History</label>
+            <ul id="eventsHistoryList"></ul>
+          </div>
+        </div>
       </div>
       <div class="modal-actions">
-        <button id="toggleDataBtn" class="data-toggle" type="button">View Data</button>
-        <button id="saveBtn" class="save">Save</button>
-        <button id="cancelBtn" class="cancel">Cancel</button>
+        <button id="cancelBtn" class="cancel">Close</button>
       </div>
     </div>
   </div>
@@ -498,14 +637,32 @@
     const modalFields = document.getElementById("modalFields");
     const modalTitle = document.getElementById("modalTitle");
     const configInput = document.getElementById("configInput");
-    const commandInput = document.getElementById("commandInput");
+    const currentConfigOutput = document.getElementById("currentConfigOutput");
     const clientDataPanel = document.getElementById("clientDataPanel");
     const clientDataYaml = document.getElementById("clientDataYaml");
     const toggleDataBtn = document.getElementById("toggleDataBtn");
+    const commandHistoryList = document.getElementById("commandHistoryList");
+    const commandButtons = document.getElementById("commandButtons");
+    const saveConfigBtn = document.getElementById("saveConfigBtn");
+    const historyTabBtn = document.getElementById("historyTabBtn");
+    const commandHistoryTabBtn = document.getElementById("commandHistoryTabBtn");
+    const eventsHistoryList = document.getElementById("eventsHistoryList");
     const shutdownButton = document.getElementById("shutdownButton");
     const contextMenu = document.getElementById("contextMenu");
     const removeClientBtn = document.getElementById("removeClientBtn");
     const issueIdBtn = document.getElementById("issueIdBtn");
+    const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
+    const tabPanels = {
+      summary: document.getElementById("tab-summary"),
+      commands: document.getElementById("tab-commands"),
+      "command-history": document.getElementById("tab-command-history"),
+      config: document.getElementById("tab-config"),
+      history: document.getElementById("tab-history"),
+    };
+
+    const COMMAND_OPTIONS = [
+      { value: "restart", label: "Restart Agent", description: "Request a graceful restart." },
+    ];
 
     let activeClient = null;
     let contextClient = null;
@@ -556,7 +713,10 @@
       }
     });
 
-    commandInput.addEventListener("change", updateConfigLock);
+    tabButtons.forEach(btn => {
+      btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
+    });
+    saveConfigBtn.addEventListener("click", saveConfig);
 
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
@@ -564,7 +724,6 @@
 
     document.getElementById("closeModal").addEventListener("click", closeModal);
     document.getElementById("cancelBtn").addEventListener("click", closeModal);
-    document.getElementById("saveBtn").addEventListener("click", saveChanges);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeModal();
@@ -587,6 +746,7 @@
       lastUpdated.textContent = new Date().toLocaleTimeString();
       agentCount.textContent = state.clients.length;
       renderTable();
+      refreshOpenModal();
     }
 
     function totalPages() {
@@ -675,7 +835,24 @@
       pageJump.value = state.page;
     }
 
-    function openModal(client) {
+    function activeTabName() {
+      const activeBtn = tabButtons.find(btn => btn.classList.contains("active"));
+      return activeBtn?.dataset.tab || "summary";
+    }
+
+    function refreshOpenModal() {
+      if (!activeClient || !modal.classList.contains("open")) return;
+      const refreshed = state.clients.find(c => c.client_id === activeClient.client_id);
+      if (!refreshed) {
+        closeModal();
+        return;
+      }
+      openModal(refreshed, { preserveTab: true });
+    }
+
+    function openModal(client, options = {}) {
+      const preserveTab = options.preserveTab === true;
+      const desiredTab = preserveTab ? activeTabName() : "summary";
       activeClient = client;
       modalTitle.textContent = `Client ${client.client_id}`;
       const status = computeStatus(client);
@@ -688,6 +865,7 @@
       clientDataPanel.classList.add("hidden");
       clientDataYaml.textContent = "";
       toggleDataBtn.textContent = "View Data";
+      commandHistoryList.innerHTML = "";
       const agentDesc = client.agent_description || "";
       const serviceName = extractAgentField(agentDesc, "service.name");
       const hostType = extractAgentField(agentDesc, "os_type");
@@ -696,6 +874,7 @@
       const nextExpected = computeNextExpected(client);
 
       const fields = [
+        ["Status", status.label],
         ["First Registered", client.first_seen ? new Date(client.first_seen).toLocaleString() : "--"],
         ["Last Communication", client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"],
         ["Next Expected", nextExpected ? new Date(nextExpected).toLocaleString() : "--"],
@@ -715,9 +894,22 @@
         modalFields.appendChild(div);
       });
 
-      configInput.value = client.requested_config || "";
-      commandInput.value = "";
-      updateConfigLock();
+      configInput.value = formatConfigValue(client.requested_config) || "";
+      currentConfigOutput.textContent = formatConfigValue(client.current_config) || "--";
+      renderCommandHistory(client);
+      renderEventsHistory(client);
+      renderCommandButtons(client);
+      let nextTab = desiredTab;
+      if (nextTab === "history" && historyTabBtn.classList.contains("hidden")) {
+        nextTab = "summary";
+      }
+      if (
+        nextTab === "command-history"
+        && commandHistoryTabBtn.classList.contains("hidden")
+      ) {
+        nextTab = "summary";
+      }
+      setActiveTab(nextTab);
       modal.classList.add("open");
     }
 
@@ -725,8 +917,11 @@
       modal.classList.remove("open");
       activeClient = null;
       configInput.value = "";
-      commandInput.value = "";
-      updateConfigLock();
+      currentConfigOutput.textContent = "";
+      commandHistoryList.innerHTML = "";
+      eventsHistoryList.innerHTML = "";
+      historyTabBtn.classList.add("hidden");
+      commandHistoryTabBtn.classList.add("hidden");
     }
 
     function yamlScalar(value) {
@@ -836,11 +1031,147 @@
       }
     }
 
-    async function saveChanges() {
+    function setActiveTab(tabName) {
+      tabButtons.forEach(btn => {
+        const isActive = btn.dataset.tab === tabName;
+        btn.classList.toggle("active", isActive);
+      });
+      Object.entries(tabPanels).forEach(([key, panel]) => {
+        panel.classList.toggle("active", key === tabName);
+      });
+    }
+
+    function formatConfigValue(value) {
+      if (value === null || value === undefined) return "";
+      if (typeof value === "string") return value;
+      if (typeof value === "object") {
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (err) {
+          return String(value);
+        }
+      }
+      return String(value);
+    }
+
+    function renderCommandHistory(client) {
+      const history = Array.isArray(client.commands)
+        ? client.commands.filter(cmd => cmd.sent_at)
+        : [];
+      if (history.length === 0) {
+        commandHistoryList.innerHTML = `
+          <tr>
+            <td>--</td>
+            <td>--</td>
+            <td>No command history yet.</td>
+          </tr>
+        `;
+        return;
+      }
+      const sorted = [...history].sort((a, b) => {
+        const aTime = a.sent_at ? new Date(a.sent_at).getTime() : 0;
+        const bTime = b.sent_at ? new Date(b.sent_at).getTime() : 0;
+        return bTime - aTime;
+      });
+      commandHistoryList.innerHTML = "";
+      sorted.forEach(cmd => {
+        const row = document.createElement("tr");
+        const when = cmd.sent_at ? new Date(cmd.sent_at).toLocaleString() : "--";
+        const classifier = cmd.classifier || "command";
+        const action = cmd.action || cmd.command || "unknown";
+        row.innerHTML = `
+          <td>${when}</td>
+          <td>${classifier}</td>
+          <td>${action}</td>
+        `;
+        commandHistoryList.appendChild(row);
+      });
+    }
+
+    function renderCommandButtons(client) {
+      commandButtons.innerHTML = "";
+      COMMAND_OPTIONS.forEach(option => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "command-btn";
+        btn.innerHTML = `<span>${option.label}</span><small>${option.description}</small>`;
+        btn.addEventListener("click", () => queueCommand(option.value, client));
+        commandButtons.appendChild(btn);
+      });
+    }
+
+    function renderEventsHistory(client) {
+      const events = Array.isArray(client.events) ? client.events : [];
+      const flattened = [];
+      events.forEach(eventObj => {
+        if (!eventObj || typeof eventObj !== "object") return;
+        Object.entries(eventObj).forEach(([eventTime, description]) => {
+          flattened.push({
+            eventTime,
+            description: String(description),
+            ts: new Date(eventTime).getTime(),
+          });
+        });
+      });
+
+      if (flattened.length === 0) {
+        eventsHistoryList.innerHTML = "";
+        historyTabBtn.classList.add("hidden");
+        commandHistoryTabBtn.classList.add("hidden");
+        if (tabPanels.history.classList.contains("active")) {
+          setActiveTab("summary");
+        }
+        if (tabPanels["command-history"].classList.contains("active")) {
+          setActiveTab("summary");
+        }
+        return;
+      }
+
+      flattened.sort((a, b) => {
+        const aTs = Number.isNaN(a.ts) ? 0 : a.ts;
+        const bTs = Number.isNaN(b.ts) ? 0 : b.ts;
+        return bTs - aTs;
+      });
+
+      eventsHistoryList.innerHTML = "";
+      flattened.forEach(event => {
+        const li = document.createElement("li");
+        const when = Number.isNaN(event.ts)
+          ? event.eventTime
+          : new Date(event.eventTime).toLocaleString();
+        li.textContent = `${when} • ${event.description}`;
+        eventsHistoryList.appendChild(li);
+      });
+      historyTabBtn.classList.remove("hidden");
+      commandHistoryTabBtn.classList.remove("hidden");
+    }
+
+    async function queueCommand(command, client) {
+      const target = client || activeClient;
+      if (!target) return;
+      const ok = window.confirm(`Queue command "${command}" for client ${target.client_id}?`);
+      if (!ok) return;
+      const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([
+          { key: "classifier", value: "command" },
+          { key: "action", value: command },
+        ]),
+      });
+      if (!resp.ok) {
+        window.alert("Failed to queue command.");
+        return;
+      }
+      await fetchClients();
+      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      if (refreshed) openModal(refreshed);
+    }
+
+    async function saveConfig() {
       if (!activeClient) return;
       const configValue = configInput.value.trim();
-      const commandValue = commandInput.value.trim();
-      if (!configValue && !commandValue) {
+      if (!configValue) {
         closeModal();
         return;
       }
@@ -849,13 +1180,6 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ config: configValue }),
-        });
-      }
-      if (commandValue) {
-        await fetch(`/api/clients/${activeClient.client_id}/commands`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ command: commandValue }),
         });
       }
       closeModal();
@@ -882,14 +1206,6 @@
       if (Number.isNaN(last.getTime())) return null;
       const intervalSeconds = client.heartbeat_frequency ?? state.refreshSeconds;
       return new Date(last.getTime() + intervalSeconds * 1000).toISOString();
-    }
-
-    function updateConfigLock() {
-      const hasCommand = Boolean(commandInput.value.trim());
-      configInput.disabled = hasCommand;
-      configInput.placeholder = hasCommand
-        ? "Disabled while a command is selected..."
-        : "Paste new configuration here...";
     }
 
     function hideContextMenu() {

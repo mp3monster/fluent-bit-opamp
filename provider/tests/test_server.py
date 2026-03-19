@@ -30,6 +30,9 @@ def test_server_main_invokes_app(monkeypatch) -> None:
             delayed_comms_seconds=60,
             significant_comms_seconds=300,
             webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
         )
 
     def fake_set_config(config):

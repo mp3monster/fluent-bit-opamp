@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Set
+from typing import Callable, Set
 import logging
 import os
 import pathlib
@@ -29,7 +29,6 @@ from quart import Quart, Response, jsonify, redirect, request, websocket
 from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
-from opamp_provider.config import CONFIG
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE, CommandRecord
@@ -48,11 +47,13 @@ CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf paylo
 LOG_HTTP_MSG = "opamp http AgentToServer:\n%s"  # Log format for HTTP messages.
 LOG_WS_MSG = "opamp ws AgentToServer:\n%s"  # Log format for WebSocket messages.
 ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header error text.
-LOG_REST_COMMAND = "queued command for client %s at %s"
+LOG_REST_COMMAND = "queued command for client %s classifier=%s action=%s at %s"
 LOG_SEND_COMMAND = "sent command to client %s at %s"
 OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
 
 COMMAND_RESTART = "restart"
+CLASSIFIER_COMMAND = "command"
+CLASSIFIER_CUSTOM_COMMAND = "custom_command"
 CHANNEL_HTTP = "HTTP"
 CHANNEL_WEBSOCKET = "WebSocket"
 ACTION_APPLY_CONFIG = "apply_config"
@@ -126,28 +127,93 @@ def _build_package_available(
     return response
 
 
-def _build_command_agent(
+def _build_restart_command(
+    response: opamp_pb2.ServerToAgent, pending_command: CommandRecord
+) -> opamp_pb2.ServerToAgent:
+    """Build a restart ServerToAgentCommand payload."""
+    logger.info(
+        "building command payload classifier=%s action=%s",
+        pending_command.classifier,
+        pending_command.action,
+    )
+    response.command.type = opamp_pb2.CommandType.CommandType_Restart
+    logger.debug(
+        "created ServerToAgent.command payload: %s",
+        text_format.MessageToString(response.command).strip(),
+    )
+    return response
+
+
+def _kv_lookup(pairs: list[dict[str, str]], key: str) -> str:
+    """Fetch a string value from a list of key/value dictionaries."""
+    for pair in pairs:
+        if pair.get("key", "").strip().lower() == key.lower():
+            return str(pair.get("value", "")).strip()
+    return ""
+
+
+def _build_custom_command_payload(
+    response: opamp_pb2.ServerToAgent, pending_command: CommandRecord
+) -> opamp_pb2.ServerToAgent:
+    """Build a ServerToAgent custom message payload from queued key/value pairs."""
+    logger.info(
+        "building custom command payload classifier=%s action=%s",
+        pending_command.classifier,
+        pending_command.action,
+    )
+    capability = _kv_lookup(pending_command.key_value_pairs, "capability")
+    custom_type = _kv_lookup(pending_command.key_value_pairs, "type")
+    data_value = _kv_lookup(pending_command.key_value_pairs, "data")
+
+    response.custom_message.capability = capability or "custom_command"
+    response.custom_message.type = custom_type or pending_command.action
+    if data_value:
+        response.custom_message.data = data_value.encode(UTF8_ENCODING)
+    else:
+        response.custom_message.data = b""
+    logger.debug(
+        "created ServerToAgent.custom_message payload: %s",
+        text_format.MessageToString(response.custom_message).strip(),
+    )
+    return response
+
+
+COMMAND_BUILDERS: dict[
+    tuple[str, str],
+    Callable[[opamp_pb2.ServerToAgent, CommandRecord], opamp_pb2.ServerToAgent],
+] = {
+    (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
+    (CLASSIFIER_CUSTOM_COMMAND, "*"): _build_custom_command_payload,
+}
+
+
+def _apply_command_intent(
     response: opamp_pb2.ServerToAgent, pending_command: CommandRecord | None
 ) -> opamp_pb2.ServerToAgent:
-    """Attach a command payload when a pending command exists."""
-    logger.info("building next action payload: %s", ACTION_COMMAND_AGENT)
-    if (
-        pending_command is not None
-        and pending_command.command.lower() == COMMAND_RESTART
-    ):
-        response.command.type = opamp_pb2.CommandType.CommandType_Restart
-    else:
-        response.command.SetInParent()
-    return response
-
-
-def _build_custom_agent_command(
-    response: opamp_pb2.ServerToAgent,
-) -> opamp_pb2.ServerToAgent:
-    """Attach a custom message payload to the response."""
-    logger.info("building next action payload: %s", ACTION_CUSTOM_AGENT_COMMAND)
-    response.custom_message.SetInParent()
-    return response
+    """Map classifier/action to a payload builder and apply it to the response."""
+    if pending_command is None:
+        return response
+    classifier = pending_command.classifier.strip().lower()
+    action = pending_command.action.strip().lower()
+    builder = COMMAND_BUILDERS.get((classifier, action))
+    if builder is None:
+        builder = COMMAND_BUILDERS.get((classifier, "*"))
+    if builder is None:
+        logger.warning(
+            "No command builder for classifier=%s action=%s",
+            classifier,
+            action,
+        )
+        return response
+    updated_response = builder(response, pending_command)
+    logger.debug(
+        "created command intent payload summary client classifier=%s action=%s has_command=%s has_custom_message=%s",
+        classifier,
+        action,
+        updated_response.HasField("command"),
+        updated_response.HasField("custom_message"),
+    )
+    return updated_response
 
 
 def _apply_next_action(
@@ -164,9 +230,9 @@ def _apply_next_action(
     if action == ACTION_PACKAGE_AVAILABLE:
         return _build_package_available(response)
     if action == ACTION_COMMAND_AGENT:
-        return _build_command_agent(response, pending_command)
+        return _apply_command_intent(response, pending_command)
     if action == ACTION_CUSTOM_AGENT_COMMAND:
-        return _build_custom_agent_command(response)
+        return _apply_command_intent(response, pending_command)
     logger.warning("unknown next action: %s", action)
     return response
 
@@ -186,7 +252,7 @@ def _build_response(
         logger.warning("Cant set response instance_uid")
 
     # Capabilities are read from config/opamp.json at startup.
-    response.capabilities = CONFIG.server_capabilities
+    response.capabilities = provider_config.CONFIG.server_capabilities
     if client_id:
         pending_identification = STORE.pop_agent_identification(client_id)
         if pending_identification:
@@ -204,9 +270,7 @@ def _build_response(
             response = _apply_next_action(
                 response, action=next_action, pending_command=pending_command
             )
-    if pending_command is not None and not response.HasField("command"):
-        if pending_command.command.lower() == COMMAND_RESTART:
-            response.command.type = opamp_pb2.CommandType.CommandType_Restart
+    response = _apply_command_intent(response, pending_command)
     return response
 
 
@@ -238,7 +302,7 @@ def _build_error(
         error_type
         == opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable
     ):
-        retry_ns = int(CONFIG.retry_after_seconds) * 1_000_000_000
+        retry_ns = int(provider_config.CONFIG.retry_after_seconds) * 1_000_000_000
         response.error_response.retry_info.retry_after_nanoseconds = retry_ns
 
     logging.getLogger(__name__).info(
@@ -293,7 +357,9 @@ async def opamp_http() -> Response:
             channel=CHANNEL_HTTP,
         )
         payload = response_msg.SerializeToString()
-        if pending_command is not None and response_msg.HasField("command"):
+        if pending_command is not None and (
+            response_msg.HasField("command") or response_msg.HasField("custom_message")
+        ):
             STORE.mark_command_sent(client.client_id, pending_command)
             logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
         return Response(payload, content_type=CONTENT_TYPE_PROTO)
@@ -369,7 +435,9 @@ async def opamp_ws() -> None:
 
             out_payload = response_msg.SerializeToString()
             await websocket.send(encode_message(out_payload))
-            if response_msg.HasField("command"):
+            if response_msg.HasField("command") or response_msg.HasField(
+                "custom_message"
+            ):
                 STORE.mark_command_sent(client.client_id, pending_command)
                 logger.info(
                     LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc)
@@ -414,7 +482,7 @@ async def list_clients() -> Response:
     """List all tracked clients."""
     global _LAST_DISCONNECT_PURGE
     now = datetime.now(timezone.utc)
-    keep_minutes = max(1, int(CONFIG.minutes_keep_disconnected))
+    keep_minutes = max(1, int(provider_config.CONFIG.minutes_keep_disconnected))
     purge_interval = timedelta(minutes=keep_minutes / 2)
     if _LAST_DISCONNECT_PURGE is None or now - _LAST_DISCONNECT_PURGE >= purge_interval:
         cutoff = now - timedelta(minutes=keep_minutes)
@@ -451,15 +519,93 @@ async def delete_client(client_id: str) -> Response:
 
 @app.post("/api/clients/<client_id>/commands")
 async def queue_command(client_id: str) -> Response:
-    """Queue a command for a client."""
+    """Queue a structured command intent for a client."""
     payload = await request.get_json(silent=True)
-    if not payload or "command" not in payload:
-        return jsonify({"error": "command is required"}), HTTPStatus.BAD_REQUEST
-    command = str(payload["command"]).strip()
-    if not command:
-        return jsonify({"error": "command is required"}), HTTPStatus.BAD_REQUEST
-    cmd = STORE.queue_command(client_id, command)
-    logger.info(LOG_REST_COMMAND, client_id, cmd.received_at)
+    pairs = None
+    if isinstance(payload, list):
+        pairs = payload
+    elif isinstance(payload, dict):
+        if isinstance(payload.get("pairs"), list):
+            pairs = payload["pairs"]
+        elif "command" in payload:
+            legacy_action = str(payload["command"]).strip()
+            pairs = [
+                {"key": "classifier", "value": CLASSIFIER_COMMAND},
+                {"key": "action", "value": legacy_action},
+            ]
+    if not isinstance(pairs, list) or not pairs:
+        return (
+            jsonify({"error": "pairs array is required"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    normalized_pairs: list[dict[str, str]] = []
+    values: dict[str, str] = {}
+    for pair in pairs:
+        if not isinstance(pair, dict) or "key" not in pair or "value" not in pair:
+            return (
+                jsonify({"error": "each pair must include key and value"}),
+                HTTPStatus.BAD_REQUEST,
+            )
+        key = str(pair["key"]).strip()
+        value = str(pair["value"]).strip()
+        if not key:
+            return jsonify({"error": "pair key cannot be empty"}), HTTPStatus.BAD_REQUEST
+        normalized_pairs.append({"key": key, "value": value})
+        values[key.lower()] = value
+
+    classifier = values.get("classifier", "").strip().lower()
+    action = values.get("action", "").strip().lower()
+    if classifier not in {CLASSIFIER_COMMAND, CLASSIFIER_CUSTOM_COMMAND}:
+        return (
+            jsonify(
+                {
+                    "error": "classifier must be command or custom_command",
+                    "classifier": classifier,
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    if not action:
+        return jsonify({"error": "action is required"}), HTTPStatus.BAD_REQUEST
+
+    if (
+        (classifier, action) not in COMMAND_BUILDERS
+        and (classifier, "*") not in COMMAND_BUILDERS
+    ):
+        return (
+            jsonify(
+                {
+                    "error": "unsupported classifier/action",
+                    "classifier": classifier,
+                    "action": action,
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    cmd = STORE.queue_command(
+        client_id,
+        classifier=classifier,
+        action=action,
+        key_value_pairs=normalized_pairs,
+    )
+    STORE.add_event(
+        client_id,
+        description=(
+            "restart command queued"
+            if classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART
+            else f"{classifier} {action} command queued"
+        ),
+        max_events=provider_config.CONFIG.client_event_history_size,
+    )
+    logger.info(
+        LOG_REST_COMMAND,
+        client_id,
+        cmd.classifier,
+        cmd.action,
+        cmd.received_at,
+    )
     return jsonify(cmd.model_dump(mode="json")), HTTPStatus.CREATED
 
 
@@ -518,8 +664,8 @@ async def get_comms_settings() -> Response:
     """Get communication threshold settings."""
     return jsonify(
         {
-            "delayed_comms_seconds": CONFIG.delayed_comms_seconds,
-            "significant_comms_seconds": CONFIG.significant_comms_seconds,
+            "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
+            "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
         }
     )
 
@@ -532,10 +678,15 @@ async def update_comms_settings() -> Response:
         return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
     try:
         delayed = int(
-            payload.get("delayed_comms_seconds", CONFIG.delayed_comms_seconds)
+            payload.get(
+                "delayed_comms_seconds", provider_config.CONFIG.delayed_comms_seconds
+            )
         )
         significant = int(
-            payload.get("significant_comms_seconds", CONFIG.significant_comms_seconds)
+            payload.get(
+                "significant_comms_seconds",
+                provider_config.CONFIG.significant_comms_seconds,
+            )
         )
     except (TypeError, ValueError):
         return jsonify({"error": "thresholds must be integers"}), HTTPStatus.BAD_REQUEST
@@ -603,8 +754,10 @@ async def web_ui() -> Response:
 async def help_page() -> Response:
     """Serve a simple help page."""
     html = _HELP_HTML.replace(
-        "__DELAYED_SECONDS__", str(CONFIG.delayed_comms_seconds)
-    ).replace("__SIGNIFICANT_SECONDS__", str(CONFIG.significant_comms_seconds))
+        "__DELAYED_SECONDS__", str(provider_config.CONFIG.delayed_comms_seconds)
+    ).replace(
+        "__SIGNIFICANT_SECONDS__", str(provider_config.CONFIG.significant_comms_seconds)
+    )
     return Response(html, content_type="text/html; charset=utf-8")
 
 

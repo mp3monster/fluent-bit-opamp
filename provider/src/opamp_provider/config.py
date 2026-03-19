@@ -36,12 +36,14 @@ CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"
 CFG_WEBUI_PORT = "webui_port"
 CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"
 CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"
+CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
 DEFAULT_WEBUI_PORT = 8080
 DEFAULT_MINUTES_KEEP_DISCONNECTED = 30
 DEFAULT_RETRY_AFTER_SECONDS = 30
+DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class ProviderConfig:
     webui_port: int
     minutes_keep_disconnected: int
     retry_after_seconds: int
+    client_event_history_size: int
 
 
 def _repo_root() -> pathlib.Path:
@@ -104,6 +107,14 @@ def load_config() -> ProviderConfig:
         retry_after_seconds=int(
             provider_raw.get(CFG_RETRY_AFTER_SECONDS, DEFAULT_RETRY_AFTER_SECONDS)
         ),
+        client_event_history_size=max(
+            1,
+            int(
+                provider_raw.get(
+                    CFG_CLIENT_EVENT_HISTORY_SIZE, DEFAULT_CLIENT_EVENT_HISTORY_SIZE
+                )
+            ),
+        ),
     )
 
 
@@ -144,6 +155,14 @@ def load_config_with_overrides(
         retry_after_seconds=int(
             provider_raw.get(CFG_RETRY_AFTER_SECONDS, DEFAULT_RETRY_AFTER_SECONDS)
         ),
+        client_event_history_size=max(
+            1,
+            int(
+                provider_raw.get(
+                    CFG_CLIENT_EVENT_HISTORY_SIZE, DEFAULT_CLIENT_EVENT_HISTORY_SIZE
+                )
+            ),
+        ),
     )
 
 
@@ -162,6 +181,7 @@ def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig
         webui_port=CONFIG.webui_port,
         minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
         retry_after_seconds=CONFIG.retry_after_seconds,
+        client_event_history_size=CONFIG.client_event_history_size,
     )
     set_config(config)
     return config

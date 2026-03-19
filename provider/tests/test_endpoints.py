@@ -69,6 +69,9 @@ async def test_get_comms_settings() -> None:
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
     )
     provider_config.set_config(config)
 
@@ -90,6 +93,9 @@ async def test_put_comms_settings() -> None:
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
     )
     provider_config.set_config(config)
 
@@ -114,6 +120,9 @@ async def test_put_comms_settings_rejects_invalid() -> None:
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
     )
     provider_config.set_config(config)
 
@@ -129,6 +138,85 @@ async def test_put_comms_settings_rejects_invalid() -> None:
 async def test_queue_command_requires_payload() -> None:
     async with app.test_client() as client:
         resp = await client.post("/api/clients/client-1/commands")
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_queue_restart_command_and_emit_restart_payload() -> None:
+    client_id = "000000000000000000000000000000ab"
+    STORE._clients.clear()
+
+    async with app.test_client() as client:
+        queue_resp = await client.post(
+            f"/api/clients/{client_id}/commands",
+            json=[
+                {"key": "classifier", "value": "command"},
+                {"key": "action", "value": "restart"},
+            ],
+        )
+        assert queue_resp.status_code == 201
+        record = STORE.get(client_id)
+        assert record is not None
+        assert len(record.events) == 1
+        event = record.events[0]
+        event_desc = next(iter(event.values()))
+        assert event_desc == "restart command queued"
+
+        agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+        opamp_resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert opamp_resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await opamp_resp.get_data())
+        assert server_msg.HasField("command")
+        assert server_msg.command.type == opamp_pb2.CommandType.CommandType_Restart
+
+
+@pytest.mark.asyncio
+async def test_event_history_is_capped_to_configured_size() -> None:
+    client_id = "000000000000000000000000000000cd"
+    STORE._clients.clear()
+    provider_config.set_config(
+        ProviderConfig(
+            server_capabilities=1,
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=2,
+        )
+    )
+
+    async with app.test_client() as client:
+        for _ in range(3):
+            resp = await client.post(
+                f"/api/clients/{client_id}/commands",
+                json=[
+                    {"key": "classifier", "value": "command"},
+                    {"key": "action", "value": "restart"},
+                ],
+            )
+            assert resp.status_code == 201
+
+    record = STORE.get(client_id)
+    assert record is not None
+    assert len(record.events) == 2
+
+
+@pytest.mark.asyncio
+async def test_queue_command_rejects_unsupported_classifier_action() -> None:
+    async with app.test_client() as client:
+        resp = await client.post(
+            "/api/clients/client-1/commands",
+            json=[
+                {"key": "classifier", "value": "command"},
+                {"key": "action", "value": "not-supported"},
+            ],
+        )
         assert resp.status_code == 400
 
 

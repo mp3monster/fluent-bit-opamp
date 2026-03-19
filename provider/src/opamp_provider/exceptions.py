@@ -15,3 +15,7 @@
 
 class ServerToAgentException(Exception):
     """Raised when building or sending ServerToAgent responses fails."""
+
+    def __init__(self, message: str) -> None:
+        """Initialize the exception with a human-readable message."""
+        super().__init__(message)
