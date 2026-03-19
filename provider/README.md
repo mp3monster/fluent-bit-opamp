@@ -16,7 +16,8 @@ Example `opamp.json`:
     "delayed_comms_seconds": 60,
     "significant_comms_seconds": 300,
     "webui_port": 8080,
-    "minutes_keep_disconnected": 5
+    "minutes_keep_disconnected": 5,
+    "retryAfterSeconds": 30
   }
 }
 ```
@@ -34,6 +35,8 @@ Example `opamp.json`:
 - `provider.minutes_keep_disconnected` (integer, optional, default `30`)
   Minutes to retain disconnected clients before purging. Disconnections are
   purged during UI refresh at half this interval.
+- `provider.retryAfterSeconds` (integer, optional, default `30`)
+  Retry delay (in seconds) used when the server responds with an unavailable error.
 
 ## Run scripts
 
