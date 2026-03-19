@@ -11,6 +11,7 @@
 # limitations under the License.
 
 import logging
+import pytest
 
 import opamp_consumer.client as client
 from opamp_consumer.client import (
@@ -22,6 +23,7 @@ from opamp_consumer.client import (
     KEY_FLUENTBIT_VERSION,
 )
 from opamp_consumer.config import ConsumerConfig
+from opamp_consumer.exceptions import AgentException
 from opamp_consumer.proto import opamp_pb2, anyvalue_pb2
 
 
@@ -156,11 +158,18 @@ def test_populate_disconnect_sets_instance_uid() -> None:
 def test_terminate_fluent_bit_terminates_only_launched_process(monkeypatch) -> None:
     """Terminate only the Fluent Bit process launched by the client."""
     instance = client.OpAMPClient("http://localhost")
-    called = {"terminate": 0}
+    called = {"terminate": 0, "wait": 0, "kill": 0}
 
     class FakeProcess:
         def terminate(self) -> None:
             called["terminate"] += 1
+
+        def wait(self, timeout: float | None = None) -> int:
+            called["wait"] += 1
+            return 0
+
+        def kill(self) -> None:
+            called["kill"] += 1
 
     monkeypatch.setattr(client.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
 
@@ -169,4 +178,65 @@ def test_terminate_fluent_bit_terminates_only_launched_process(monkeypatch) -> N
 
     instance.terminate_fluent_bit()
     assert called["terminate"] == 1
+    assert called["wait"] == 1
+    assert called["kill"] == 0
     assert instance.data.fluentbit_process is None
+
+
+def test_restart_agent_process_relaunches(monkeypatch) -> None:
+    """Restart should terminate existing process and launch a new one."""
+    instance = client.OpAMPClient("http://localhost")
+    calls = {"terminate": 0, "launch": 0}
+
+    def _terminate() -> None:
+        calls["terminate"] += 1
+
+    def _launch() -> bool:
+        calls["launch"] += 1
+        return True
+
+    monkeypatch.setattr(instance, "terminate_fluent_bit", _terminate)
+    monkeypatch.setattr(instance, "launch_fluent_bit", _launch)
+
+    assert instance.restart_agent_process() is True
+    assert calls["terminate"] == 1
+    assert calls["launch"] == 1
+
+
+def test_restart_agent_process_raises_on_failed_launch(monkeypatch) -> None:
+    """Restart should raise AgentException when relaunch fails."""
+    instance = client.OpAMPClient("http://localhost")
+
+    monkeypatch.setattr(instance, "terminate_fluent_bit", lambda: None)
+    monkeypatch.setattr(instance, "launch_fluent_bit", lambda: False)
+
+    with pytest.raises(AgentException):
+        instance.restart_agent_process()
+
+
+def test_handle_command_restart_invokes_restart(monkeypatch) -> None:
+    """Restart command should invoke restart_agent_process."""
+    instance = client.OpAMPClient("http://localhost")
+    calls = {"restart": 0}
+
+    def _restart() -> bool:
+        calls["restart"] += 1
+        return True
+
+    monkeypatch.setattr(instance, "restart_agent_process", _restart)
+    command = opamp_pb2.ServerToAgentCommand(
+        type=opamp_pb2.CommandType.CommandType_Restart
+    )
+
+    instance.handle_command(command)
+    assert calls["restart"] == 1
+
+
+def test_handle_command_unknown_raises_agent_exception() -> None:
+    """Unknown command type should raise AgentException."""
+    instance = client.OpAMPClient("http://localhost")
+    command = opamp_pb2.ServerToAgentCommand()
+    command.type = 999
+
+    with pytest.raises(AgentException):
+        instance.handle_command(command)
