@@ -18,6 +18,7 @@ from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
 from opamp_provider.config import CONFIG
+from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE, CommandRecord
 from opamp_provider.transport import decode_message, encode_message
@@ -89,7 +90,10 @@ def _build_change_connections(
     response: opamp_pb2.ServerToAgent,
 ) -> opamp_pb2.ServerToAgent:
     logger.info("building next action payload: %s", ACTION_CHANGE_CONNECTIONS)
-    response.connection_settings.SetInParent()
+    # response.connection_settings.SetInParent()
+    response = _build_error(
+        msg=response, error_message="Change Connections feature not available"
+    )
     return response
 
 
@@ -97,7 +101,10 @@ def _build_package_available(
     response: opamp_pb2.ServerToAgent,
 ) -> opamp_pb2.ServerToAgent:
     logger.info("building next action payload: %s", ACTION_PACKAGE_AVAILABLE)
-    response.packages_available.SetInParent()
+    # response.packages_available.SetInParent()
+    response = _build_error(
+        msg=response, error_message="Package Availability feature not available"
+    )
     return response
 
 
@@ -183,16 +190,39 @@ def _build_response(
 
 
 def _build_error(
-    message: str, instance_uid: bytes | None = None
+    msg: opamp_pb2.ServerToAgent,
+    error_type: opamp_pb2.ServerErrorResponseType = (
+        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+    ),
+    error_message: str = "Bad Request",
 ) -> opamp_pb2.ServerToAgent:
     """Build a ServerToAgent error response."""
-    response = opamp_pb2.ServerToAgent()
-    if instance_uid:
-        response.instance_uid = instance_uid
-    response.error_response.type = (
-        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+    response = msg
+    if not response.instance_uid:
+        raise ServerToAgentException("no instance UID set")
+
+    if not response.error_response:
+        response.error_response = opamp_pb2.ErrorResponseType
+
+    response.error_response.type = error_type
+
+    if not response.error_response.error_message:
+        response.error_response.error_message = error_message
+    else:
+        response.error_response.error_message = (
+            response.error_response.error_message + "\n" + error_message
+        )
+
+    if (
+        error_type
+        == opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable
+    ):
+        retry_ns = int(CONFIG.retry_after_seconds) * 1_000_000_000
+        response.error_response.retry_info.retry_after_nanoseconds = retry_ns
+
+    logging.getLogger(__name__).info(
+        f"Constructed an error response to transmit: {response.error_response}"
     )
-    response.error_response.error_message = message
     return response
 
 
@@ -206,6 +236,25 @@ async def opamp_http() -> Response:
             agent_msg.ParseFromString(data)
 
         logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
+        unsupported = []
+        if agent_msg.HasField("package_statuses"):
+            unsupported.append("package_statuses")
+        if agent_msg.HasField("connection_settings_request"):
+            unsupported.append("connection_settings_request")
+        if unsupported:
+            response_msg = opamp_pb2.ServerToAgent()
+            response_msg.instance_uid = agent_msg.instance_uid
+            response_msg = _build_error(
+                error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                error_message=(f"unsupported fields: {', '.join(unsupported)}"),
+                msg=response_msg,
+            )
+            payload = response_msg.SerializeToString()
+            return Response(
+                payload,
+                content_type=CONTENT_TYPE_PROTO,
+                status=HTTPStatus.BAD_REQUEST,
+            )
         client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
         pending_command = STORE.next_pending_command(client.client_id)
 
@@ -229,7 +278,10 @@ async def opamp_http() -> Response:
         return Response(payload, content_type=CONTENT_TYPE_PROTO)
     except Exception as exc:
         logger.exception("Unhandled HTTP error", exc_info=exc)
-        response_msg = _build_error("internal server error")
+        response_msg = _build_error(
+            opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
+            "internal server error",
+        )
         payload = response_msg.SerializeToString()
         return Response(
             payload,
@@ -252,6 +304,7 @@ async def opamp_ws() -> None:
                 header, payload = decode_message(data)
                 if header != OPAMP_HEADER_NONE:
                     response_msg = _build_error(
+                        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
                         ERR_UNSUPPORTED_HEADER,
                         agent_msg.instance_uid if "agent_msg" in locals() else None,
                     )
@@ -281,12 +334,14 @@ async def opamp_ws() -> None:
             except ValueError as exc:
                 logger.warning("OpAMP websocket value error: %s", exc)
                 response_msg = _build_error(
+                    opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
                     str(exc),
                     agent_msg.instance_uid if "agent_msg" in locals() else None,
                 )
             except Exception as exc:
                 logger.exception("Unhandled websocket error", exc_info=exc)
                 response_msg = _build_error(
+                    opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
                     "internal server error",
                     agent_msg.instance_uid if "agent_msg" in locals() else None,
                 )
@@ -295,7 +350,9 @@ async def opamp_ws() -> None:
             await websocket.send(encode_message(out_payload))
             if response_msg.HasField("command"):
                 STORE.mark_command_sent(client.client_id, pending_command)
-                logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
+                logger.info(
+                    LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc)
+                )
     finally:
         _WEBSOCKET_CLIENTS.pop(websocket, None)
 
@@ -304,6 +361,7 @@ async def _close_websockets() -> None:
     """Close all active WebSocket connections."""
     if not _WEBSOCKET_CLIENTS:
         return
+
     async def _close_one(ws: object, client_id: str | None) -> None:
         try:
             await ws.close(code=1001)
@@ -322,6 +380,12 @@ async def _close_websockets() -> None:
         ],
         return_exceptions=True,
     )
+
+
+@app.after_serving
+async def _finalize_server() -> None:
+    """Finalizer to cleanly close WebSocket connections on shutdown."""
+    await _close_websockets()
 
 
 @app.get("/api/clients")
@@ -392,7 +456,10 @@ async def set_client_actions(client_id: str) -> Response:
     elif isinstance(raw_actions, list):
         actions = raw_actions
     else:
-        return jsonify({"error": "actions must be a list or string"}), HTTPStatus.BAD_REQUEST
+        return (
+            jsonify({"error": "actions must be a list or string"}),
+            HTTPStatus.BAD_REQUEST,
+        )
     actions = [str(action).strip() for action in actions if str(action).strip()]
     if not actions:
         record = STORE.set_next_actions(client_id, None)
