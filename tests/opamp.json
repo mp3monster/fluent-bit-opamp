@@ -2,7 +2,7 @@
   "consumer": {
     "server_url": "http://localhost:8080",
     "transport": "http",
-    "log_fluentbit_api_responses": false,
+    "log_agent_api_responses": false,
     "fluentbit_config_path": "./fluent-bit.conf",
     "additional_fluent_bit_params": [],
     "heartbeat_frequency": 30,
