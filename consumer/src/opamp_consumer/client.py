@@ -47,6 +47,7 @@ import uuid
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
+from opamp_consumer.exceptions import AgentException
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
@@ -124,7 +125,10 @@ class OpAMPClientData:
     last_heartbeat_results: dict[str, str] | None = field(default_factory=dict)
     launched_at: int = 0
     fluentbit_process: subprocess.Popen[bytes] | None = None
+    process_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     logFLB = False
+    agent_type_name: str = "Fluent Bit"
+    agent_version: str = ""
 
 
 class OpAMPClient:
@@ -279,10 +283,10 @@ class OpAMPClient:
 
         try:
             if reply.HasField("instance_uid"):
+                logger.debug(f"reply target is {reply.instance_uid}")
                 if reply.instance_uid != self.data.uid_instance:
                     logger.error(
-                        "Message doesn't have an instance uid or doesn't match our service instance id %s",
-                        self.config.service_instance_id,
+                        "Message doesn't have an instance uid or doesn't match our service instance id {self.data.uid_instance}",
                     )
                     successful_message = False
             else:
@@ -295,26 +299,31 @@ class OpAMPClient:
             logger.error("Couldn't locate instance_uid in reply")
             successful_message = False
 
-        if reply.HasField("error_response"):
-            self.handle_error_response(reply.error_response)
-        if reply.HasField("remote_config"):
-            self.handle_remote_config(reply.remote_config)
-        if reply.HasField("connection_settings"):
-            self.handle_connection_settings(reply.connection_settings)
-        if reply.HasField("packages_available"):
-            self.handle_packages_available(reply.packages_available)
-        if reply.flags:
-            self.handle_flags(reply.flags)
-        if reply.capabilities:
-            self.handle_capabilities(reply.capabilities)
-        if reply.HasField("agent_identification"):
-            self.handle_agent_identification(reply.agent_identification)
-        if reply.HasField("command"):
-            self.handle_command(reply.command)
-        if reply.HasField("custom_capabilities"):
-            self.handle_custom_capabilities(reply.custom_capabilities)
-        if reply.HasField("custom_message"):
-            self.handle_custom_message(reply.custom_message)
+        try:
+            if reply.HasField("error_response"):
+                self.handle_error_response(reply.error_response)
+            if reply.HasField("remote_config"):
+                self.handle_remote_config(reply.remote_config)
+            if reply.HasField("connection_settings"):
+                self.handle_connection_settings(reply.connection_settings)
+            if reply.HasField("packages_available"):
+                self.handle_packages_available(reply.packages_available)
+            if reply.flags:
+                self.handle_flags(reply.flags)
+            if reply.capabilities:
+                self.handle_capabilities(reply.capabilities)
+            if reply.HasField("agent_identification"):
+                self.handle_agent_identification(reply.agent_identification)
+            if reply.HasField("command"):
+                self.handle_command(reply.command)
+            if reply.HasField("custom_capabilities"):
+                self.handle_custom_capabilities(reply.custom_capabilities)
+            if reply.HasField("custom_message"):
+                self.handle_custom_message(reply.custom_message)
+
+        except AgentException as agentErr:
+            logger.error(f"Agent Error received - {agentErr}")
+            successful_message = False
         return successful_message
 
     async def send(
@@ -441,19 +450,47 @@ class OpAMPClient:
             f"About to start Fluent Bit with {self.config.fluentbit_config_path} and cmd {cmd}"
         )
 
-        processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
-        self.data.fluentbit_process = processResponse
-        self.data.launched_at = time.time_ns()
+        with self.data.process_lock:
+            processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
+            self.data.fluentbit_process = processResponse
+            self.data.launched_at = time.time_ns()
         logger.info(f"Launch result = {processResponse}")
         return launched
 
     def terminate_fluent_bit(self) -> None:
         """Terminate the launched Fluent Bit process if available."""
-        process = self.data.fluentbit_process
-        if process is None:
-            return
-        process.terminate()
-        self.data.fluentbit_process = None
+        logger = logging.getLogger(__name__)
+        with self.data.process_lock:
+            process = self.data.fluentbit_process
+            if process is None:
+                return
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                logger.warning("Fluent Bit did not terminate in time; killing process")
+                process.kill()
+                process.wait(timeout=5)
+            self.data.fluentbit_process = None
+
+    def restart_agent_process(self) -> bool:
+        """Stop the current agent process and start a new instance."""
+        logger = logging.getLogger(__name__)
+        logger.info("Restarting agent process")
+        lock_acquired = self.data.process_lock.acquire(timeout=30)
+        if not lock_acquired:
+            raise AgentException(
+                "Timed out waiting for process lock while restarting agent process"
+            )
+        try:
+            self.terminate_fluent_bit()
+            relaunched = self.launch_fluent_bit()
+        finally:
+            self.data.process_lock.release()
+        if not relaunched:
+            raise AgentException("Failed to restart agent process")
+        logger.info("Agent process restarted")
+        return relaunched
 
     def _heartbeat_key(self, path: str) -> str:
         """Return the last URL path component as the dictionary key."""
@@ -478,7 +515,7 @@ class OpAMPClient:
                 codes[key] = "error"
         return results, codes
 
-    def add_fluentbit_version(self, port: int) -> None:
+    def add_agent_version(self, port: int) -> None:
         """Fetch Fluent Bit version endpoint and store in last heartbeat results."""
         url = f"{LOCALHOST_BASE}:{port}"
         try:
@@ -494,6 +531,7 @@ class OpAMPClient:
                     edition = data.get("fluent-bit.edition")
                     fb = data.get("fluent-bit") or data.get("fluentbit")
                     if isinstance(fb, dict):
+                        self.data.agent_type_name = "Fluent Bit"
                         version = version or fb.get("version")
                         edition = edition or fb.get("edition")
                 if version or edition:
@@ -501,13 +539,15 @@ class OpAMPClient:
                         value = f"{version} ({edition})"
                     else:
                         value = version or edition
-            except ValueError as exc:
+                self.data.agent_version = value
+            except ValueError as val_exc:
                 logging.getLogger(__name__).warning(
-                    "failed to parse Fluent Bit version response: %s", exc
+                    "failed to parse Agent version response: %s", val_exc
                 )
         except Exception as exc:  # pragma: no cover - error path varies by env
-            value = f"{ERR_PREFIX}{exc}"
-        self.data.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = value
+            logging.getLogger(__name__).warning(
+                "failed to parse Agent version response: %s", exc
+            )
 
     def get_agent_description(
         self, instance_uid: bytes | str | None = None
@@ -517,7 +557,7 @@ class OpAMPClient:
         desc = opamp_pb2.AgentDescription()
         service_name = self.config.service_name
         service_namespace = self.config.service_namespace
-        fluentbit_version = self.data.last_heartbeat_results.get(KEY_FLUENTBIT_VERSION)
+        fluentbit_version = self.data.agent_type_name + " - " + self.data.agent_version
         metadata = self.get_host_metadata()
 
         if service_name:
@@ -664,9 +704,17 @@ class OpAMPClient:
         logging.getLogger(__name__).info("server capabilities: %s", capabilities)
 
     def handle_command(self, command: opamp_pb2.ServerToAgentCommand) -> None:
-        logging.getLogger(__name__).info(
-            "server command:\n%s", text_format.MessageToString(command)
-        )
+        """Handle ServerToAgent command payloads."""
+        logger = logging.getLogger(__name__)
+        if command is None:
+            return
+        logger.info("server command:\n%s", text_format.MessageToString(command))
+        match command.type:
+            case opamp_pb2.CommandType.CommandType_Restart:
+                logger.info("server command to restart recognized")
+                self.restart_agent_process()
+            case _:
+                raise AgentException(f"Unknown command type: {command.type}")
 
     def handle_agent_identification(
         self, agent_identification: opamp_pb2.AgentIdentification
@@ -702,12 +750,13 @@ class OpAMPClient:
                     await self._send_disconnect_with_timeout()
                     self.data.allow_heartbeat = False
                 try:
-                    results, codes = self.poll_local_status_with_codes(port)
-                    self.data.last_heartbeat_results.clear()
-                    self.data.last_heartbeat_results.update(results)
-                    self.add_fluentbit_version(port)
-                    self.data.last_heartbeat_http_codes = codes
-                    if self.config.log_agent_api_responses and self.data.logFLB:
+                    with self.data.process_lock:
+                        results, codes = self.poll_local_status_with_codes(port)
+                        self.data.last_heartbeat_results.clear()
+                        self.data.last_heartbeat_results.update(results)
+                        self.add_agent_version(port)
+                        self.data.last_heartbeat_http_codes = codes
+                    if self.config.log_fluentbit_api_responses and self.data.logFLB:
                         logger.debug(f"Heartbeat outcome --> {results}")
 
                     logger.info("Heartbeat response codes: %s", codes)
@@ -857,7 +906,7 @@ def main() -> None:
         client = OpAMPClient(config.server_url, config)
 
         client.launch_fluent_bit()
-        client.add_fluentbit_version(config.http_port)
+        client.add_agent_version(config.http_port)
 
         logger.info("introducing self to server")
         asyncio.run(run_client(client))

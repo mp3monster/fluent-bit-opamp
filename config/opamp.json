@@ -23,6 +23,7 @@
     "significant_comms_seconds": 300,
     "webui_port": 8080,
     "minutes_keep_disconnected": 5,
-    "retryAfterSeconds": 30
+    "retryAfterSeconds": 30,
+    "client_event_history_size": 50
   }
 }
