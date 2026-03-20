@@ -54,6 +54,27 @@
       display: block;
       margin-bottom: 4px;
     }
+    .custom-commands {
+      margin-top: 22px;
+      padding: 14px;
+      border: 1px solid #d7deee;
+      border-radius: 14px;
+      background: #f7f9ff;
+    }
+    .custom-commands h2 {
+      margin: 0 0 8px;
+      font-size: 1.2rem;
+    }
+    .command-list {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .command-list li {
+      margin-bottom: 8px;
+    }
+    .command-list strong {
+      color: #2f3f8f;
+    }
   </style>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
 </head>
@@ -81,9 +102,48 @@
       </div>
     </div>
     <p>Use the main page to open an agent, paste config/commands, and save. Changes are queued until the next agent check-in.</p>
+    <section class="custom-commands">
+      <h2>Known Custom Commands</h2>
+      <ul id="customCommandList" class="command-list">
+        <li>Loading custom command metadata...</li>
+      </ul>
+    </section>
   </main>
   <footer class="footer">
     <div>Licensed under Apache 2.0 • Attribution: <a href="https://mp3monster.org" target="_blank" rel="noopener noreferrer">mp3monster.org</a></div>
   </footer>
+  <script>
+    async function loadCustomCommands() {
+      const list = document.getElementById("customCommandList");
+      try {
+        const resp = await fetch("/api/commands/custom");
+        if (!resp.ok) {
+          list.innerHTML = "<li>Failed to load custom commands.</li>";
+          return;
+        }
+        const payload = await resp.json();
+        const commands = Array.isArray(payload.commands) ? payload.commands : [];
+        if (!commands.length) {
+          list.innerHTML = "<li>No custom commands are currently registered.</li>";
+          return;
+        }
+        list.innerHTML = "";
+        commands
+          .slice()
+          .sort((a, b) => String(a.displayname || "").localeCompare(String(b.displayname || "")))
+          .forEach(cmd => {
+            const li = document.createElement("li");
+            const displayName = cmd.displayname || cmd.operation || cmd.fqdn || "Unnamed Command";
+            const description = cmd.description || "No description provided.";
+            li.innerHTML = `<strong>${displayName}</strong><br>${description}`;
+            list.appendChild(li);
+          });
+      } catch (err) {
+        list.innerHTML = "<li>Failed to load custom commands.</li>";
+      }
+    }
+
+    loadCustomCommands();
+  </script>
 </body>
 </html>
