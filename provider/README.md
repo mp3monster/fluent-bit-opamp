@@ -12,7 +12,6 @@ Example `opamp.json`:
 ```json
 {
   "provider": {
-    "server_capabilities": ["AcceptsStatus"],
     "delayed_comms_seconds": 60,
     "significant_comms_seconds": 300,
     "webui_port": 8080,
@@ -24,8 +23,6 @@ Example `opamp.json`:
 
 ### Fields
 
-- `provider.server_capabilities` (array of strings, required)
-  Capabilities list. Names must match `ServerCapabilities` enum values in `shared/opamp_config.py`.
 - `provider.delayed_comms_seconds` (integer, optional, default `60`)
   Time in seconds before a client is marked delayed (amber).
 - `provider.significant_comms_seconds` (integer, optional, default `300`)

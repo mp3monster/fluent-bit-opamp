@@ -38,6 +38,7 @@ from opamp_provider.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
     OPAMP_TRANSPORT_HEADER_NONE,
+    ServerCapabilities,
     UTF8_ENCODING,
 )
 
@@ -52,6 +53,9 @@ ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header erro
 LOG_REST_COMMAND = "queued command for client %s classifier=%s action=%s at %s"
 LOG_SEND_COMMAND = "sent command to client %s at %s"
 OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
+SERVER_CAPABILITIES = int(
+    ServerCapabilities.AcceptsStatus
+)  # Server advertises AcceptsStatus only.
 
 COMMAND_RESTART = "restart"
 COMMAND_CHATOP = "chatopcommand"
@@ -165,6 +169,22 @@ def _build_custom_command_payload(
         pending_command.classifier,
         pending_command.action,
     )
+    classifier = (pending_command.classifier or "").strip().lower()
+    action = (pending_command.action or "").strip().lower()
+    if classifier == CLASSIFIER_CUSTOM and action == COMMAND_CHATOP:
+        command_obj = command_object_factory(
+            classifier=classifier,
+            operation=action,
+            key_values={pair["key"]: pair["value"] for pair in pending_command.key_value_pairs},
+        )
+        if hasattr(command_obj, "to_custom_message"):
+            response.custom_message.CopyFrom(command_obj.to_custom_message())
+            logger.debug(
+                "created ServerToAgent.custom_message payload from ChatOpCommand: %s",
+                text_format.MessageToString(response.custom_message).strip(),
+            )
+            return response
+
     capability = _kv_lookup(pending_command.key_value_pairs, "capability")
     custom_type = _kv_lookup(pending_command.key_value_pairs, "type")
     data_value = _kv_lookup(pending_command.key_value_pairs, "data")
@@ -256,8 +276,8 @@ def _build_response(
     else:
         logger.warning("Cant set response instance_uid")
 
-    # Capabilities are read from config/opamp.json at startup.
-    response.capabilities = provider_config.CONFIG.server_capabilities
+    # Server capability advertisement is fixed to AcceptsStatus.
+    response.capabilities = SERVER_CAPABILITIES
     if client_id:
         pending_identification = STORE.pop_agent_identification(client_id)
         if pending_identification:
