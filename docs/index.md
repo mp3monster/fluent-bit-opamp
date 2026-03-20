@@ -6,6 +6,7 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 
 - [docs/README.md](README.md) — full setup and run instructions (moved from root).
 - [docs/features.md](features.md) — feature notes and design direction.
+- [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
 - [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](../provider/README.md) — provider configuration and web UI notes.
 - [shared/scripts/notes.md](../shared/scripts/notes.md) — shared script notes.
