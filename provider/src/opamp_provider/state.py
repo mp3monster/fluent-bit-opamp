@@ -17,16 +17,16 @@ from __future__ import annotations
 import threading
 import logging
 import re
-import secrets
-import time
-import uuid
+from enum import Enum
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
 from google.protobuf import text_format
 from pydantic import BaseModel, ConfigDict, Field
 
+from opamp_provider.command_record import CommandRecord
 from opamp_provider.proto import opamp_pb2
+from shared.uuid_utils import generate_uuid7_bytes
 
 
 def _utc_now() -> datetime:
@@ -61,21 +61,6 @@ def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
     return None
 
 
-def _uuid7_bytes() -> bytes:
-    """Generate UUIDv7 bytes."""
-    timestamp_ms = int(time.time_ns() / 1_000_000)
-    rand_a = secrets.randbits(12)
-    rand_b = secrets.randbits(62)
-    uuid_int = (
-        (timestamp_ms & ((1 << 48) - 1)) << 80
-        | (0x7 << 76)
-        | (rand_a << 64)
-        | (0x2 << 62)
-        | rand_b
-    )
-    return uuid.UUID(int=uuid_int).bytes
-
-
 def _capabilities_from_mask(mask: int) -> list[str]:
     """Decode an agent capability bitmask into enum names."""
     capabilities: list[str] = []
@@ -96,45 +81,109 @@ def _capabilities_from_mask(mask: int) -> list[str]:
     return capabilities
 
 
-class CommandRecord(BaseModel):
-    model_config = ConfigDict(frozen=False)
+class ClientChannel(str, Enum):
+    """Allowed transport channel values stored on ClientRecord."""
 
-    command: str
-    classifier: str
-    action: str
-    key_value_pairs: list[dict[str, str]] = Field(default_factory=list)
-    received_at: datetime = Field(default_factory=_utc_now)
-    sent_at: Optional[datetime] = None
+    HTTP = "HTTP"
+    WEBSOCKET = "websocket"
 
 
 class ClientRecord(BaseModel):
+    """Snapshot of provider-side state for one connected (or known) client."""
+
     model_config = ConfigDict(frozen=False)
 
-    client_id: str
-    capabilities: list[str] = Field(default_factory=list)
-    agent_description: Optional[str] = None
-    node_age_seconds: Optional[float] = None
-    last_communication: Optional[datetime] = None
-    last_channel: Optional[str] = None
-    current_config: Optional[str] = None
-    current_config_version: Optional[str] = None
-    requested_config: Optional[str] = None
-    requested_config_version: Optional[str] = None
-    requested_config_apply_at: Optional[datetime] = None
-    client_version: Optional[str] = None
-    features: list[str] = Field(default_factory=list)
-    commands: list[CommandRecord] = Field(default_factory=list)
-    events: list[dict[str, str]] = Field(default_factory=list)
-    next_actions: Optional[list[str]] = None
-    next_expected_communication: Optional[datetime] = None
-    first_seen: datetime = Field(default_factory=_utc_now)
-    component_health: Optional[dict[str, dict[str, Optional[str]]]] = None
-    health: Optional[dict[str, Optional[str] | dict[str, dict[str, Optional[str]]]]] = (
-        None
+    client_id: str = Field(description="Unique client identifier (hex-encoded instance UID).")
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Decoded list of agent capabilities currently reported by the client.",
     )
-    disconnected: bool = False
-    disconnected_at: Optional[datetime] = None
-    pending_agent_identification: Optional[bytes] = None
+    agent_description: Optional[str] = Field(
+        default=None,
+        description="Text representation of the latest AgentDescription payload.",
+    )
+    node_age_seconds: Optional[float] = Field(
+        default=None,
+        description="Elapsed seconds since the provider first observed this client.",
+    )
+    last_communication: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp of the most recent AgentToServer message from this client.",
+    )
+    last_channel: Optional[ClientChannel] = Field(
+        default=None,
+        description="Last transport channel used by this client (for example HTTP or WebSocket).",
+    )
+    current_config: Optional[str] = Field(
+        default=None,
+        description="Latest effective/current config reported by the client.",
+    )
+    current_config_version: Optional[str] = Field(
+        default=None,
+        description="Version identifier for current_config when provided by the client.",
+    )
+    requested_config: Optional[str] = Field(
+        default=None,
+        description="Most recently requested config payload queued by the provider.",
+    )
+    requested_config_version: Optional[str] = Field(
+        default=None,
+        description="Version identifier attached to requested_config.",
+    )
+    requested_config_apply_at: Optional[datetime] = Field(
+        default=None,
+        description="Optional timestamp indicating when requested_config should be applied.",
+    )
+    client_version: Optional[str] = Field(
+        default=None,
+        description="Client software version extracted from service.version in agent description.",
+    )
+    features: list[str] = Field(
+        default_factory=list,
+        description="Feature flags or capabilities tracked outside OpAMP capability bits.",
+    )
+    commands: list[CommandRecord] = Field(
+        default_factory=list,
+        description="Queued command records for this client, including sent/unsent state.",
+    )
+    events: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="Recent event log entries as {timestamp: description} maps.",
+    )
+    next_actions: Optional[list[str]] = Field(
+        default=None,
+        description="Ordered list of server next-actions to apply on upcoming client check-ins.",
+    )
+    next_expected_communication: Optional[datetime] = Field(
+        default=None,
+        description="Predicted next communication timestamp based on heartbeat behavior.",
+    )
+    first_seen: datetime = Field(
+        default_factory=_utc_now,
+        description="Timestamp when this client record was first created in the store.",
+    )
+    component_health: Optional[dict[str, dict[str, Optional[str]]]] = Field(
+        default=None,
+        description="Latest flattened component health map keyed by component name.",
+    )
+    health: Optional[dict[str, Optional[str] | dict[str, dict[str, Optional[str]]]]] = (
+        Field(
+            default=None,
+            description="Latest top-level health payload including component health map.",
+        )
+    )
+    disconnected: bool = Field(
+        default=False,
+        description="Whether the client has sent an agent_disconnect notification.",
+    )
+    disconnected_at: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp when the client was marked disconnected.",
+    )
+    pending_agent_identification: Optional[bytes] = Field(
+        default=None,
+        description="Queued replacement instance UID to send in AgentIdentification.",
+    )
 
 
 class ClientStore:
@@ -180,7 +229,11 @@ class ClientStore:
         """Apply last communication metadata to the client record."""
         record.last_communication = now
         if channel:
-            record.last_channel = channel
+            normalized = channel.strip().lower()
+            if normalized == ClientChannel.HTTP.value.lower():
+                record.last_channel = ClientChannel.HTTP
+            elif normalized == ClientChannel.WEBSOCKET.value.lower():
+                record.last_channel = ClientChannel.WEBSOCKET
         record.node_age_seconds = (now - record.first_seen).total_seconds()
 
     def _apply_capabilities(
@@ -374,7 +427,7 @@ class ClientStore:
         with self._lock:
             existing_ids = set(self._clients.keys())
             while True:
-                candidate = _uuid7_bytes()
+                candidate = generate_uuid7_bytes()
                 if candidate.hex() not in existing_ids:
                     return candidate
 

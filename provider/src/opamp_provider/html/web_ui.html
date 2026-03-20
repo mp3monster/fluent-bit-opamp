@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpAMP Server Console</title>
+  <link rel="icon" type="image/x-icon" href="/create.ico" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -1154,10 +1155,14 @@
       const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify([
-          { key: "classifier", value: "command" },
-          { key: "action", value: command },
-        ]),
+        body: JSON.stringify({
+          pairs: [
+            { key: "classifier", value: "command" },
+            { key: "action", value: command },
+            { key: "source", value: "ui" },
+            { key: "requested_at", value: new Date().toISOString() },
+          ],
+        }),
       });
       if (!resp.ok) {
         window.alert("Failed to queue command.");

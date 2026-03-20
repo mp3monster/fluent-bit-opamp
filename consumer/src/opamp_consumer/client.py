@@ -38,13 +38,6 @@ import httpx
 import websockets
 from google.protobuf import text_format
 
-try:
-    from uuid_v7.base import uuid7
-except ImportError:  # pragma: no cover - environment-dependent
-    uuid7 = None
-
-import uuid
-
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.exceptions import AgentException
@@ -55,6 +48,7 @@ from shared.opamp_config import (
     OPAMP_TRANSPORT_HEADER_NONE,
     UTF8_ENCODING,
 )
+from shared.uuid_utils import generate_uuid7_bytes
 
 HTTP_TIMEOUT_SECONDS = 5.0  # Timeout for local HTTP calls.
 TRANSPORT_HTTP = "http"
@@ -141,13 +135,7 @@ class OpAMPClient:
         if config is None:
             logging.getLogger(__name__).warning("No config supplied to OpAMPClient")
             raise ValueError("OpAMP client requires a consumer config")
-        if uuid7 is None:
-            logging.getLogger(__name__).warning(
-                "uuid_v7 not available; falling back to uuid4"
-            )
-            uid_instance = uuid.uuid4().bytes
-        else:
-            uid_instance = uuid7().bytes
+        uid_instance = generate_uuid7_bytes()
 
         self.data = OpAMPClientData(
             config=config,

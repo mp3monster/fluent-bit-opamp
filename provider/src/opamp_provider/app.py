@@ -29,9 +29,11 @@ from quart import Quart, Response, jsonify, redirect, request, websocket
 from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
+from opamp_provider.command_record import CommandRecord
+from opamp_provider.commands import command_object_factory
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.proto import opamp_pb2
-from opamp_provider.state import STORE, CommandRecord
+from opamp_provider.state import STORE
 from opamp_provider.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
@@ -52,10 +54,12 @@ LOG_SEND_COMMAND = "sent command to client %s at %s"
 OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
 
 COMMAND_RESTART = "restart"
+COMMAND_CHATOP = "chatopcommand"
 CLASSIFIER_COMMAND = "command"
 CLASSIFIER_CUSTOM_COMMAND = "custom_command"
+CLASSIFIER_CUSTOM = "custom"
 CHANNEL_HTTP = "HTTP"
-CHANNEL_WEBSOCKET = "WebSocket"
+CHANNEL_WEBSOCKET = "websocket"
 ACTION_APPLY_CONFIG = "apply_config"
 ACTION_CHANGE_CONNECTIONS = "change_connections"
 ACTION_PACKAGE_AVAILABLE = "package_availabe"
@@ -183,6 +187,7 @@ COMMAND_BUILDERS: dict[
     Callable[[opamp_pb2.ServerToAgent, CommandRecord], opamp_pb2.ServerToAgent],
 ] = {
     (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
+    (CLASSIFIER_CUSTOM, COMMAND_CHATOP): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM_COMMAND, "*"): _build_custom_command_payload,
 }
 
@@ -556,11 +561,15 @@ async def queue_command(client_id: str) -> Response:
 
     classifier = values.get("classifier", "").strip().lower()
     action = values.get("action", "").strip().lower()
-    if classifier not in {CLASSIFIER_COMMAND, CLASSIFIER_CUSTOM_COMMAND}:
+    if classifier not in {
+        CLASSIFIER_COMMAND,
+        CLASSIFIER_CUSTOM_COMMAND,
+        CLASSIFIER_CUSTOM,
+    }:
         return (
             jsonify(
                 {
-                    "error": "classifier must be command or custom_command",
+                    "error": "classifier must be command, custom, or custom_command",
                     "classifier": classifier,
                 }
             ),
@@ -584,19 +593,40 @@ async def queue_command(client_id: str) -> Response:
             HTTPStatus.BAD_REQUEST,
         )
 
+    # Build a command object when a concrete class exists for the operation.
+    key_value_dict = {pair["key"]: pair["value"] for pair in normalized_pairs}
+    event_description = f"{classifier} {action} command queued"
+    command_obj = None
+    if (
+        (classifier, action) in COMMAND_BUILDERS
+        and (
+            (classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART)
+            or (classifier == CLASSIFIER_CUSTOM and action == COMMAND_CHATOP)
+        )
+    ):
+        command_obj = command_object_factory(
+            classifier=classifier,
+            operation=action,
+            key_values=key_value_dict,
+        )
+        command_obj.set_key_value_dictionary(key_value_dict)
+        classifier = command_obj.get_command_classifier()
+        action = command_obj.get_command_type()
+        event_description = command_obj.get_command_description()
+
     cmd = STORE.queue_command(
         client_id,
         classifier=classifier,
         action=action,
-        key_value_pairs=normalized_pairs,
+        key_value_pairs=(
+            [{"key": k, "value": v} for k, v in command_obj.get_key_value_dictionary().items()]
+            if command_obj is not None
+            else normalized_pairs
+        ),
     )
     STORE.add_event(
         client_id,
-        description=(
-            "restart command queued"
-            if classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART
-            else f"{classifier} {action} command queued"
-        ),
+        description=event_description,
         max_events=provider_config.CONFIG.client_event_history_size,
     )
     logger.info(
@@ -761,6 +791,15 @@ async def help_page() -> Response:
     return Response(html, content_type="text/html; charset=utf-8")
 
 
+@app.get("/create.ico")
+async def favicon() -> Response:
+    """Serve the UI favicon."""
+    return Response(
+        _ICON_PATH.read_bytes(),
+        content_type="image/x-icon",
+    )
+
+
 @app.post("/api/shutdown")
 async def shutdown_server() -> Response:
     """Shutdown the server if explicitly confirmed."""
@@ -776,8 +815,11 @@ async def shutdown_server() -> Response:
     return jsonify({"status": "shutting down"})
 
 
-_WEB_UI_PATH = pathlib.Path(__file__).with_name("web_ui.html")
+_HTML_DIR = pathlib.Path(__file__).with_name("html")
+_WEB_UI_PATH = _HTML_DIR / "web_ui.html"
 _WEB_UI_HTML = _WEB_UI_PATH.read_text(encoding=UTF8_ENCODING)
 
-_HELP_PATH = pathlib.Path(__file__).with_name("help.html")
+_HELP_PATH = _HTML_DIR / "help.html"
 _HELP_HTML = _HELP_PATH.read_text(encoding=UTF8_ENCODING)
+
+_ICON_PATH = _HTML_DIR / "create.ico"
