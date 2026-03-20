@@ -14,17 +14,43 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from opamp_consumer.client import OpAMPClientData
+from opamp_consumer.exceptions import CommandException
+from opamp_consumer.proto import opamp_pb2
+
+if TYPE_CHECKING:
+    from opamp_consumer.client import OpAMPClientData
 
 
-class CustomMessageHandlerInterface(ABC):
-    """Defines the contract for custom message handlers."""
+class CommandHandlerInterface(ABC):
+    """Defines the command handler contract for custom messages."""
 
     @abstractmethod
     def set_client_data(self, data: OpAMPClientData) -> None:
         """Provide the handler with OpAMP client data."""
+
+    @abstractmethod
+    def get_reverse_fqdn(self) -> str:
+        """Return the reverse-FQDN for this command handler."""
+
+    @abstractmethod
+    def set_custom_message_handler(self, custom_message: opamp_pb2.CustomMessage) -> None:
+        """Set the custom message payload to be processed by execute()."""
+
+    @abstractmethod
+    def execute(self) -> CommandException | None:
+        """Execute command logic and return a CommandException when execution fails."""
+
+
+class CustomMessageHandlerInterface(CommandHandlerInterface):
+    """Defines the contract for custom message handlers."""
+
+    def __init__(self) -> None:
+        self._custom_message: opamp_pb2.CustomMessage | None = None
 
     @abstractmethod
     def get_fqdn(self) -> str:
@@ -37,3 +63,42 @@ class CustomMessageHandlerInterface(ABC):
     @abstractmethod
     def execute_action(self, action: str) -> None:
         """Execute a named action."""
+
+    def get_reverse_fqdn(self) -> str:
+        """Return the reverse-FQDN used for capability lookup."""
+        return self.get_fqdn()
+
+    def set_custom_message_handler(self, custom_message: opamp_pb2.CustomMessage) -> None:
+        """Store the inbound custom message for execute()."""
+        self._custom_message = custom_message
+
+    def execute(self) -> CommandException | None:
+        """Execute the custom message handler and return CommandException on failure."""
+        logger = logging.getLogger(__name__)
+        fqdn = self.get_reverse_fqdn()
+        logger.info("custom handler execute start fqdn=%s", fqdn)
+        try:
+            if self._custom_message is None:
+                return CommandException("No custom message set on command handler")
+
+            message_type = str(self._custom_message.type or "")
+            payload_text = bytes(self._custom_message.data or b"").decode(
+                "utf-8",
+                errors="replace",
+            )
+            action = ""
+            if payload_text:
+                try:
+                    payload_data = json.loads(payload_text)
+                    if isinstance(payload_data, dict):
+                        action = str(payload_data.get("action", "") or "")
+                except json.JSONDecodeError:
+                    action = ""
+
+            self.handle_message(payload_text, message_type)
+            self.execute_action(action)
+        except Exception as err:  # pragma: no cover - depends on implementation details
+            return CommandException(f"Command handler execute failed: {err}")
+        finally:
+            logger.info("custom handler execute end fqdn=%s", fqdn)
+        return None

@@ -19,9 +19,12 @@ import inspect
 import pathlib
 import types
 import uuid
+from typing import TYPE_CHECKING
 
-from opamp_consumer.client import OpAMPClientData
 from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+
+if TYPE_CHECKING:
+    from opamp_consumer.client import OpAMPClientData
 
 
 def _load_module_from_path(path: pathlib.Path) -> types.ModuleType | None:
@@ -59,37 +62,48 @@ def discover_handlers(
     client_data: OpAMPClientData | None = None,
 ) -> dict[str, str]:
     """Return a map of fqdn -> class name for handlers in a folder."""
+    registry: dict[str, str] = {}
+    for fqdn, cls in build_factory_lookup(folder, client_data=client_data).items():
+        registry[fqdn] = cls.__name__
+    return registry
+
+
+def build_factory_lookup(
+    folder: str | pathlib.Path,
+    client_data: OpAMPClientData | None = None,
+) -> dict[str, type[CustomMessageHandlerInterface]]:
+    """Build and return the custom message handler factory lookup."""
     folder_path = pathlib.Path(folder)
     if not folder_path.exists():
         return {}
-    registry: dict[str, str] = {}
+    lookup: dict[str, type[CustomMessageHandlerInterface]] = {}
     for cls in _discover_handler_classes(folder_path):
         try:
             instance = cls()
             if client_data is not None:
                 instance.set_client_data(client_data)
-            registry[instance.get_fqdn()] = cls.__name__
+            lookup[instance.get_reverse_fqdn()] = cls
         except Exception:
             continue
-    return registry
+    return lookup
 
 
 def create_handler(
     fqdn: str,
     folder: str | pathlib.Path,
     client_data: OpAMPClientData | None = None,
+    factory_lookup: dict[str, type[CustomMessageHandlerInterface]] | None = None,
 ) -> CustomMessageHandlerInterface | None:
     """Create a handler instance by fqdn from a folder of handlers."""
-    folder_path = pathlib.Path(folder)
-    if not folder_path.exists():
+    lookup = factory_lookup or build_factory_lookup(folder, client_data=client_data)
+    cls = lookup.get(fqdn)
+    if cls is None:
         return None
-    for cls in _discover_handler_classes(folder_path):
-        try:
-            instance = cls()
-            if client_data is not None:
-                instance.set_client_data(client_data)
-            if instance.get_fqdn() == fqdn:
-                return instance
-        except Exception:
-            continue
+    try:
+        instance = cls()
+        if client_data is not None:
+            instance.set_client_data(client_data)
+        return instance
+    except Exception:
+        return None
     return None

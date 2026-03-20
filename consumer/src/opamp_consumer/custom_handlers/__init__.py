@@ -12,16 +12,22 @@
 
 """Custom message handler interfaces and utilities."""
 
-from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.interface import (
+    CommandHandlerInterface,
+    CustomMessageHandlerInterface,
+)
 from opamp_consumer.custom_handlers.chatops_command import ChatOpsCommand
 from opamp_consumer.custom_handlers.registry import (
+    build_factory_lookup,
     create_handler,
     discover_handlers,
 )
 
 __all__ = [
     "ChatOpsCommand",
+    "CommandHandlerInterface",
     "CustomMessageHandlerInterface",
+    "build_factory_lookup",
     "create_handler",
     "discover_handlers",
 ]

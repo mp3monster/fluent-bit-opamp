@@ -19,3 +19,11 @@ class AgentException(Exception):
     def __init__(self, message: str) -> None:
         """Initialize the exception with a human-readable message."""
         super().__init__(message)
+
+
+class CommandException(Exception):
+    """Raised when a custom command handler execution fails."""
+
+    def __init__(self, message: str) -> None:
+        """Initialize the exception with a human-readable message."""
+        super().__init__(message)

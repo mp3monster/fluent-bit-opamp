@@ -40,6 +40,7 @@ from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
+from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.exceptions import AgentException
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
@@ -141,6 +142,11 @@ class OpAMPClient:
             config=config,
             base_url=base_url.rstrip("/"),
             uid_instance=uid_instance,
+        )
+        self._custom_handler_folder = pathlib.Path(__file__).resolve().parent / "custom_handlers"
+        self._custom_handler_lookup = build_factory_lookup(
+            self._custom_handler_folder,
+            client_data=self.data,
         )
         self._ensure_reports_status_capability()
 
@@ -722,9 +728,39 @@ class OpAMPClient:
         )
 
     def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
-        logging.getLogger(__name__).info(
-            "server custom_message:\n%s", text_format.MessageToString(custom_message)
+        logger = logging.getLogger(__name__)
+        logger.info("server custom_message:\n%s", text_format.MessageToString(custom_message))
+        if custom_message is None:
+            return
+
+        capability = str(custom_message.capability or "").strip()
+        if not capability:
+            raise AgentException("CustomMessage capability is missing")
+
+        handler = create_handler(
+            capability,
+            self._custom_handler_folder,
+            client_data=self.data,
+            factory_lookup=self._custom_handler_lookup,
         )
+        if handler is None:
+            self._custom_handler_lookup = build_factory_lookup(
+                self._custom_handler_folder,
+                client_data=self.data,
+            )
+            handler = create_handler(
+                capability,
+                self._custom_handler_folder,
+                client_data=self.data,
+                factory_lookup=self._custom_handler_lookup,
+            )
+        if handler is None:
+            raise AgentException(f"No command handler registered for capability: {capability}")
+
+        handler.set_custom_message_handler(custom_message)
+        command_error = handler.execute()
+        if command_error is not None:
+            raise AgentException(str(command_error))
 
     async def _heartbeat_loop(self, port: int) -> None:
         """Run a periodic polling loop that updates last heartbeat results."""

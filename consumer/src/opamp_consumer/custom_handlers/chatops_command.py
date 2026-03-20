@@ -15,15 +15,21 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from opamp_consumer.client import OpAMPClientData
 from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+
+if TYPE_CHECKING:
+    from opamp_consumer.client import OpAMPClientData
+
+CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
 
 
 class ChatOpsCommand(CustomMessageHandlerInterface):
     """Stub ChatOps command handler."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._data: OpAMPClientData | None = None
 
     def set_client_data(self, data: OpAMPClientData) -> None:
@@ -32,7 +38,7 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
 
     def get_fqdn(self) -> str:
         logging.getLogger(__name__).info("ChatOpsCommand.get_fqdn called")
-        return "chatops.command"
+        return CHATOPCOMMAND_CAPABILITY
 
     def handle_message(self, message: str, message_type: str) -> None:
         logging.getLogger(__name__).info(

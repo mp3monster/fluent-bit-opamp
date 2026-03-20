@@ -240,3 +240,38 @@ def test_handle_command_unknown_raises_agent_exception() -> None:
 
     with pytest.raises(AgentException):
         instance.handle_command(command)
+
+
+def test_handle_custom_message_missing_capability_raises_agent_exception() -> None:
+    """Missing capability on CustomMessage should raise AgentException."""
+    instance = client.OpAMPClient("http://localhost")
+    custom_message = opamp_pb2.CustomMessage()
+    custom_message.type = "test"
+    custom_message.data = b'{"action":"run"}'
+
+    with pytest.raises(AgentException):
+        instance.handle_custom_message(custom_message)
+
+
+def test_handle_custom_message_execute_error_raises_agent_exception(monkeypatch) -> None:
+    """A handler execute error should be converted to AgentException."""
+    instance = client.OpAMPClient("http://localhost")
+
+    class _FakeHandler:
+        def set_custom_message_handler(self, _custom_message):
+            return None
+
+        def execute(self):
+            from opamp_consumer.exceptions import CommandException
+
+            return CommandException("bad execute")
+
+    monkeypatch.setattr(client, "create_handler", lambda *_args, **_kwargs: _FakeHandler())
+
+    custom_message = opamp_pb2.CustomMessage()
+    custom_message.capability = "org.mp3monster.opamp_provider.chatopcommand"
+    custom_message.type = "test"
+    custom_message.data = b'{"action":"run"}'
+
+    with pytest.raises(AgentException):
+        instance.handle_custom_message(custom_message)
