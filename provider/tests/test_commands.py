@@ -11,10 +11,23 @@
 # limitations under the License.
 
 from datetime import datetime
+import json
 
 import pytest
 
-from opamp_provider.commands import ChatOpCommand, RestartAgent, command_object_factory
+from opamp_provider.commands import (
+    ChatOpCommand,
+    RestartAgent,
+    command_object_factory,
+    get_command_fqdn,
+    get_custom_capabilities_list,
+    get_registered_command_fqdns,
+    get_registered_command_keys,
+)
+from opamp_provider.chatop_command import (
+    CHATOPCOMMAND_CAPABILITY,
+    CHATOPCOMMAND_TYPE,
+)
 
 
 def test_restart_agent_implements_command_interface_methods() -> None:
@@ -23,7 +36,7 @@ def test_restart_agent_implements_command_interface_methods() -> None:
 
     assert obj.get_command_classifier() == "command"
     assert obj.get_command_type() == "restart"
-    assert obj.get_command_description() == "restart command queued"
+    assert obj.get_command_description() == "Restart Agent"
     assert isinstance(obj.get_command_time(), datetime)
     assert obj.get_key_value_dictionary() == {
         "classifier": "command",
@@ -69,6 +82,31 @@ def test_command_object_factory_creates_chatopcommand() -> None:
     assert obj.get_command_type() == "chatopcommand"
 
 
+def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
+    obj = ChatOpCommand()
+    obj.set_key_value_dictionary(
+        {
+            "classifier": "custom",
+            "action": "chatopcommand",
+            "type": "notify",
+            "data": "hello",
+        }
+    )
+
+    message = obj.to_custom_message()
+    assert message.capability == CHATOPCOMMAND_CAPABILITY
+    assert message.type == CHATOPCOMMAND_TYPE
+    assert message.data == json.dumps(
+        {
+            "classifier": "custom",
+            "action": "chatopcommand",
+            "type": "notify",
+            "data": "hello",
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 def test_command_object_factory_rejects_unknown_mapping() -> None:
     with pytest.raises(ValueError):
         command_object_factory(
@@ -76,3 +114,26 @@ def test_command_object_factory_rejects_unknown_mapping() -> None:
             operation="unknown",
             key_values={"classifier": "custom_command", "action": "unknown"},
         )
+
+
+def test_command_registry_discovers_supported_commands_on_startup() -> None:
+    keys = get_registered_command_keys()
+    assert ("command", "restart") in keys
+    assert ("custom", "chatopcommand") in keys
+
+
+def test_command_registry_exposes_reverse_fqdn_map() -> None:
+    fqdns = get_registered_command_fqdns()
+    assert ("custom", "chatopcommand") in fqdns
+    assert fqdns[("custom", "chatopcommand")] == CHATOPCOMMAND_CAPABILITY
+    assert (
+        get_command_fqdn(classifier="custom", operation="chatopcommand")
+        == CHATOPCOMMAND_CAPABILITY
+    )
+    assert get_command_fqdn(classifier="command", operation="restart") == ""
+
+
+def test_custom_capabilities_list_excludes_empty_or_none_capabilities() -> None:
+    capabilities = get_custom_capabilities_list()
+    assert CHATOPCOMMAND_CAPABILITY in capabilities
+    assert all(capability for capability in capabilities)

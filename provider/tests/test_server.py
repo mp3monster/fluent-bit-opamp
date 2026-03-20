@@ -24,9 +24,8 @@ def test_server_main_invokes_app(monkeypatch) -> None:
         called["host"] = host
         called["port"] = port
 
-    def fake_load_config_with_overrides(*, config_path, server_capabilities):
+    def fake_load_config_with_overrides(*, config_path):
         return ProviderConfig(
-            server_capabilities=1,
             delayed_comms_seconds=60,
             significant_comms_seconds=300,
             webui_port=8080,

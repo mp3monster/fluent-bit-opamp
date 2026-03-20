@@ -65,7 +65,6 @@ async def test_websocket_endpoint() -> None:
 @pytest.mark.asyncio
 async def test_get_comms_settings() -> None:
     config = ProviderConfig(
-        server_capabilities=1,
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
@@ -89,7 +88,6 @@ async def test_get_comms_settings() -> None:
 @pytest.mark.asyncio
 async def test_put_comms_settings() -> None:
     config = ProviderConfig(
-        server_capabilities=1,
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
@@ -116,7 +114,6 @@ async def test_put_comms_settings() -> None:
 @pytest.mark.asyncio
 async def test_put_comms_settings_rejects_invalid() -> None:
     config = ProviderConfig(
-        server_capabilities=1,
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
         webui_port=8080,
@@ -160,7 +157,7 @@ async def test_queue_restart_command_and_emit_restart_payload() -> None:
         assert len(record.events) == 1
         event = record.events[0]
         event_desc = next(iter(event.values()))
-        assert event_desc == "restart command queued"
+        assert event_desc == "Restart Agent"
 
         agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
         opamp_resp = await client.post(
@@ -181,7 +178,6 @@ async def test_event_history_is_capped_to_configured_size() -> None:
     STORE._clients.clear()
     provider_config.set_config(
         ProviderConfig(
-            server_capabilities=1,
             delayed_comms_seconds=60,
             significant_comms_seconds=300,
             webui_port=8080,
