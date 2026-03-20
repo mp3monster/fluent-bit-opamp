@@ -156,7 +156,7 @@ async def test_queue_restart_command_and_emit_restart_payload() -> None:
         assert record is not None
         assert len(record.events) == 1
         event = record.events[0]
-        event_desc = next(iter(event.values()))
+        event_desc = event.get_event_description()
         assert event_desc == "Restart Agent"
 
         agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
@@ -229,10 +229,12 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     assert commands
     command_map = {entry["operation"]: entry for entry in commands}
     assert "chatopcommand" in command_map
+    assert "nullcommand" in command_map
     assert "shutdownagent" in command_map
     first = command_map["chatopcommand"]
     assert first["fqdn"] == "org.mp3monster.opamp_provider.chatopcommand"
     assert first["displayname"] == "ChatOps Command"
+    assert first["description"] == "custom chatopcommand queued"
     assert first["classifier"] == "custom"
     assert first["operation"] == "chatopcommand"
     assert isinstance(first["schema"], list)
@@ -247,7 +249,13 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     shutdown = command_map["shutdownagent"]
     assert shutdown["fqdn"] == "org.mp3monster.opamp_provider.command_shutdown_agent"
     assert shutdown["displayname"] == "Shutdown Agent"
+    assert shutdown["description"] == "custom shutdownagent queued"
     assert shutdown["schema"] == []
+    nullcommand = command_map["nullcommand"]
+    assert nullcommand["fqdn"] == "org.mp3monster.opamp_provider.nullcommand"
+    assert nullcommand["displayname"] == "Null Command"
+    assert nullcommand["description"] == "custom nullcommand queued"
+    assert nullcommand["schema"] == []
 
 
 @pytest.mark.asyncio

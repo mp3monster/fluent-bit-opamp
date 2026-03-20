@@ -34,6 +34,10 @@ from opamp_provider.command_shutdown_agent import (
     SHUTDOWN_AGENT_CAPABILITY,
     SHUTDOWN_AGENT_TYPE,
 )
+from opamp_provider.command_nullcommand import (
+    NULLCOMMAND_CAPABILITY,
+    NULLCOMMAND_TYPE,
+)
 
 
 def test_restart_agent_implements_command_interface_methods() -> None:
@@ -121,6 +125,19 @@ def test_command_object_factory_creates_shutdownagent() -> None:
     assert obj.get_user_parameter_schema() == []
 
 
+def test_command_object_factory_creates_nullcommand() -> None:
+    obj = command_object_factory(
+        classifier="custom",
+        operation="nullcommand",
+        key_values={"classifier": "custom", "action": "nullcommand"},
+    )
+
+    assert obj.get_command_classifier() == "custom"
+    assert obj.get_command_type() == "nullcommand"
+    assert obj.getdisplayname() == "Null Command"
+    assert obj.get_user_parameter_schema() == []
+
+
 def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
     obj = ChatOpCommand()
     obj.set_key_value_dictionary(
@@ -157,6 +174,17 @@ def test_shutdownagent_generates_custom_message_with_reverse_fqdn_capability() -
     assert message.type == SHUTDOWN_AGENT_TYPE
 
 
+def test_nullcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
+    obj = command_object_factory(
+        classifier="custom",
+        operation="nullcommand",
+        key_values={"classifier": "custom", "action": "nullcommand"},
+    )
+    message = obj.to_custom_message()
+    assert message.capability == NULLCOMMAND_CAPABILITY
+    assert message.type == NULLCOMMAND_TYPE
+
+
 def test_command_object_factory_rejects_unknown_mapping() -> None:
     with pytest.raises(ValueError):
         command_object_factory(
@@ -169,6 +197,7 @@ def test_command_object_factory_rejects_unknown_mapping() -> None:
 def test_command_registry_discovers_supported_commands_on_startup() -> None:
     keys = get_registered_command_keys(includedisplayname=False)
     assert ("custom", "chatopcommand") in keys
+    assert ("custom", "nullcommand") in keys
     assert ("custom", "shutdownagent") in keys
     assert ("command", "restart") not in keys
 
@@ -185,6 +214,7 @@ def test_command_registry_can_return_opamp_standard_entries() -> None:
 def test_available_command_list_excludes_opamp_standard_entries() -> None:
     keys = get_available_command_keys(includedisplayname=False)
     assert ("custom", "chatopcommand") in keys
+    assert ("custom", "nullcommand") in keys
     assert ("custom", "shutdownagent") in keys
     assert ("command", "restart") not in keys
 
@@ -193,6 +223,7 @@ def test_registered_command_list_returns_display_map_by_default() -> None:
     commands = get_registered_command_keys()
     assert commands == {
         CHATOPCOMMAND_CAPABILITY: "ChatOps Command",
+        NULLCOMMAND_CAPABILITY: "Null Command",
         SHUTDOWN_AGENT_CAPABILITY: "Shutdown Agent",
     }
 
@@ -200,10 +231,11 @@ def test_registered_command_list_returns_display_map_by_default() -> None:
 def test_command_metadata_returns_custom_schema_with_display_name() -> None:
     metadata = get_command_metadata(parameter_exclude_opamp_standard=True, custom_only=True)
     entries = {entry["operation"]: entry for entry in metadata}
-    assert set(entries.keys()) == {"chatopcommand", "shutdownagent"}
+    assert set(entries.keys()) == {"chatopcommand", "nullcommand", "shutdownagent"}
     entry = entries["chatopcommand"]
     assert entry["fqdn"] == CHATOPCOMMAND_CAPABILITY
     assert entry["displayname"] == "ChatOps Command"
+    assert entry["description"] == "custom chatopcommand queued"
     assert entry["classifier"] == "custom"
     assert entry["operation"] == "chatopcommand"
     assert {
@@ -216,18 +248,29 @@ def test_command_metadata_returns_custom_schema_with_display_name() -> None:
         assert row.get("parametername") not in {"classifier", "type", "data"}
     assert entries["shutdownagent"]["fqdn"] == SHUTDOWN_AGENT_CAPABILITY
     assert entries["shutdownagent"]["displayname"] == "Shutdown Agent"
+    assert entries["shutdownagent"]["description"] == "custom shutdownagent queued"
     assert entries["shutdownagent"]["schema"] == []
+    assert entries["nullcommand"]["fqdn"] == NULLCOMMAND_CAPABILITY
+    assert entries["nullcommand"]["displayname"] == "Null Command"
+    assert entries["nullcommand"]["description"] == "custom nullcommand queued"
+    assert entries["nullcommand"]["schema"] == []
 
 
 def test_command_registry_exposes_reverse_fqdn_map() -> None:
     fqdns = get_registered_command_fqdns()
     assert ("custom", "chatopcommand") in fqdns
+    assert ("custom", "nullcommand") in fqdns
     assert ("custom", "shutdownagent") in fqdns
     assert fqdns[("custom", "chatopcommand")] == CHATOPCOMMAND_CAPABILITY
+    assert fqdns[("custom", "nullcommand")] == NULLCOMMAND_CAPABILITY
     assert fqdns[("custom", "shutdownagent")] == SHUTDOWN_AGENT_CAPABILITY
     assert (
         get_command_fqdn(classifier="custom", operation="chatopcommand")
         == CHATOPCOMMAND_CAPABILITY
+    )
+    assert (
+        get_command_fqdn(classifier="custom", operation="nullcommand")
+        == NULLCOMMAND_CAPABILITY
     )
     assert (
         get_command_fqdn(classifier="custom", operation="shutdownagent")
@@ -239,5 +282,6 @@ def test_command_registry_exposes_reverse_fqdn_map() -> None:
 def test_custom_capabilities_list_excludes_empty_or_none_capabilities() -> None:
     capabilities = get_custom_capabilities_list()
     assert CHATOPCOMMAND_CAPABILITY in capabilities
+    assert NULLCOMMAND_CAPABILITY in capabilities
     assert SHUTDOWN_AGENT_CAPABILITY in capabilities
     assert all(capability for capability in capabilities)

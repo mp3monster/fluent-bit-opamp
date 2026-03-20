@@ -64,6 +64,7 @@ SERVER_CAPABILITIES = int(
 COMMAND_RESTART = "restart"
 COMMAND_CHATOP = "chatopcommand"
 COMMAND_SHUTDOWN_AGENT = "shutdownagent"
+COMMAND_NULLCOMMAND = "nullcommand"
 CLASSIFIER_COMMAND = "command"
 CLASSIFIER_CUSTOM_COMMAND = "custom_command"
 CLASSIFIER_CUSTOM = "custom"
@@ -220,6 +221,7 @@ COMMAND_BUILDERS: dict[
     (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
     (CLASSIFIER_CUSTOM, COMMAND_CHATOP): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM, COMMAND_SHUTDOWN_AGENT): _build_custom_command_payload,
+    (CLASSIFIER_CUSTOM, COMMAND_NULLCOMMAND): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM_COMMAND, "*"): _build_custom_command_payload,
 }
 
@@ -651,7 +653,8 @@ async def queue_command(client_id: str) -> Response:
             (classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART)
             or (
                 classifier == CLASSIFIER_CUSTOM
-                and action in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT}
+                and action
+                in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT, COMMAND_NULLCOMMAND}
             )
         )
     ):
@@ -674,10 +677,7 @@ async def queue_command(client_id: str) -> Response:
             if command_obj is not None
             else normalized_pairs
         ),
-    )
-    STORE.add_event(
-        client_id,
-        description=event_description,
+        event_description=event_description,
         max_events=provider_config.CONFIG.client_event_history_size,
     )
     logger.info(

@@ -25,6 +25,7 @@ from google.protobuf import text_format
 from pydantic import BaseModel, ConfigDict, Field
 
 from opamp_provider.command_record import CommandRecord
+from opamp_provider.event_history import EventHistory
 from opamp_provider.proto import opamp_pb2
 from shared.uuid_utils import generate_uuid7_bytes
 
@@ -146,9 +147,9 @@ class ClientRecord(BaseModel):
         default_factory=list,
         description="Queued command records for this client, including sent/unsent state.",
     )
-    events: list[dict[str, str]] = Field(
+    events: list[EventHistory | CommandRecord] = Field(
         default_factory=list,
-        description="Recent event log entries as {timestamp: description} maps.",
+        description="Recent event timeline entries (generic events and command events).",
     )
     next_actions: Optional[list[str]] = Field(
         default=None,
@@ -300,8 +301,10 @@ class ClientStore:
         classifier: str,
         action: str,
         key_value_pairs: list[dict[str, str]],
+        event_description: str,
+        max_events: int,
     ) -> CommandRecord:
-        """Queue a command for a client and return the command record."""
+        """Queue a command for a client and add it to unified event history."""
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -312,8 +315,10 @@ class ClientStore:
                 classifier=classifier,
                 action=action,
                 key_value_pairs=key_value_pairs,
+                event_description=event_description,
             )
             record.commands.append(cmd)
+            self._append_history_event(record, cmd, max_events=max_events)
             return cmd
 
     def set_requested_config(
@@ -356,12 +361,22 @@ class ClientStore:
             if record is None:
                 record = ClientRecord(client_id=client_id)
                 self._clients[client_id] = record
-            event_time = _utc_now().isoformat()
-            record.events.append({event_time: description})
-            keep = max(1, int(max_events))
-            if len(record.events) > keep:
-                record.events = record.events[-keep:]
+            event = EventHistory(event_description=description)
+            self._append_history_event(record, event, max_events=max_events)
             return record
+
+    def _append_history_event(
+        self,
+        record: ClientRecord,
+        event: EventHistory | CommandRecord,
+        *,
+        max_events: int,
+    ) -> None:
+        """Append one event object and cap the per-client timeline."""
+        record.events.append(event)
+        keep = max(1, int(max_events))
+        if len(record.events) > keep:
+            record.events = record.events[-keep:]
 
     def next_pending_command(self, client_id: str) -> Optional[CommandRecord]:
         """Return the next unsent command for a client, if any."""

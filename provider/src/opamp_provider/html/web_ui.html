@@ -408,9 +408,19 @@
       background: #f7f9ff;
     }
 
-    .history-panel ul {
-      margin: 8px 0 0;
-      padding-left: 18px;
+    .history-table {
+      margin-top: 10px;
+    }
+
+    .sort-toggle {
+      border: 1px solid #cfd7ea;
+      background: #e9eefb;
+      color: #2f3f8f;
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      margin-left: 8px;
     }
 
     .modal button.cancel,
@@ -602,7 +612,6 @@
         <button class="tab-button" data-tab="commands">Commands</button>
         <button class="tab-button" data-tab="config">Configuration</button>
         <button id="historyTabBtn" class="tab-button hidden" data-tab="history">History</button>
-        <button id="commandHistoryTabBtn" class="tab-button hidden" data-tab="command-history">Command History</button>
       </div>
       <div class="modal-tab-body">
         <div id="tab-summary" class="tab-panel active">
@@ -643,21 +652,6 @@
             </div>
           </div>
         </div>
-        <div id="tab-command-history" class="tab-panel">
-          <div class="history-panel">
-            <label style="font-size: 0.85rem; color: var(--muted);">Command History</label>
-            <table class="table" style="margin-top: 10px;">
-              <thead>
-                <tr>
-                  <th>Date/Time</th>
-                  <th>Classifier</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="commandHistoryList"></tbody>
-            </table>
-          </div>
-        </div>
         <div id="tab-config" class="tab-panel">
           <div>
             <label style="font-size: 0.85rem; color: var(--muted);">Current Configuration</label>
@@ -674,7 +668,18 @@
         <div id="tab-history" class="tab-panel">
           <div class="history-panel">
             <label style="font-size: 0.85rem; color: var(--muted);">Event History</label>
-            <ul id="eventsHistoryList"></ul>
+            <table class="table history-table">
+              <thead>
+                <tr>
+                  <th style="width: 220px;">
+                    Date/Time
+                    <button id="eventsSortBtn" class="sort-toggle" type="button">Desc</button>
+                  </th>
+                  <th>Event</th>
+                </tr>
+              </thead>
+              <tbody id="eventsHistoryList"></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -694,6 +699,7 @@
     const state = {
       clients: [],
       customCommands: [],
+      eventsSortDir: "desc",
       sortKey: "client_id",
       sortDir: "asc",
       page: 1,
@@ -723,7 +729,6 @@
     const clientDataPanel = document.getElementById("clientDataPanel");
     const clientDataYaml = document.getElementById("clientDataYaml");
     const toggleDataBtn = document.getElementById("toggleDataBtn");
-    const commandHistoryList = document.getElementById("commandHistoryList");
     const commandButtons = document.getElementById("commandButtons");
     const customCommandSelect = document.getElementById("customCommandSelect");
     const customCommandConfigPanel = document.getElementById("customCommandConfigPanel");
@@ -731,8 +736,8 @@
     const sendCustomCommandBtn = document.getElementById("sendCustomCommandBtn");
     const saveConfigBtn = document.getElementById("saveConfigBtn");
     const historyTabBtn = document.getElementById("historyTabBtn");
-    const commandHistoryTabBtn = document.getElementById("commandHistoryTabBtn");
     const eventsHistoryList = document.getElementById("eventsHistoryList");
+    const eventsSortBtn = document.getElementById("eventsSortBtn");
     const shutdownButton = document.getElementById("shutdownButton");
     const contextMenu = document.getElementById("contextMenu");
     const removeClientBtn = document.getElementById("removeClientBtn");
@@ -741,7 +746,6 @@
     const tabPanels = {
       summary: document.getElementById("tab-summary"),
       commands: document.getElementById("tab-commands"),
-      "command-history": document.getElementById("tab-command-history"),
       config: document.getElementById("tab-config"),
       history: document.getElementById("tab-history"),
     };
@@ -807,6 +811,13 @@
       renderCustomCommandConfiguration(customCommandSelect.value);
     });
     sendCustomCommandBtn.addEventListener("click", queueCustomCommand);
+    eventsSortBtn.addEventListener("click", () => {
+      state.eventsSortDir = state.eventsSortDir === "desc" ? "asc" : "desc";
+      eventsSortBtn.textContent = state.eventsSortDir === "desc" ? "Desc" : "Asc";
+      if (activeClient && modal.classList.contains("open")) {
+        renderEventsHistory(activeClient);
+      }
+    });
 
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
@@ -966,7 +977,6 @@
       clientDataPanel.classList.add("hidden");
       clientDataYaml.textContent = "";
       toggleDataBtn.textContent = "View Data";
-      commandHistoryList.innerHTML = "";
       const agentDesc = client.agent_description || "";
       const serviceName = extractAgentField(agentDesc, "service.name");
       const hostType = extractAgentField(agentDesc, "os_type");
@@ -997,17 +1007,10 @@
 
       configInput.value = formatConfigValue(client.requested_config) || "";
       currentConfigOutput.textContent = formatConfigValue(client.current_config) || "--";
-      renderCommandHistory(client);
       renderEventsHistory(client);
       renderCommandButtons(client, customCommandState);
       let nextTab = desiredTab;
       if (nextTab === "history" && historyTabBtn.classList.contains("hidden")) {
-        nextTab = "summary";
-      }
-      if (
-        nextTab === "command-history"
-        && commandHistoryTabBtn.classList.contains("hidden")
-      ) {
         nextTab = "summary";
       }
       setActiveTab(nextTab);
@@ -1019,10 +1022,8 @@
       activeClient = null;
       configInput.value = "";
       currentConfigOutput.textContent = "";
-      commandHistoryList.innerHTML = "";
       eventsHistoryList.innerHTML = "";
       historyTabBtn.classList.add("hidden");
-      commandHistoryTabBtn.classList.add("hidden");
     }
 
     function yamlScalar(value) {
@@ -1153,40 +1154,6 @@
         }
       }
       return String(value);
-    }
-
-    function renderCommandHistory(client) {
-      const history = Array.isArray(client.commands)
-        ? client.commands.filter(cmd => cmd.sent_at)
-        : [];
-      if (history.length === 0) {
-        commandHistoryList.innerHTML = `
-          <tr>
-            <td>--</td>
-            <td>--</td>
-            <td>No command history yet.</td>
-          </tr>
-        `;
-        return;
-      }
-      const sorted = [...history].sort((a, b) => {
-        const aTime = a.sent_at ? new Date(a.sent_at).getTime() : 0;
-        const bTime = b.sent_at ? new Date(b.sent_at).getTime() : 0;
-        return bTime - aTime;
-      });
-      commandHistoryList.innerHTML = "";
-      sorted.forEach(cmd => {
-        const row = document.createElement("tr");
-        const when = cmd.sent_at ? new Date(cmd.sent_at).toLocaleString() : "--";
-        const classifier = cmd.classifier || "command";
-        const action = cmd.action || cmd.command || "unknown";
-        row.innerHTML = `
-          <td>${when}</td>
-          <td>${classifier}</td>
-          <td>${action}</td>
-        `;
-        commandHistoryList.appendChild(row);
-      });
     }
 
     function renderCommandButtons(client, customCommandState = null) {
@@ -1351,6 +1318,21 @@
       const flattened = [];
       events.forEach(eventObj => {
         if (!eventObj || typeof eventObj !== "object") return;
+        if ("event_time" in eventObj || "event_description" in eventObj) {
+          const eventTime = String(eventObj.event_time || "");
+          let description = String(eventObj.event_description || "").trim();
+          if (!description && ("classifier" in eventObj || "action" in eventObj)) {
+            const classifier = String(eventObj.classifier || "command").trim();
+            const action = String(eventObj.action || eventObj.command || "unknown").trim();
+            description = `${classifier} ${action}`.trim();
+          }
+          flattened.push({
+            eventTime,
+            description: description || "--",
+            ts: new Date(eventTime).getTime(),
+          });
+          return;
+        }
         Object.entries(eventObj).forEach(([eventTime, description]) => {
           flattened.push({
             eventTime,
@@ -1361,13 +1343,14 @@
       });
 
       if (flattened.length === 0) {
-        eventsHistoryList.innerHTML = "";
+        eventsHistoryList.innerHTML = `
+          <tr>
+            <td>--</td>
+            <td>No event history yet.</td>
+          </tr>
+        `;
         historyTabBtn.classList.add("hidden");
-        commandHistoryTabBtn.classList.add("hidden");
         if (tabPanels.history.classList.contains("active")) {
-          setActiveTab("summary");
-        }
-        if (tabPanels["command-history"].classList.contains("active")) {
           setActiveTab("summary");
         }
         return;
@@ -1376,20 +1359,22 @@
       flattened.sort((a, b) => {
         const aTs = Number.isNaN(a.ts) ? 0 : a.ts;
         const bTs = Number.isNaN(b.ts) ? 0 : b.ts;
-        return bTs - aTs;
+        return state.eventsSortDir === "asc" ? aTs - bTs : bTs - aTs;
       });
 
       eventsHistoryList.innerHTML = "";
       flattened.forEach(event => {
-        const li = document.createElement("li");
+        const row = document.createElement("tr");
         const when = Number.isNaN(event.ts)
           ? event.eventTime
           : new Date(event.eventTime).toLocaleString();
-        li.textContent = `${when} • ${event.description}`;
-        eventsHistoryList.appendChild(li);
+        row.innerHTML = `
+          <td>${when}</td>
+          <td>${event.description}</td>
+        `;
+        eventsHistoryList.appendChild(row);
       });
       historyTabBtn.classList.remove("hidden");
-      commandHistoryTabBtn.classList.remove("hidden");
     }
 
     async function queueCommand(command, client) {
