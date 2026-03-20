@@ -14,9 +14,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from opamp_provider.command_interface import CommandObjectInterface
+from opamp_provider.proto import opamp_pb2
+
+CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
+CHATOPCOMMAND_TYPE = "by REST Call"
 
 
 def _utc_now() -> datetime:
@@ -53,3 +58,14 @@ class ChatOpCommand(CommandObjectInterface):
 
     def get_key_value_dictionary(self) -> dict[str, str]:
         return dict(self._key_values)
+
+    def get_capability_fqdn(self) -> str:
+        return CHATOPCOMMAND_CAPABILITY
+
+    def to_custom_message(self) -> opamp_pb2.CustomMessage:
+        """Build a CustomMessage payload for ChatOp command dispatch."""
+        payload = opamp_pb2.CustomMessage()
+        payload.capability = CHATOPCOMMAND_CAPABILITY
+        payload.type = CHATOPCOMMAND_TYPE
+        payload.data = json.dumps(self._key_values, sort_keys=True).encode("utf-8")
+        return payload

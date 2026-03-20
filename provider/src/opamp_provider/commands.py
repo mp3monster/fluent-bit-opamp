@@ -10,13 +10,97 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Command object interfaces and factory implementations."""
+"""Command object discovery, registry, and factory implementations."""
 
 from __future__ import annotations
+
+import importlib
+import inspect
+import pkgutil
+from pathlib import Path
 
 from opamp_provider.chatop_command import ChatOpCommand
 from opamp_provider.command_interface import CommandObjectInterface
 from opamp_provider.command_restart_agent import RestartAgent
+
+_MODULE_EXCLUSIONS = {
+    "__init__",
+    "app",
+    "command_interface",
+    "command_record",
+    "commands",
+    "config",
+    "exceptions",
+    "server",
+    "state",
+    "transport",
+}
+
+CommandKey = tuple[str, str]
+CommandType = type[CommandObjectInterface]
+
+
+def _module_name_to_import(module_name: str) -> str:
+    package_name = __package__ or "opamp_provider"
+    return f"{package_name}.{module_name}"
+
+
+def _load_command_modules() -> list[object]:
+    package_path = Path(__file__).resolve().parent
+    imported_modules: list[object] = []
+    for module_info in pkgutil.iter_modules([str(package_path)]):
+        module_name = module_info.name
+        if module_name in _MODULE_EXCLUSIONS or module_name.startswith("_"):
+            continue
+        if "command" not in module_name:
+            continue
+        imported_modules.append(importlib.import_module(_module_name_to_import(module_name)))
+    return imported_modules
+
+
+def _discover_command_classes() -> dict[CommandKey, CommandType]:
+    discovered: dict[CommandKey, CommandType] = {}
+    for module in _load_command_modules():
+        for _, class_obj in inspect.getmembers(module, inspect.isclass):
+            if not issubclass(class_obj, CommandObjectInterface):
+                continue
+            if class_obj is CommandObjectInterface or inspect.isabstract(class_obj):
+                continue
+            command_instance = class_obj()
+            key = (
+                command_instance.get_command_classifier().strip().lower(),
+                command_instance.get_command_type().strip().lower(),
+            )
+            if key in discovered:
+                raise ValueError(
+                    f"Duplicate command registration for classifier={key[0]} operation={key[1]}"
+                )
+            discovered[key] = class_obj
+    return discovered
+
+
+_COMMAND_REGISTRY: dict[CommandKey, CommandType] = _discover_command_classes()
+_COMMAND_FQDN_MAP: dict[CommandKey, str] = {
+    key: command_class().get_capability_fqdn().strip()
+    for key, command_class in _COMMAND_REGISTRY.items()
+    if command_class().get_capability_fqdn().strip()
+}
+
+
+def get_registered_command_keys() -> tuple[CommandKey, ...]:
+    """Return all discovered command (classifier, operation) keys."""
+    return tuple(sorted(_COMMAND_REGISTRY.keys()))
+
+
+def get_registered_command_fqdns() -> dict[CommandKey, str]:
+    """Return discovered command reverse-FQDN capability mappings."""
+    return dict(_COMMAND_FQDN_MAP)
+
+
+def get_command_fqdn(*, classifier: str, operation: str) -> str:
+    """Return a command capability reverse-FQDN, or an empty string."""
+    key = (classifier.strip().lower(), operation.strip().lower())
+    return _COMMAND_FQDN_MAP.get(key, "")
 
 
 def command_object_factory(
@@ -26,18 +110,13 @@ def command_object_factory(
     key_values: dict[str, str] | None = None,
 ) -> CommandObjectInterface:
     """Create a command object from classifier and operation."""
-    normalized_classifier = classifier.strip().lower()
-    normalized_operation = operation.strip().lower()
-
-    if normalized_classifier == "command" and normalized_operation == "restart":
-        command_obj = RestartAgent(key_values=key_values)
-        return command_obj
-    if normalized_classifier == "custom" and normalized_operation == "chatopcommand":
-        command_obj = ChatOpCommand(key_values=key_values)
-        return command_obj
+    key = (classifier.strip().lower(), operation.strip().lower())
+    command_class = _COMMAND_REGISTRY.get(key)
+    if command_class is not None:
+        return command_class(key_values=key_values)
 
     raise ValueError(
-        f"Unsupported command object classifier={normalized_classifier} operation={normalized_operation}"
+        f"Unsupported command object classifier={key[0]} operation={key[1]}"
     )
 
 
@@ -45,5 +124,8 @@ __all__ = [
     "CommandObjectInterface",
     "RestartAgent",
     "ChatOpCommand",
+    "get_registered_command_keys",
+    "get_registered_command_fqdns",
+    "get_command_fqdn",
     "command_object_factory",
 ]
