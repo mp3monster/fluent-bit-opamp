@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import pathlib
 import sys
@@ -26,11 +25,10 @@ ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]
 if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
-from shared.opamp_config import ServerCapabilities, UTF8_ENCODING, parse_capabilities
+from shared.opamp_config import UTF8_ENCODING
 
 ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"
 CFG_PROVIDER = "provider"
-CFG_SERVER_CAPABILITIES = "server_capabilities"
 CFG_DELAYED_COMMS_SECONDS = "delayed_comms_seconds"
 CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"
 CFG_WEBUI_PORT = "webui_port"
@@ -48,7 +46,6 @@ DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    server_capabilities: int
     delayed_comms_seconds: int
     significant_comms_seconds: int
     webui_port: int
@@ -84,20 +81,13 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
 
 def load_config() -> ProviderConfig:
     """Load provider config from disk."""
-    logger = logging.getLogger(__name__)
     raw = _load_json(_config_path())
     provider_raw = raw.get(CFG_PROVIDER, {})
-    capability_names = provider_raw.get(CFG_SERVER_CAPABILITIES)
-    if not capability_names:
-        raise ValueError(f"{CFG_PROVIDER}.{CFG_SERVER_CAPABILITIES} must be a non-empty list")
-    mask = parse_capabilities(capability_names, ServerCapabilities)
-    logger.info("loaded provider capabilities: %s", capability_names)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
     return ProviderConfig(
-        server_capabilities=mask,
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
@@ -121,31 +111,15 @@ def load_config() -> ProviderConfig:
 def load_config_with_overrides(
     *,
     config_path: pathlib.Path | None,
-    server_capabilities: list[str] | None,
 ) -> ProviderConfig:
     """Load provider config with CLI overrides applied."""
-    logger = logging.getLogger(__name__)
     base_raw = _load_json(config_path or _config_path())
     provider_raw = base_raw.get(CFG_PROVIDER, {})
-    if server_capabilities is not None:
-        logger.info(
-            "cli override %s.%s; ignoring config value",
-            CFG_PROVIDER,
-            CFG_SERVER_CAPABILITIES,
-        )
-        provider_raw[CFG_SERVER_CAPABILITIES] = server_capabilities
-
-    temp_raw = {CFG_PROVIDER: provider_raw}
-    capability_names = temp_raw.get(CFG_PROVIDER, {}).get(CFG_SERVER_CAPABILITIES)
-    if not capability_names:
-        raise ValueError(f"{CFG_PROVIDER}.{CFG_SERVER_CAPABILITIES} must be a non-empty list")
-    mask = parse_capabilities(capability_names, ServerCapabilities)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
     return ProviderConfig(
-        server_capabilities=mask,
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=int(provider_raw.get(CFG_WEBUI_PORT, DEFAULT_WEBUI_PORT)),
@@ -175,7 +149,6 @@ def set_config(config: ProviderConfig) -> None:
 def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig:
     """Return a new config with updated comm thresholds and set it."""
     config = ProviderConfig(
-        server_capabilities=CONFIG.server_capabilities,
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=CONFIG.webui_port,

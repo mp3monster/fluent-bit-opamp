@@ -30,7 +30,7 @@ from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
 from opamp_provider.command_record import CommandRecord
-from opamp_provider.commands import command_object_factory
+from opamp_provider.commands import command_object_factory, get_custom_capabilities_list
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE
@@ -278,6 +278,9 @@ def _build_response(
 
     # Server capability advertisement is fixed to AcceptsStatus.
     response.capabilities = SERVER_CAPABILITIES
+    custom_capabilities = get_custom_capabilities_list()
+    if custom_capabilities:
+        response.custom_capabilities.capabilities.extend(custom_capabilities)
     if client_id:
         pending_identification = STORE.pop_agent_identification(client_id)
         if pending_identification:

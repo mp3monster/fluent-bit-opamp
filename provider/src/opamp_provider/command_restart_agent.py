@@ -54,5 +54,7 @@ class RestartAgent(CommandObjectInterface):
     def get_key_value_dictionary(self) -> dict[str, str]:
         return dict(self._key_values)
 
-    def get_capability_fqdn(self) -> str:
-        return ""
+    def get_capability_fqdn(self) -> str | None:
+        # This uses the shared command framework for a default OpAMP feature (restart),
+        # so it should not appear in the list of available custom commands.
+        return None

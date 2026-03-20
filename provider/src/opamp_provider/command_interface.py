@@ -46,5 +46,5 @@ class CommandObjectInterface(ABC):
         """Return key/value dictionary attached to this command object."""
 
     @abstractmethod
-    def get_capability_fqdn(self) -> str:
-        """Return reverse-FQDN capability string for custom messages (or empty)."""
+    def get_capability_fqdn(self) -> str | None:
+        """Return reverse-FQDN capability string for custom messages (or None/empty)."""

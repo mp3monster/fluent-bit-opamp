@@ -59,7 +59,7 @@ class ChatOpCommand(CommandObjectInterface):
     def get_key_value_dictionary(self) -> dict[str, str]:
         return dict(self._key_values)
 
-    def get_capability_fqdn(self) -> str:
+    def get_capability_fqdn(self) -> str | None:
         return CHATOPCOMMAND_CAPABILITY
 
     def to_custom_message(self) -> opamp_pb2.CustomMessage:

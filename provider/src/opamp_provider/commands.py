@@ -80,11 +80,14 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
 
 
 _COMMAND_REGISTRY: dict[CommandKey, CommandType] = _discover_command_classes()
-_COMMAND_FQDN_MAP: dict[CommandKey, str] = {
-    key: command_class().get_capability_fqdn().strip()
-    for key, command_class in _COMMAND_REGISTRY.items()
-    if command_class().get_capability_fqdn().strip()
-}
+_COMMAND_FQDN_MAP: dict[CommandKey, str] = {}
+for key, command_class in _COMMAND_REGISTRY.items():
+    capability_fqdn = command_class().get_capability_fqdn()
+    if capability_fqdn is None:
+        continue
+    normalized_fqdn = capability_fqdn.strip()
+    if normalized_fqdn:
+        _COMMAND_FQDN_MAP[key] = normalized_fqdn
 
 
 def get_registered_command_keys() -> tuple[CommandKey, ...]:
@@ -95,6 +98,11 @@ def get_registered_command_keys() -> tuple[CommandKey, ...]:
 def get_registered_command_fqdns() -> dict[CommandKey, str]:
     """Return discovered command reverse-FQDN capability mappings."""
     return dict(_COMMAND_FQDN_MAP)
+
+
+def get_custom_capabilities_list() -> tuple[str, ...]:
+    """Return unique custom capability FQDNs discovered at startup."""
+    return tuple(sorted(set(_COMMAND_FQDN_MAP.values())))
 
 
 def get_command_fqdn(*, classifier: str, operation: str) -> str:
@@ -126,6 +134,7 @@ __all__ = [
     "ChatOpCommand",
     "get_registered_command_keys",
     "get_registered_command_fqdns",
+    "get_custom_capabilities_list",
     "get_command_fqdn",
     "command_object_factory",
 ]
