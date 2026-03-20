@@ -38,6 +38,7 @@ _MODULE_EXCLUSIONS = {
 
 CommandKey = tuple[str, str]
 CommandType = type[CommandObjectInterface]
+_INTERNAL_SCHEMA_PARAMETERS = {"classifier", "type", "data"}
 
 
 def _module_name_to_import(module_name: str) -> str:
@@ -80,8 +81,38 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
 
 
 _COMMAND_REGISTRY: dict[CommandKey, CommandType] = _discover_command_classes()
+
+
+def _get_command_registry_by_standard_filter(
+    *,
+    parameter_exclude_opamp_standard: bool,
+) -> dict[CommandKey, CommandType]:
+    filtered: dict[CommandKey, CommandType] = {}
+    for key, command_class in _COMMAND_REGISTRY.items():
+        if parameter_exclude_opamp_standard != command_class().isOpAMPStandard():
+            filtered[key] = command_class
+    return filtered
+
+
+def _sanitize_parameter_schema(
+    schema_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Remove internal OpAMP transport fields from command schema rows."""
+    sanitized: list[dict[str, object]] = []
+    for row in schema_rows:
+        param_name = str(row.get("parametername", "")).strip().lower()
+        if not param_name:
+            continue
+        if param_name in _INTERNAL_SCHEMA_PARAMETERS:
+            continue
+        sanitized.append(dict(row))
+    return sanitized
+
+
 _COMMAND_FQDN_MAP: dict[CommandKey, str] = {}
-for key, command_class in _COMMAND_REGISTRY.items():
+for key, command_class in _get_command_registry_by_standard_filter(
+    parameter_exclude_opamp_standard=True
+).items():
     capability_fqdn = command_class().get_capability_fqdn()
     if capability_fqdn is None:
         continue
@@ -90,9 +121,38 @@ for key, command_class in _COMMAND_REGISTRY.items():
         _COMMAND_FQDN_MAP[key] = normalized_fqdn
 
 
-def get_registered_command_keys() -> tuple[CommandKey, ...]:
-    """Return all discovered command (classifier, operation) keys."""
-    return tuple(sorted(_COMMAND_REGISTRY.keys()))
+def get_registered_command_keys(
+    parameter_exclude_opamp_standard: bool = True,
+    includedisplayname: bool = True,
+) -> tuple[CommandKey, ...] | dict[str, str]:
+    """Return command keys or fqdn->displayname map filtered by OpAMP-standard rule."""
+    filtered_registry = _get_command_registry_by_standard_filter(
+        parameter_exclude_opamp_standard=parameter_exclude_opamp_standard
+    )
+    if not includedisplayname:
+        return tuple(sorted(filtered_registry.keys()))
+
+    display_map: dict[str, str] = {}
+    for command_class in filtered_registry.values():
+        instance = command_class()
+        capability_fqdn = instance.get_capability_fqdn()
+        if capability_fqdn is None:
+            continue
+        normalized_fqdn = capability_fqdn.strip()
+        if not normalized_fqdn:
+            continue
+        display_map[normalized_fqdn] = instance.getdisplayname()
+    return display_map
+
+
+def get_available_command_keys(
+    includedisplayname: bool = True,
+) -> tuple[CommandKey, ...] | dict[str, str]:
+    """Return discovered non-OpAMP-standard command keys."""
+    return get_registered_command_keys(
+        parameter_exclude_opamp_standard=True,
+        includedisplayname=includedisplayname,
+    )
 
 
 def get_registered_command_fqdns() -> dict[CommandKey, str]:
@@ -128,13 +188,51 @@ def command_object_factory(
     )
 
 
+def get_command_metadata(
+    *,
+    parameter_exclude_opamp_standard: bool = True,
+    custom_only: bool = False,
+) -> list[dict[str, object]]:
+    """Return command metadata records for registry/API consumers."""
+    metadata: list[dict[str, object]] = []
+    filtered_registry = _get_command_registry_by_standard_filter(
+        parameter_exclude_opamp_standard=parameter_exclude_opamp_standard
+    )
+    for command_class in filtered_registry.values():
+        instance = command_class()
+        classifier = instance.get_command_classifier().strip().lower()
+        if custom_only and classifier != "custom":
+            continue
+        capability_fqdn = (instance.get_capability_fqdn() or "").strip()
+        if custom_only and not capability_fqdn:
+            continue
+        schema: list[dict[str, object]] = []
+        if hasattr(instance, "get_user_parameter_schema"):
+            schema = _sanitize_parameter_schema(
+                list(getattr(instance, "get_user_parameter_schema")())
+            )
+        metadata.append(
+            {
+                "fqdn": capability_fqdn,
+                "displayname": instance.getdisplayname(),
+                "classifier": classifier,
+                "operation": instance.get_command_type().strip().lower(),
+                "schema": schema,
+            }
+        )
+    metadata.sort(key=lambda item: str(item.get("displayname", "")).lower())
+    return metadata
+
+
 __all__ = [
     "CommandObjectInterface",
     "RestartAgent",
     "ChatOpCommand",
     "get_registered_command_keys",
+    "get_available_command_keys",
     "get_registered_command_fqdns",
     "get_custom_capabilities_list",
     "get_command_fqdn",
+    "get_command_metadata",
     "command_object_factory",
 ]

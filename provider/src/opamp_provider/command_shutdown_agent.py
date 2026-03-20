@@ -10,16 +10,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Restart command object implementation."""
+"""Shutdown-agent custom command object implementation."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from opamp_provider.command_interface import (
     CommandObjectInterface,
     CommandParameterSchemaInterface,
 )
+from opamp_provider.proto import opamp_pb2
+
+SHUTDOWN_AGENT_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agent"
+SHUTDOWN_AGENT_TYPE = "Shutdown Agent"
 
 
 def _utc_now() -> datetime:
@@ -27,8 +32,8 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class RestartAgent(CommandObjectInterface, CommandParameterSchemaInterface):
-    """Concrete command object for a restart operation."""
+class CommandShutdownAgent(CommandObjectInterface, CommandParameterSchemaInterface):
+    """Concrete custom command object for shutdown-agent operations."""
 
     def __init__(
         self,
@@ -40,19 +45,19 @@ class RestartAgent(CommandObjectInterface, CommandParameterSchemaInterface):
         self._key_values = key_values or {}
 
     def get_command_classifier(self) -> str:
-        return "command"
+        return "custom"
 
     def get_command_type(self) -> str:
-        return "restart"
+        return "shutdownagent"
 
     def get_command_time(self) -> datetime:
         return self._command_time
 
     def get_command_description(self) -> str:
-        return "Restart Agent"
+        return "custom shutdownagent queued"
 
     def getdisplayname(self) -> str:
-        return "Restart Agent"
+        return "Shutdown Agent"
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
         self._key_values = dict(key_values)
@@ -61,19 +66,18 @@ class RestartAgent(CommandObjectInterface, CommandParameterSchemaInterface):
         return dict(self._key_values)
 
     def get_capability_fqdn(self) -> str | None:
-        # This uses the shared command framework for a default OpAMP feature (restart),
-        # so it should not appear in the list of available custom commands.
-        return None
+        return SHUTDOWN_AGENT_CAPABILITY
 
     def isOpAMPStandard(self) -> bool:
-        return True
+        return False
 
     def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
-        return [
-            {
-                "parametername": "action",
-                "type": "string",
-                "description": "Command action to execute.",
-                "isrequired": True,
-            },
-        ]
+        return []
+
+    def to_custom_message(self) -> opamp_pb2.CustomMessage:
+        """Build a CustomMessage payload for shutdown-agent dispatch."""
+        payload = opamp_pb2.CustomMessage()
+        payload.capability = SHUTDOWN_AGENT_CAPABILITY
+        payload.type = SHUTDOWN_AGENT_TYPE
+        payload.data = json.dumps(self._key_values, sort_keys=True).encode("utf-8")
+        return payload

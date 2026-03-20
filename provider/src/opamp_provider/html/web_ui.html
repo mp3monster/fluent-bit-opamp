@@ -324,6 +324,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
+      margin-bottom: 16px;
     }
 
     .command-btn {
@@ -343,6 +344,60 @@
     .command-btn small {
       color: var(--muted);
       font-weight: 400;
+    }
+
+    .command-config-panel {
+      border: 1px solid #d0d8f2;
+      background: #f8faff;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .command-config-panel.hidden {
+      display: none;
+    }
+
+    .command-config-header {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .command-config-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #ffffff;
+      border: 1px solid #e1e7f5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .command-config-table th,
+    .command-config-table td {
+      border-bottom: 1px solid #eef2ff;
+      padding: 10px;
+      font-size: 0.9rem;
+    }
+
+    .command-config-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .schema-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: #e9eefb;
+      color: #32457f;
+      border: 1px solid #cfd7ea;
+      font-weight: 700;
+      cursor: help;
+      user-select: none;
     }
 
     .history-panel {
@@ -562,6 +617,31 @@
         </div>
         <div id="tab-commands" class="tab-panel">
           <div class="command-grid" id="commandButtons"></div>
+          <div class="command-config-panel">
+            <div class="command-config-header">
+              <label for="customCommandSelect" style="font-size: 0.85rem; color: var(--muted);">
+                Custom Command
+              </label>
+              <select id="customCommandSelect">
+                <option value="">Select custom command...</option>
+              </select>
+            </div>
+            <div id="customCommandConfigPanel" class="command-config-panel hidden">
+              <table class="command-config-table">
+                <thead>
+                  <tr>
+                    <th>Parameter</th>
+                    <th>Value</th>
+                    <th>Info</th>
+                  </tr>
+                </thead>
+                <tbody id="customCommandConfigBody"></tbody>
+              </table>
+              <div class="tab-actions">
+                <button id="sendCustomCommandBtn" class="save" type="button">Send Command</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="tab-command-history" class="tab-panel">
           <div class="history-panel">
@@ -613,6 +693,7 @@
   <script>
     const state = {
       clients: [],
+      customCommands: [],
       sortKey: "client_id",
       sortDir: "asc",
       page: 1,
@@ -644,6 +725,10 @@
     const toggleDataBtn = document.getElementById("toggleDataBtn");
     const commandHistoryList = document.getElementById("commandHistoryList");
     const commandButtons = document.getElementById("commandButtons");
+    const customCommandSelect = document.getElementById("customCommandSelect");
+    const customCommandConfigPanel = document.getElementById("customCommandConfigPanel");
+    const customCommandConfigBody = document.getElementById("customCommandConfigBody");
+    const sendCustomCommandBtn = document.getElementById("sendCustomCommandBtn");
     const saveConfigBtn = document.getElementById("saveConfigBtn");
     const historyTabBtn = document.getElementById("historyTabBtn");
     const commandHistoryTabBtn = document.getElementById("commandHistoryTabBtn");
@@ -718,6 +803,10 @@
       btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
     });
     saveConfigBtn.addEventListener("click", saveConfig);
+    customCommandSelect.addEventListener("change", () => {
+      renderCustomCommandConfiguration(customCommandSelect.value);
+    });
+    sendCustomCommandBtn.addEventListener("click", queueCustomCommand);
 
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
@@ -737,6 +826,13 @@
       const data = await resp.json();
       state.delayed = data.delayed_comms_seconds ?? 60;
       state.significant = data.significant_comms_seconds ?? 300;
+    }
+
+    async function fetchCustomCommands() {
+      const resp = await fetch("/api/commands/custom");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.customCommands = Array.isArray(data.commands) ? data.commands : [];
     }
 
     async function fetchClients() {
@@ -848,12 +944,16 @@
         closeModal();
         return;
       }
-      openModal(refreshed, { preserveTab: true });
+      openModal(refreshed, {
+        preserveTab: true,
+        customCommandState: captureCustomCommandState(),
+      });
     }
 
     function openModal(client, options = {}) {
       const preserveTab = options.preserveTab === true;
       const desiredTab = preserveTab ? activeTabName() : "summary";
+      const customCommandState = options.customCommandState || null;
       activeClient = client;
       modalTitle.textContent = `Client ${client.client_id}`;
       const status = computeStatus(client);
@@ -899,7 +999,7 @@
       currentConfigOutput.textContent = formatConfigValue(client.current_config) || "--";
       renderCommandHistory(client);
       renderEventsHistory(client);
-      renderCommandButtons(client);
+      renderCommandButtons(client, customCommandState);
       let nextTab = desiredTab;
       if (nextTab === "history" && historyTabBtn.classList.contains("hidden")) {
         nextTab = "summary";
@@ -1089,7 +1189,7 @@
       });
     }
 
-    function renderCommandButtons(client) {
+    function renderCommandButtons(client, customCommandState = null) {
       commandButtons.innerHTML = "";
       COMMAND_OPTIONS.forEach(option => {
         const btn = document.createElement("button");
@@ -1099,6 +1199,151 @@
         btn.addEventListener("click", () => queueCommand(option.value, client));
         commandButtons.appendChild(btn);
       });
+      renderCustomCommandSelect(customCommandState);
+    }
+
+    function renderCustomCommandSelect(customCommandState = null) {
+      customCommandSelect.innerHTML = "";
+      const defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.textContent = "Select custom command...";
+      customCommandSelect.appendChild(defaultOption);
+
+      state.customCommands.forEach(command => {
+        const option = document.createElement("option");
+        option.value = command.fqdn || "";
+        option.textContent = command.displayname || command.operation || command.fqdn || "--";
+        customCommandSelect.appendChild(option);
+      });
+
+      const restoreFqdn =
+        customCommandState
+        && typeof customCommandState.selectedFqdn === "string"
+        && state.customCommands.some(cmd => cmd.fqdn === customCommandState.selectedFqdn)
+          ? customCommandState.selectedFqdn
+          : "";
+      customCommandSelect.value = restoreFqdn;
+      renderCustomCommandConfiguration(
+        restoreFqdn,
+        customCommandState ? customCommandState.values : null,
+      );
+    }
+
+    function getSelectedCustomCommandMeta(selectedFqdn) {
+      return state.customCommands.find(cmd => cmd.fqdn === selectedFqdn) || null;
+    }
+
+    function toSchemaTooltip(schemaEntry, currentValue) {
+      const isSet = String(currentValue || "").trim().length > 0;
+      const isRequired = schemaEntry.isRequired === true || schemaEntry.isrequired === true;
+      const tooltipPayload = {
+        parametername: schemaEntry.parametername ?? "",
+        type: schemaEntry.type ?? "",
+        description: schemaEntry.description ?? "",
+        isRequired,
+        set_value: isSet ? currentValue : null,
+        unset_value: isSet ? null : "",
+      };
+      return JSON.stringify(tooltipPayload, null, 2);
+    }
+
+    function isSchemaRequired(schemaEntry) {
+      return schemaEntry.isRequired === true || schemaEntry.isrequired === true;
+    }
+
+    function hasMissingRequiredCustomCommandValues(selectedMeta) {
+      if (!selectedMeta) return true;
+      const schema = Array.isArray(selectedMeta.schema) ? selectedMeta.schema : [];
+      for (const schemaEntry of schema) {
+        const paramName = String(schemaEntry.parametername || "").trim();
+        if (!paramName || !isSchemaRequired(schemaEntry)) continue;
+        const input = Array.from(customCommandConfigBody.querySelectorAll("input")).find(
+          item => item.dataset.parameter === paramName
+        );
+        const value = input ? String(input.value || "").trim() : "";
+        if (!value) return true;
+      }
+      return false;
+    }
+
+    function updateCustomCommandActionAvailability() {
+      const selectedMeta = getSelectedCustomCommandMeta(customCommandSelect.value);
+      const canIssue = Boolean(selectedMeta) && !hasMissingRequiredCustomCommandValues(selectedMeta);
+      sendCustomCommandBtn.disabled = !canIssue;
+      sendCustomCommandBtn.title = canIssue
+        ? "Configure and queue this command"
+        : "Populate all required parameters before issuing this command";
+    }
+
+    function buildConfigValueCell(paramName, selectedMeta, overrideValue = null) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.dataset.parameter = paramName;
+      input.style.width = "100%";
+      if (typeof overrideValue === "string") {
+        input.value = overrideValue;
+      } else {
+        input.value = "";
+      }
+      return input;
+    }
+
+    function renderCustomCommandConfiguration(selectedFqdn, valueOverrides = null) {
+      customCommandConfigBody.innerHTML = "";
+      const selectedMeta = getSelectedCustomCommandMeta(selectedFqdn);
+      if (!selectedMeta) {
+        customCommandConfigPanel.classList.add("hidden");
+        updateCustomCommandActionAvailability();
+        return;
+      }
+      customCommandConfigPanel.classList.remove("hidden");
+      const schema = Array.isArray(selectedMeta.schema) ? selectedMeta.schema : [];
+      schema.forEach(schemaEntry => {
+        const paramName = String(schemaEntry.parametername || "").trim();
+        if (!paramName) return;
+        const row = document.createElement("tr");
+
+        const labelCell = document.createElement("td");
+        const label = document.createElement("label");
+        label.textContent = paramName;
+        labelCell.appendChild(label);
+
+        const valueCell = document.createElement("td");
+        const overrideValue =
+          valueOverrides && Object.prototype.hasOwnProperty.call(valueOverrides, paramName)
+            ? String(valueOverrides[paramName] ?? "")
+            : null;
+        const input = buildConfigValueCell(paramName, selectedMeta, overrideValue);
+        valueCell.appendChild(input);
+
+        const infoCell = document.createElement("td");
+        const info = document.createElement("span");
+        info.className = "schema-icon";
+        info.textContent = "i";
+        info.title = toSchemaTooltip(schemaEntry, input.value);
+        input.addEventListener("input", () => {
+          info.title = toSchemaTooltip(schemaEntry, input.value);
+          updateCustomCommandActionAvailability();
+        });
+        infoCell.appendChild(info);
+
+        row.appendChild(labelCell);
+        row.appendChild(valueCell);
+        row.appendChild(infoCell);
+        customCommandConfigBody.appendChild(row);
+      });
+      updateCustomCommandActionAvailability();
+    }
+
+    function captureCustomCommandState() {
+      const selectedFqdn = customCommandSelect.value || "";
+      const values = {};
+      Array.from(customCommandConfigBody.querySelectorAll("input")).forEach(input => {
+        const paramName = input.dataset.parameter;
+        if (!paramName) return;
+        values[paramName] = String(input.value || "");
+      });
+      return { selectedFqdn, values };
     }
 
     function renderEventsHistory(client) {
@@ -1171,6 +1416,81 @@
       await fetchClients();
       const refreshed = state.clients.find(c => c.client_id === target.client_id);
       if (refreshed) openModal(refreshed);
+    }
+
+    async function queueCustomCommand() {
+      const target = activeClient;
+      if (!target) return;
+      const preservedCustomCommandState = captureCustomCommandState();
+      const selectedFqdn = customCommandSelect.value;
+      const selectedMeta = getSelectedCustomCommandMeta(selectedFqdn);
+      if (!selectedMeta) {
+        window.alert("Please select a custom command.");
+        return;
+      }
+      if (hasMissingRequiredCustomCommandValues(selectedMeta)) {
+        window.alert("Populate all required parameters before issuing this command.");
+        updateCustomCommandActionAvailability();
+        return;
+      }
+
+      const pairs = [];
+      const schema = Array.isArray(selectedMeta.schema) ? selectedMeta.schema : [];
+      let missingRequired = null;
+      let hasAction = false;
+      const configuredValues = preservedCustomCommandState.values || {};
+      schema.forEach(schemaEntry => {
+        const paramName = String(schemaEntry.parametername || "").trim();
+        if (!paramName) return;
+        const value = String(configuredValues[paramName] || "").trim();
+        if (isSchemaRequired(schemaEntry) && !value && !missingRequired) {
+          missingRequired = paramName;
+        }
+      });
+      Object.entries(configuredValues).forEach(([key, rawValue]) => {
+        const paramName = String(key || "").trim();
+        const value = String(rawValue || "").trim();
+        if (!paramName || !value) return;
+        pairs.push({ key: paramName, value });
+        if (paramName.toLowerCase() === "action") {
+          hasAction = true;
+        }
+      });
+      if (missingRequired) {
+        window.alert(`Missing required parameter: ${missingRequired}`);
+        return;
+      }
+
+      pairs.push({ key: "classifier", value: "custom" });
+      if (!hasAction) {
+        pairs.push({ key: "action", value: selectedMeta.operation || "" });
+      }
+
+      pairs.push({ key: "source", value: "ui" });
+      pairs.push({ key: "requested_at", value: new Date().toISOString() });
+
+      const ok = window.confirm(
+        `Queue custom command "${selectedMeta.displayname}" for client ${target.client_id}?`
+      );
+      if (!ok) return;
+
+      const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairs }),
+      });
+      if (!resp.ok) {
+        window.alert("Failed to queue custom command.");
+        return;
+      }
+      await fetchClients();
+      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      if (refreshed) {
+        openModal(refreshed, {
+          preserveTab: true,
+          customCommandState: preservedCustomCommandState,
+        });
+      }
     }
 
     async function saveConfig() {
@@ -1272,6 +1592,7 @@
 
     async function init() {
       await fetchSettings();
+      await fetchCustomCommands();
       await fetchClients();
       scheduleRefresh();
     }

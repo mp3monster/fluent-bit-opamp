@@ -18,6 +18,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 
+class CommandParameterSchemaInterface(ABC):
+    """Interface for command parameter schema metadata."""
+
+    @abstractmethod
+    def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
+        """Return parameter schema rows with parametername/type/description/isrequired."""
+
+
 class CommandObjectInterface(ABC):
     """Interface for command object metadata and payload helpers."""
 
@@ -38,6 +46,10 @@ class CommandObjectInterface(ABC):
         """Return a human-readable description of the command."""
 
     @abstractmethod
+    def getdisplayname(self) -> str:
+        """Return a display-friendly command name."""
+
+    @abstractmethod
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
         """Set key/value dictionary used by this command object."""
 
@@ -48,3 +60,7 @@ class CommandObjectInterface(ABC):
     @abstractmethod
     def get_capability_fqdn(self) -> str | None:
         """Return reverse-FQDN capability string for custom messages (or None/empty)."""
+
+    @abstractmethod
+    def isOpAMPStandard(self) -> bool:
+        """Return True when this command is an OpAMP standard command."""

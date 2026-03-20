@@ -17,7 +17,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from opamp_provider.command_interface import CommandObjectInterface
+from opamp_provider.command_interface import (
+    CommandObjectInterface,
+    CommandParameterSchemaInterface,
+)
 from opamp_provider.proto import opamp_pb2
 
 CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
@@ -29,7 +32,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class ChatOpCommand(CommandObjectInterface):
+class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
     """Concrete custom command object for chatopcommand operations."""
 
     def __init__(
@@ -53,6 +56,9 @@ class ChatOpCommand(CommandObjectInterface):
     def get_command_description(self) -> str:
         return "custom chatopcommand queued"
 
+    def getdisplayname(self) -> str:
+        return "ChatOps Command"
+
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
         self._key_values = dict(key_values)
 
@@ -61,6 +67,19 @@ class ChatOpCommand(CommandObjectInterface):
 
     def get_capability_fqdn(self) -> str | None:
         return CHATOPCOMMAND_CAPABILITY
+
+    def isOpAMPStandard(self) -> bool:
+        return False
+
+    def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
+        return [
+            {
+                "parametername": "action",
+                "type": "string",
+                "description": "Custom command operation name.",
+                "isrequired": True,
+            },
+        ]
 
     def to_custom_message(self) -> opamp_pb2.CustomMessage:
         """Build a CustomMessage payload for ChatOp command dispatch."""

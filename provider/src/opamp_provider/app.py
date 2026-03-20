@@ -30,7 +30,11 @@ from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
 from opamp_provider.command_record import CommandRecord
-from opamp_provider.commands import command_object_factory, get_custom_capabilities_list
+from opamp_provider.commands import (
+    command_object_factory,
+    get_command_metadata,
+    get_custom_capabilities_list,
+)
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE
@@ -59,6 +63,7 @@ SERVER_CAPABILITIES = int(
 
 COMMAND_RESTART = "restart"
 COMMAND_CHATOP = "chatopcommand"
+COMMAND_SHUTDOWN_AGENT = "shutdownagent"
 CLASSIFIER_COMMAND = "command"
 CLASSIFIER_CUSTOM_COMMAND = "custom_command"
 CLASSIFIER_CUSTOM = "custom"
@@ -171,19 +176,25 @@ def _build_custom_command_payload(
     )
     classifier = (pending_command.classifier or "").strip().lower()
     action = (pending_command.action or "").strip().lower()
-    if classifier == CLASSIFIER_CUSTOM and action == COMMAND_CHATOP:
-        command_obj = command_object_factory(
-            classifier=classifier,
-            operation=action,
-            key_values={pair["key"]: pair["value"] for pair in pending_command.key_value_pairs},
-        )
-        if hasattr(command_obj, "to_custom_message"):
-            response.custom_message.CopyFrom(command_obj.to_custom_message())
-            logger.debug(
-                "created ServerToAgent.custom_message payload from ChatOpCommand: %s",
-                text_format.MessageToString(response.custom_message).strip(),
+    if classifier == CLASSIFIER_CUSTOM:
+        try:
+            command_obj = command_object_factory(
+                classifier=classifier,
+                operation=action,
+                key_values={pair["key"]: pair["value"] for pair in pending_command.key_value_pairs},
             )
-            return response
+            if hasattr(command_obj, "to_custom_message"):
+                response.custom_message.CopyFrom(command_obj.to_custom_message())
+                logger.debug(
+                    "created ServerToAgent.custom_message payload from custom command object: %s",
+                    text_format.MessageToString(response.custom_message).strip(),
+                )
+                return response
+        except ValueError:
+            logger.debug(
+                "no concrete custom command object for action=%s; using generic payload builder",
+                action,
+            )
 
     capability = _kv_lookup(pending_command.key_value_pairs, "capability")
     custom_type = _kv_lookup(pending_command.key_value_pairs, "type")
@@ -208,6 +219,7 @@ COMMAND_BUILDERS: dict[
 ] = {
     (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
     (CLASSIFIER_CUSTOM, COMMAND_CHATOP): _build_custom_command_payload,
+    (CLASSIFIER_CUSTOM, COMMAND_SHUTDOWN_AGENT): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM_COMMAND, "*"): _build_custom_command_payload,
 }
 
@@ -522,6 +534,19 @@ async def list_clients() -> Response:
     return jsonify({"clients": clients, "total": len(clients)})
 
 
+@app.get("/api/commands/custom")
+async def list_custom_commands() -> Response:
+    """Return custom command metadata for UI command selection/configuration."""
+    return jsonify(
+        {
+            "commands": get_command_metadata(
+                parameter_exclude_opamp_standard=True,
+                custom_only=True,
+            )
+        }
+    )
+
+
 @app.get("/api/clients/<client_id>")
 async def get_client(client_id: str) -> Response:
     """Get a single client record."""
@@ -624,7 +649,10 @@ async def queue_command(client_id: str) -> Response:
         (classifier, action) in COMMAND_BUILDERS
         and (
             (classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART)
-            or (classifier == CLASSIFIER_CUSTOM and action == COMMAND_CHATOP)
+            or (
+                classifier == CLASSIFIER_CUSTOM
+                and action in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT}
+            )
         )
     ):
         command_obj = command_object_factory(

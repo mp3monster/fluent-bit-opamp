@@ -217,6 +217,40 @@ async def test_queue_command_rejects_unsupported_classifier_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_custom_commands_returns_display_names_and_schema() -> None:
+    async with app.test_client() as client:
+        resp = await client.get("/api/commands/custom")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert "commands" in payload
+    commands = payload["commands"]
+    assert isinstance(commands, list)
+    assert commands
+    command_map = {entry["operation"]: entry for entry in commands}
+    assert "chatopcommand" in command_map
+    assert "shutdownagent" in command_map
+    first = command_map["chatopcommand"]
+    assert first["fqdn"] == "org.mp3monster.opamp_provider.chatopcommand"
+    assert first["displayname"] == "ChatOps Command"
+    assert first["classifier"] == "custom"
+    assert first["operation"] == "chatopcommand"
+    assert isinstance(first["schema"], list)
+    assert {
+        "parametername": "action",
+        "type": "string",
+        "description": "Custom command operation name.",
+        "isrequired": True,
+    } in first["schema"]
+    for row in first["schema"]:
+        assert row.get("parametername") not in {"classifier", "type", "data"}
+    shutdown = command_map["shutdownagent"]
+    assert shutdown["fqdn"] == "org.mp3monster.opamp_provider.command_shutdown_agent"
+    assert shutdown["displayname"] == "Shutdown Agent"
+    assert shutdown["schema"] == []
+
+
+@pytest.mark.asyncio
 async def test_get_client_missing() -> None:
     async with app.test_client() as client:
         resp = await client.get("/api/clients/missing")
