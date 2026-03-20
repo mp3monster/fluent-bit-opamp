@@ -21,6 +21,7 @@ from pathlib import Path
 
 from opamp_provider.chatop_command import ChatOpCommand
 from opamp_provider.command_interface import CommandObjectInterface
+from opamp_provider.command_nullcommand import CommandNullCommand
 from opamp_provider.command_restart_agent import RestartAgent
 
 _MODULE_EXCLUSIONS = {
@@ -215,6 +216,7 @@ def get_command_metadata(
             {
                 "fqdn": capability_fqdn,
                 "displayname": instance.getdisplayname(),
+                "description": instance.get_command_description(),
                 "classifier": classifier,
                 "operation": instance.get_command_type().strip().lower(),
                 "schema": schema,
@@ -228,6 +230,7 @@ __all__ = [
     "CommandObjectInterface",
     "RestartAgent",
     "ChatOpCommand",
+    "CommandNullCommand",
     "get_registered_command_keys",
     "get_available_command_keys",
     "get_registered_command_fqdns",
