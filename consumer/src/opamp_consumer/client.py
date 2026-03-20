@@ -18,6 +18,7 @@ import argparse
 from ast import List
 from ctypes import string_at
 from dataclasses import dataclass, field
+import sys
 import logging
 from os import strerror
 import os
@@ -42,6 +43,7 @@ from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.exceptions import AgentException
+from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
@@ -119,14 +121,14 @@ class OpAMPClientData:
     last_heartbeat_call: int = 0
     last_heartbeat_results: dict[str, str] | None = field(default_factory=dict)
     launched_at: int = 0
-    fluentbit_process: subprocess.Popen[bytes] | None = None
+    agent_process: subprocess.Popen[bytes] | None = None
     process_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     logFLB = False
     agent_type_name: str = "Fluent Bit"
     agent_version: str = ""
 
 
-class OpAMPClient:
+class OpAMPClient(OpAMPClientInterface):
     """Minimal OpAMP client supporting HTTP and WebSocket transports."""
 
     def __init__(self, base_url: str, config: ConsumerConfig | None = None) -> None:
@@ -143,7 +145,9 @@ class OpAMPClient:
             base_url=base_url.rstrip("/"),
             uid_instance=uid_instance,
         )
-        self._custom_handler_folder = pathlib.Path(__file__).resolve().parent / "custom_handlers"
+        self._custom_handler_folder = (
+            pathlib.Path(__file__).resolve().parent / "custom_handlers"
+        )
         self._custom_handler_lookup = build_factory_lookup(
             self._custom_handler_folder,
             client_data=self.data,
@@ -268,6 +272,7 @@ class OpAMPClient:
 
     def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
         logger = logging.getLogger(__name__)
+        logger.debug("_handle_server_to_agent called")
         successful_message = True
 
         logger.debug(f"Handling Server to agent payload:{reply}")
@@ -367,6 +372,7 @@ class OpAMPClient:
 
         try:
             await self.send(msg, send_as_is=True)
+            self.allow_heartbeat = False
         except Exception:
             logging.getLogger(__name__).warning("Failed to send disconnect message")
 
@@ -430,7 +436,7 @@ class OpAMPClient:
         self._handle_server_to_agent(reply)
         return reply
 
-    def launch_fluent_bit(self) -> bool:
+    def launch_agent_process(self) -> bool:
         """Launch the Fluent Bit process using configured params."""
         launched = True
         logger = logging.getLogger(__name__)
@@ -446,26 +452,29 @@ class OpAMPClient:
 
         with self.data.process_lock:
             processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
-            self.data.fluentbit_process = processResponse
+            self.data.agent_process = processResponse
             self.data.launched_at = time.time_ns()
         logger.info(f"Launch result = {processResponse}")
         return launched
 
-    def terminate_fluent_bit(self) -> None:
-        """Terminate the launched Fluent Bit process if available."""
+    def terminate_agent_process(self) -> None:
+        """Terminate the launched Agent process if available."""
         logger = logging.getLogger(__name__)
         with self.data.process_lock:
-            process = self.data.fluentbit_process
+            process = self.data.agent_process
+            self.data.allow_heartbeat = False
             if process is None:
                 return
             process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                logger.warning("Fluent Bit did not terminate in time; killing process")
+                logger.warning("Agent did not terminate in time; killing process")
+                print("Agent did not terminate in time; killing process")
+
                 process.kill()
                 process.wait(timeout=5)
-            self.data.fluentbit_process = None
+            self.data.agent_process = None
 
     def restart_agent_process(self) -> bool:
         """Stop the current agent process and start a new instance."""
@@ -477,8 +486,8 @@ class OpAMPClient:
                 "Timed out waiting for process lock while restarting agent process"
             )
         try:
-            self.terminate_fluent_bit()
-            relaunched = self.launch_fluent_bit()
+            self.terminate_agent_process()
+            relaunched = self.launch_agent_process()
         finally:
             self.data.process_lock.release()
         if not relaunched:
@@ -729,7 +738,9 @@ class OpAMPClient:
 
     def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
         logger = logging.getLogger(__name__)
-        logger.info("server custom_message:\n%s", text_format.MessageToString(custom_message))
+        logger.info(
+            "server custom_message:\n%s", text_format.MessageToString(custom_message)
+        )
         if custom_message is None:
             return
 
@@ -755,10 +766,12 @@ class OpAMPClient:
                 factory_lookup=self._custom_handler_lookup,
             )
         if handler is None:
-            raise AgentException(f"No command handler registered for capability: {capability}")
+            raise AgentException(
+                f"No command handler registered for capability: {capability}"
+            )
 
         handler.set_custom_message_handler(custom_message)
-        command_error = handler.execute()
+        command_error = handler.execute(self)
         if command_error is not None:
             raise AgentException(str(command_error))
 
@@ -769,7 +782,7 @@ class OpAMPClient:
         logger.debug(f"Heartbeat cycle start - checking every {interval}")
         try:
             while self.data.allow_heartbeat:
-                time.sleep(interval)
+                await asyncio.sleep(interval)
                 if check_semaphore():
                     await self._send_disconnect_with_timeout()
                     self.data.allow_heartbeat = False
@@ -780,7 +793,7 @@ class OpAMPClient:
                         self.data.last_heartbeat_results.update(results)
                         self.add_agent_version(port)
                         self.data.last_heartbeat_http_codes = codes
-                    if self.config.log_fluentbit_api_responses and self.data.logFLB:
+                    if self.config.log_agent_api_responses and self.data.logFLB:
                         logger.debug(f"Heartbeat outcome --> {results}")
 
                     logger.info("Heartbeat response codes: %s", codes)
@@ -889,6 +902,24 @@ async def run_client(client) -> None:
     await client.send()
 
 
+def _force_exit_on_lingering_threads() -> None:
+    """Force process exit when non-daemon threads keep the interpreter alive."""
+    alive_threads = [
+        thread
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread()
+        and thread.is_alive()
+        and not thread.daemon
+    ]
+    if not alive_threads:
+        return
+    print(
+        "forcing process exit; non-daemon threads still alive: %s",
+        [thread.name for thread in alive_threads],
+    )
+    os._exit(0)
+
+
 def main() -> None:
     """Load config, read Fluent Bit settings, launch Fluent Bit, start heartbeat."""
     try:
@@ -929,13 +960,14 @@ def main() -> None:
         logger.debug(msg="setting up OpAMP")
         client = OpAMPClient(config.server_url, config)
 
-        client.launch_fluent_bit()
+        client.launch_agent_process()
         client.add_agent_version(config.http_port)
 
         logger.info("introducing self to server")
         asyncio.run(run_client(client))
 
         asyncio.run(client._heartbeat_loop(config.http_port))
+        client.terminate_agent_process()
 
     except KeyboardInterrupt as kb:
         print(f"... bzzzz keyboard\n{kb}")
@@ -950,3 +982,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     main()
     print("... Bye")
+    # _force_exit_on_lingering_threads()
+    sys.exit(1)

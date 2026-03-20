@@ -21,7 +21,7 @@ import types
 import uuid
 from typing import TYPE_CHECKING
 
-from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
 
 if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData

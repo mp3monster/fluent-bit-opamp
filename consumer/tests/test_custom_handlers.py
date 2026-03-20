@@ -22,6 +22,7 @@ from opamp_consumer.custom_handlers import (
     discover_handlers,
 )
 from opamp_consumer.exceptions import CommandException
+from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import opamp_pb2
 
 
@@ -38,6 +39,29 @@ def _make_client_data() -> OpAMPClientData:
     return OpAMPClientData(config=config, base_url="http://localhost", uid_instance=b"id")
 
 
+class _FakeOpAMPClient(OpAMPClientInterface):
+    async def send(self) -> opamp_pb2.ServerToAgent:
+        return opamp_pb2.ServerToAgent()
+
+    async def send_disconnect(self) -> None:
+        return None
+
+    def launch_agent_process(self) -> bool:
+        return True
+
+    def terminate_agent_process(self) -> None:
+        return None
+
+    def restart_agent_process(self) -> bool:
+        return True
+
+    def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
+        return None
+
+    def finalize(self) -> None:
+        return None
+
+
 def test_chatops_command_logs(caplog) -> None:
     """Verify ChatOpsCommand logs each stub method invocation."""
     caplog.set_level(logging.INFO)
@@ -45,7 +69,7 @@ def test_chatops_command_logs(caplog) -> None:
     handler.set_client_data(_make_client_data())
     handler.get_fqdn()
     handler.handle_message("hello", "text")
-    handler.execute_action("run")
+    handler.execute_action("run", _FakeOpAMPClient())
 
     assert "ChatOpsCommand.set_client_data called" in caplog.text
     assert "ChatOpsCommand.get_fqdn called" in caplog.text
@@ -64,17 +88,37 @@ def test_chatops_execute_logs_start_and_end(caplog) -> None:
     payload.data = json.dumps({"action": "run"}).encode("utf-8")
     handler.set_custom_message_handler(payload)
 
-    result = handler.execute()
+    result = handler.execute(_FakeOpAMPClient())
 
     assert result is None
     assert "custom handler execute start" in caplog.text
     assert "custom handler execute end" in caplog.text
 
 
+def test_shutdowncommand_factory_creates_handler_by_fqdn() -> None:
+    """Factory lookup should resolve the provider shutdown-agent custom command."""
+    lookup = build_factory_lookup(
+        "consumer/src/opamp_consumer/custom_handlers",
+        client_data=_make_client_data(),
+    )
+    fqdn = "org.mp3monster.opamp_provider.command_shutdown_agent"
+    assert fqdn in lookup
+
+    instance = create_handler(
+        fqdn,
+        "consumer/src/opamp_consumer/custom_handlers",
+        client_data=_make_client_data(),
+        factory_lookup=lookup,
+    )
+    assert instance is not None
+    assert instance.get_reverse_fqdn() == fqdn
+    assert instance.__class__.__name__ == "ShutdownCommand"
+
+
 def test_registry_discovers_and_creates_handlers(tmp_path) -> None:
     """Discover handlers from a folder and instantiate by FQDN."""
     handler_code = '''
-from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
 
 class SampleHandler(CustomMessageHandlerInterface):
     def __init__(self):
@@ -85,7 +129,7 @@ class SampleHandler(CustomMessageHandlerInterface):
         return "sample.handler"
     def handle_message(self, message, message_type):
         pass
-    def execute_action(self, action):
+    def execute_action(self, action, opamp_client):
         pass
 '''
     handler_path = tmp_path / "sample_handler.py"
@@ -133,7 +177,7 @@ def test_registry_skips_broken_module(tmp_path) -> None:
 def test_execute_returns_commandexception_on_handler_error(tmp_path) -> None:
     """execute should return CommandException when a handler raises."""
     handler_code = '''
-from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
 
 class BrokenHandler(CustomMessageHandlerInterface):
     def __init__(self):
@@ -145,7 +189,7 @@ class BrokenHandler(CustomMessageHandlerInterface):
         return "broken.handler"
     def handle_message(self, message, message_type):
         raise RuntimeError("boom")
-    def execute_action(self, action):
+    def execute_action(self, action, opamp_client):
         pass
 '''
     handler_path = tmp_path / "broken_handler.py"
@@ -159,5 +203,5 @@ class BrokenHandler(CustomMessageHandlerInterface):
     payload.data = b'{"action":"run"}'
     instance.set_custom_message_handler(payload)
 
-    result = instance.execute()
+    result = instance.execute(_FakeOpAMPClient())
     assert isinstance(result, CommandException)

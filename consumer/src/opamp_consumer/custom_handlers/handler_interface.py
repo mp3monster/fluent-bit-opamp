@@ -24,6 +24,7 @@ from opamp_consumer.proto import opamp_pb2
 
 if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
+    from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
 
 class CommandHandlerInterface(ABC):
@@ -42,7 +43,7 @@ class CommandHandlerInterface(ABC):
         """Set the custom message payload to be processed by execute()."""
 
     @abstractmethod
-    def execute(self) -> CommandException | None:
+    def execute(self, opamp_client: OpAMPClientInterface) -> CommandException | None:
         """Execute command logic and return a CommandException when execution fails."""
 
 
@@ -61,8 +62,10 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
         """Handle an inbound message and type string."""
 
     @abstractmethod
-    def execute_action(self, action: str) -> None:
-        """Execute a named action."""
+    def execute_action(
+        self, action: str, opamp_client: OpAMPClientInterface
+    ) -> None:
+        """Execute a named action with access to the OpAMP client interface."""
 
     def get_reverse_fqdn(self) -> str:
         """Return the reverse-FQDN used for capability lookup."""
@@ -72,7 +75,7 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
         """Store the inbound custom message for execute()."""
         self._custom_message = custom_message
 
-    def execute(self) -> CommandException | None:
+    def execute(self, opamp_client: OpAMPClientInterface) -> CommandException | None:
         """Execute the custom message handler and return CommandException on failure."""
         logger = logging.getLogger(__name__)
         fqdn = self.get_reverse_fqdn()
@@ -96,7 +99,7 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
                     action = ""
 
             self.handle_message(payload_text, message_type)
-            self.execute_action(action)
+            self.execute_action(action, opamp_client)
         except Exception as err:  # pragma: no cover - depends on implementation details
             return CommandException(f"Command handler execute failed: {err}")
         finally:

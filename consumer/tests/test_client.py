@@ -155,7 +155,7 @@ def test_populate_disconnect_sets_instance_uid() -> None:
     assert msg.HasField("agent_disconnect")
 
 
-def test_terminate_fluent_bit_terminates_only_launched_process(monkeypatch) -> None:
+def test_terminate_agent_process_terminates_only_launched_process(monkeypatch) -> None:
     """Terminate only the Fluent Bit process launched by the client."""
     instance = client.OpAMPClient("http://localhost")
     called = {"terminate": 0, "wait": 0, "kill": 0}
@@ -173,14 +173,14 @@ def test_terminate_fluent_bit_terminates_only_launched_process(monkeypatch) -> N
 
     monkeypatch.setattr(client.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
 
-    instance.launch_fluent_bit()
-    assert instance.data.fluentbit_process is not None
+    instance.launch_agent_process()
+    assert instance.data.agent_process is not None
 
-    instance.terminate_fluent_bit()
+    instance.terminate_agent_process()
     assert called["terminate"] == 1
     assert called["wait"] == 1
     assert called["kill"] == 0
-    assert instance.data.fluentbit_process is None
+    assert instance.data.agent_process is None
 
 
 def test_restart_agent_process_relaunches(monkeypatch) -> None:
@@ -195,8 +195,8 @@ def test_restart_agent_process_relaunches(monkeypatch) -> None:
         calls["launch"] += 1
         return True
 
-    monkeypatch.setattr(instance, "terminate_fluent_bit", _terminate)
-    monkeypatch.setattr(instance, "launch_fluent_bit", _launch)
+    monkeypatch.setattr(instance, "terminate_agent_process", _terminate)
+    monkeypatch.setattr(instance, "launch_agent_process", _launch)
 
     assert instance.restart_agent_process() is True
     assert calls["terminate"] == 1
@@ -207,8 +207,8 @@ def test_restart_agent_process_raises_on_failed_launch(monkeypatch) -> None:
     """Restart should raise AgentException when relaunch fails."""
     instance = client.OpAMPClient("http://localhost")
 
-    monkeypatch.setattr(instance, "terminate_fluent_bit", lambda: None)
-    monkeypatch.setattr(instance, "launch_fluent_bit", lambda: False)
+    monkeypatch.setattr(instance, "terminate_agent_process", lambda: None)
+    monkeypatch.setattr(instance, "launch_agent_process", lambda: False)
 
     with pytest.raises(AgentException):
         instance.restart_agent_process()
@@ -261,7 +261,7 @@ def test_handle_custom_message_execute_error_raises_agent_exception(monkeypatch)
         def set_custom_message_handler(self, _custom_message):
             return None
 
-        def execute(self):
+        def execute(self, _opamp_client):
             from opamp_consumer.exceptions import CommandException
 
             return CommandException("bad execute")

@@ -17,10 +17,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from opamp_consumer.custom_handlers.interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
 
 if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
+    from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
 CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
 
@@ -47,7 +48,9 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
             message,
         )
 
-    def execute_action(self, action: str) -> None:
+    def execute_action(self, action: str, opamp_client: OpAMPClientInterface) -> None:
         logging.getLogger(__name__).info(
-            "ChatOpsCommand.execute_action called action=%s", action
+            "ChatOpsCommand.execute_action called action=%s opamp_client=%s",
+            action,
+            opamp_client.__class__.__name__,
         )
