@@ -217,6 +217,71 @@ async def test_queue_command_rejects_unsupported_classifier_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_otel_agents_returns_only_connected_agents() -> None:
+    connected_id = "00000000000000000000000000000011"
+    disconnected_id = "00000000000000000000000000000022"
+    STORE._clients.clear()
+
+    connected_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(connected_id))
+    STORE.upsert_from_agent_msg(connected_msg, channel="HTTP")
+
+    disconnected_msg = opamp_pb2.AgentToServer(
+        instance_uid=bytes.fromhex(disconnected_id)
+    )
+    disconnected_msg.agent_disconnect.SetInParent()
+    STORE.upsert_from_agent_msg(disconnected_msg, channel="HTTP")
+
+    async with app.test_client() as client:
+        resp = await client.get("/tool/otelAgents")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["total"] == 1
+    assert len(payload["agents"]) == 1
+    assert payload["agents"][0]["client_id"] == connected_id
+    assert payload["agents"][0]["disconnected"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
+    async with app.test_client() as client:
+        resp = await client.get("/tool")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["openapi"] == "3.0.3"
+    assert payload["info"]["title"] == "OpAMP Provider Tool API"
+    paths = payload.get("paths", {})
+    assert "/tool" in paths
+    assert "/tool/otelAgents" in paths
+    assert "/tool/commands" in paths
+    assert "get" in paths["/tool/commands"]
+    assert "responses" in paths["/tool/commands"]["get"]
+
+
+@pytest.mark.asyncio
+async def test_tool_commands_returns_standard_and_custom_commands() -> None:
+    async with app.test_client() as client:
+        resp = await client.get("/tool/commands")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert "commands" in payload
+    commands = payload["commands"]
+    assert isinstance(commands, list)
+    assert payload["total"] == len(commands)
+    assert commands
+
+    classifiers = {entry.get("classifier") for entry in commands}
+    assert "command" in classifiers
+    assert "custom" in classifiers
+
+    operations = {entry.get("operation") for entry in commands}
+    assert "restart" in operations
+    assert "chatopcommand" in operations
+
+
+@pytest.mark.asyncio
 async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     async with app.test_client() as client:
         resp = await client.get("/api/commands/custom")

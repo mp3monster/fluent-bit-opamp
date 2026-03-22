@@ -36,6 +36,7 @@ from opamp_provider.commands import (
     get_custom_capabilities_list,
 )
 from opamp_provider.exceptions import ServerToAgentException
+from opamp_provider.mcptool import register_mcp_transport, register_tool_routes
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE
 from opamp_provider.transport import decode_message, encode_message
@@ -47,6 +48,8 @@ from shared.opamp_config import (
 )
 
 app = Quart(__name__)
+register_tool_routes(app)
+register_mcp_transport(app)
 logger = logging.getLogger(__name__)
 tracemalloc.start()
 
