@@ -27,6 +27,7 @@ dependencies = [
   "pydantic>=2.6",
   "protobuf>=5.27",
   "grpcio-tools>=1.60",
+  "fastmcp>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -2,5 +2,6 @@ quart>=0.19
 pydantic>=2.6
 protobuf>=5.27
 grpcio-tools>=1.60
+fastmcp>=2.0
 pytest>=8.0
 pytest-asyncio>=0.23
