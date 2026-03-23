@@ -20,7 +20,9 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import (
+    CustomMessageHandlerInterface,
+)
 from opamp_consumer.proto import opamp_pb2
 
 if TYPE_CHECKING:
@@ -28,6 +30,10 @@ if TYPE_CHECKING:
     from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
 CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
+CONTENT_TYPE_HEADER = "Content-Type"
+CONTENT_LENGTH_HEADER = "Content-Length"
+CONTENT_TYPE_JSON = "application/json"
+UTF8_ENCODING = "utf-8"
 
 
 class ChatOpsCommand(CustomMessageHandlerInterface):
@@ -91,17 +97,25 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
             return f"http://localhost:{port}/{tag.lstrip('/')}"
         return f"http://localhost:{port}"
 
-    def _parse_attributes_payload(self) -> dict[str, object] | None:
+    def _parse_attributes_payload(self) -> dict[str, object]:
         # Convert optional attributes into a JSON object for HTTP body usage.
         # Accepts both direct dict payloads and escaped JSON strings from custom
         # command transport, improving compatibility with caller formats.
         #
         # Returns:
-        # - Parsed dictionary payload, or None when no valid attributes exist.
+        # - Parsed dictionary payload, or empty dict when no valid attributes exist.
         raw_attributes = self._payload_data.get("attributes")
+
         if raw_attributes is None:
-            return None
+            logging.getLogger(__name__).info(
+                "ChatOpsCommand._parse_attributes_payload - no attributes set, returning default"
+            )
+            return {}
         if isinstance(raw_attributes, dict):
+            logging.getLogger(__name__).debug(
+                "ChatOpsCommand._parse_attributes_payload - identified object for %s",
+                raw_attributes,
+            )
             return raw_attributes
         if isinstance(raw_attributes, str):
             try:
@@ -109,15 +123,24 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
                 if isinstance(parsed, dict):
                     return parsed
             except json.JSONDecodeError:
+                logging.getLogger(__name__).warning(
+                    "ChatOpsCommand._parse_attributes_payload - failed to convert to JSON %s",
+                    raw_attributes,
+                )
                 pass
             try:
-                unescaped = bytes(raw_attributes, "utf-8").decode("unicode_escape")
+                unescaped = bytes(raw_attributes, UTF8_ENCODING).decode("unicode_escape")
                 parsed = json.loads(unescaped)
                 if isinstance(parsed, dict):
                     return parsed
             except Exception:
-                return None
-        return None
+                logging.getLogger(__name__).warning(
+                    "ChatOpsCommand._parse_attributes_payload - failed to convert as unicode escaped to JSON %s",
+                    raw_attributes,
+                )
+                return {}
+
+        return {}
 
     def _build_failure_custom_message(
         self,
@@ -173,12 +196,23 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
             url,
             attributes,
         )
-        response = httpx.post(url, json=attributes, timeout=5.0)
+        payload_bytes = json.dumps(attributes, sort_keys=True).encode(UTF8_ENCODING)
+        request_headers = {
+            CONTENT_TYPE_HEADER: CONTENT_TYPE_JSON,
+            CONTENT_LENGTH_HEADER: str(len(payload_bytes)),
+        }
+        response = httpx.post(
+            url,
+            content=payload_bytes,
+            headers=request_headers,
+            timeout=5.0,
+        )
         logger.debug(
             "ChatOpsCommand HTTP response status=%s body_len=%s",
             response.status_code,
             len(str(response.text or "")),
         )
+
         if response.status_code < 200 or response.status_code > 299:
             return self._build_failure_custom_message(
                 http_code=response.status_code,

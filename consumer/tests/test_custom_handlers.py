@@ -118,9 +118,10 @@ def test_chatops_execute_action_reports_failure_custom_message(monkeypatch) -> N
     """Non-2xx local HTTP responses should return a failure custom message."""
     captured: dict[str, object] = {}
 
-    def _fake_post(url, json=None, timeout=None):  # noqa: ANN001
+    def _fake_post(url, content=None, headers=None, timeout=None):  # noqa: ANN001
         captured["url"] = url
-        captured["json"] = json
+        captured["content"] = content
+        captured["headers"] = headers
         captured["timeout"] = timeout
         return type("Resp", (), {"status_code": 500, "text": 'bad "payload"\nline2'})()
 
@@ -140,7 +141,12 @@ def test_chatops_execute_action_reports_failure_custom_message(monkeypatch) -> N
     returned = handler.execute_action("run", fake_client)
 
     assert captured["url"] == "http://localhost:8888/events"
-    assert captured["json"] == {"service": "orders", "count": 1}
+    assert json.loads(captured["content"].decode("utf-8")) == {
+        "service": "orders",
+        "count": 1,
+    }
+    assert captured["headers"]["Content-Type"] == "application/json"
+    assert captured["headers"]["Content-Length"] == str(len(captured["content"]))
     assert captured["timeout"] == 5.0
     assert len(fake_client.sent_messages) == 0
     assert returned is not None
