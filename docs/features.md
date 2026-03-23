@@ -15,12 +15,12 @@ Here's a markdown table with one row per `AgentToServer` message field:
 | `sequence_num`                | Stable      | Done                  | Monotonically incrementing counter (by 1 per message) so the Server can detect missed messages. |                                                              |
 | `agent_description`           | Stable      | Done                  | Describes the Agent: its type, version, OS, and where it runs. Should be omitted if unchanged since last message. |                                                              |
 | `capabilities`                | Stable      | Done                  | Bitmask of `AgentCapabilities` flags declaring what the Agent supports. Must always be set. | Currently config driven - perhaps change to be based on abstraction of agent type (Fluent Bit, Fluentd) |
-| `health`                      | Beta        | 90%                   | Current health of the Agent and its sub-components. May be omitted if unchanged since last message. |                                                              |
-| `effective_config`            | Stable      | ToDo                  | The Agent's current active configuration (may differ from the remote config). Should be omitted if unchanged since last message. |                                                              |
+| `health`                      | Beta        | 90%                   | Current health of the Agent and its sub-components. May be omitted if unchanged since last message. | We pickup on the health of Fluent Bit |
+| `effective_config`            | Stable      | ToDo                  | The Agent's current active configuration (may differ from the remote config). Should be omitted if unchanged since last message. | We use the metrics to get health of sources. |
 | `remote_config_status`        | Stable      | Long Term             | Status of the last remote configuration received from the Server. Should be omitted if unchanged since last message. |                                                              |
 | `package_statuses`            | Beta        | Not Planned           | List of Agent packages and their installation/update statuses. Should be omitted if unchanged since last message. | Makes more sense with Fluentd as greater package portfolio   |
-| `agent_disconnect`            | Stable      | **ToDo**              | Must be set in the last `AgentToServer` message before the Agent disconnects. |                                                              |
-| `**flags**`                   | Stable      | **ToDo**              | Bitmask of `AgentToServerFlags`. Currently includes `RequestInstanceUid` to ask the Server to assign a new instance UID. |                                                              |
+| `agent_disconnect`            | Stable      | Done             | Must be set in the last `AgentToServer` message before the Agent disconnects. |                                                              |
+| `**flags**`                   | Stable      | Done             | Bitmask of `AgentToServerFlags`. Currently includes `RequestInstanceUid` to ask the Server to assign a new instance UID. |                                                              |
 | `connection_settings_request` | Development | Long Term             | A request from the Agent to initiate creation of new connection settings (agent-initiated CSR flow). |                                                              |
 | `custom_capabilities`         | Development | ToDo                  | Declares custom/extension capabilities supported by this Agent. | This is support the ChatOps concept                          |
 | `custom_message`              | Development | ToDo                  | An arbitrary custom message sent from the Agent to the Server, scoped to a declared custom capability. | This is support the ChatOps concept                          |
@@ -43,7 +43,7 @@ Here's the markdown table for `ServerToAgent` message fields:
 | `**flags**`            | Stable      | ToDo                  | Bitmask of `ServerToAgentFlags`. Includes `ReportFullState` (asks Agent to resend full status, e.g. after Server restart) and `ReportAvailableComponents` (asks Agent to send full component details rather than just a hash). |                                     |
 | `capabilities`         | Stable      | ToDo                  | Bitmask of `ServerCapabilities` flags. Must be set in the first `ServerToAgent` message; may be omitted (set to 0) in subsequent messages. |                                     |
 | `agent_identification` | Stable      | Long Term             | Used to override the Agent's `instance_uid`. When `new_instance_uid` is set, the Agent must adopt it for all further communication. |                                     |
-| `**command**`          | Beta        | To Do (Partial)       | Set when the Server wants the Agent to perform a command (currently only `Restart`). When set, all fields other than `instance_uid` and `capabilities` are ignored. |                                     |
+| `**command**`          | Beta        | Test                  | Set when the Server wants the Agent to perform a command (currently only `Restart`). When set, all fields other than `instance_uid` and `capabilities` are ignored. |                                     |
 | `custom_capabilities`  | Development | To Do                 | Declares custom/extension capabilities supported by the Server. | This is support the ChatOps concept |
 | `custom_message`       | Development | To Do                 | An arbitrary custom message sent from the Server to the Agent, scoped to a declared custom capability. | This is support the ChatOps concept |
 
@@ -57,7 +57,7 @@ Here's the markdown table for `ServerToAgent` message fields:
 
 
 ### Server Side
-* validate uid
+* Implement the socket connection control (Duplicate WebSockets Connections) where a disconnesct is sent if necessary
 
 
 ## Future Features
@@ -65,16 +65,30 @@ Here's the markdown table for `ServerToAgent` message fields:
 ### All
 * GitHub driven test rig
 * Docs on readthedocs
+* test with a 3rd party server
 
 ### Client Side
 * Allow consumer attributes to come from commenting block in Fluent Bit configuration
+
 * extend so configuration can be classic
+
 * Certificate management - this is messy to setup and test properly
+
 * code signing
+
 * wheel package
+
 * configure drive overloading of operations - so process checks can have alternate implementations
 
-### server Side
+* share namespace when running in a K8s deployment
+
+* implement authentication or bearer
+
+* construct custommessage to confirm outcome of  the request with the status being success or failure
+
+  
+
+### Server Side
 * Add authentication framework for the UI and APIs - currently we operate in a Jaeger style trust arrangement
 * Implement persistence mechanism
 * UI so that specific nodes and global polling can be set
