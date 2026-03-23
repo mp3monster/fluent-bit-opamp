@@ -29,6 +29,8 @@ from opamp_provider.proto import opamp_pb2
 
 NULLCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.nullcommand"
 NULLCOMMAND_TYPE = "Null Command"
+NULLCOMMAND_CLASSIFIER = "custom"
+NULLCOMMAND_ACTION = "nullcommand"
 
 
 def _utc_now() -> datetime:
@@ -50,13 +52,19 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         key_values: dict[str, str] | None = None,
     ) -> None:
         self._command_time = command_time or _utc_now()
-        self._key_values = key_values or {}
+        merged = self._default_key_values()
+        if key_values:
+            merged.update(key_values)
+        self._key_values = merged
+
+    def _default_key_values(self) -> dict[str, str]:
+        return {
+            "classifier": NULLCOMMAND_CLASSIFIER,
+            "action": NULLCOMMAND_ACTION,
+        }
 
     def get_command_classifier(self) -> str:
-        return "custom"
-
-    def get_command_type(self) -> str:
-        return "nullcommand"
+        return NULLCOMMAND_CLASSIFIER
 
     def get_command_time(self) -> datetime:
         return self._command_time
@@ -68,7 +76,9 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         return "Null Command"
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
-        self._key_values = dict(key_values)
+        merged = self._default_key_values()
+        merged.update(key_values)
+        self._key_values = merged
 
     def get_key_value_dictionary(self) -> dict[str, str]:
         return dict(self._key_values)

@@ -34,13 +34,24 @@ def _make_client_data() -> OpAMPClientData:
         additional_fluent_bit_params=[],
         heartbeat_frequency=30,
         agent_capabilities=["ReportsStatus"],
+        allow_custom_capabilities=True,
         log_level="debug",
     )
     return OpAMPClientData(config=config, base_url="http://localhost", uid_instance=b"id")
 
 
 class _FakeOpAMPClient(OpAMPClientInterface):
-    async def send(self) -> opamp_pb2.ServerToAgent:
+    def __init__(self) -> None:
+        self.sent_messages: list[opamp_pb2.AgentToServer] = []
+
+    async def send(
+        self,
+        msg: opamp_pb2.AgentToServer | None = None,
+        *,
+        send_as_is: bool = False,
+    ) -> opamp_pb2.ServerToAgent:
+        if msg is not None:
+            self.sent_messages.append(msg)
         return opamp_pb2.ServerToAgent()
 
     async def send_disconnect(self) -> None:
@@ -62,13 +73,17 @@ class _FakeOpAMPClient(OpAMPClientInterface):
         return None
 
 
-def test_chatops_command_logs(caplog) -> None:
+def test_chatops_command_logs(caplog, monkeypatch) -> None:
     """Verify ChatOpsCommand logs each stub method invocation."""
     caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        "opamp_consumer.custom_handlers.chatops_command.httpx.post",
+        lambda *_args, **_kwargs: type("Resp", (), {"status_code": 200, "text": "ok"})(),
+    )
     handler = ChatOpsCommand()
     handler.set_client_data(_make_client_data())
     handler.get_fqdn()
-    handler.handle_message("hello", "text")
+    handler.handle_message('{"tag":"trace","attributes":"{\\"a\\":\\"b\\"}"}', "text")
     handler.execute_action("run", _FakeOpAMPClient())
 
     assert "ChatOpsCommand.set_client_data called" in caplog.text
@@ -77,9 +92,13 @@ def test_chatops_command_logs(caplog) -> None:
     assert "ChatOpsCommand.execute_action called" in caplog.text
 
 
-def test_chatops_execute_logs_start_and_end(caplog) -> None:
+def test_chatops_execute_logs_start_and_end(caplog, monkeypatch) -> None:
     """Execute should log start/end and return no error for valid payload."""
     caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        "opamp_consumer.custom_handlers.chatops_command.httpx.post",
+        lambda *_args, **_kwargs: type("Resp", (), {"status_code": 200, "text": "ok"})(),
+    )
     handler = ChatOpsCommand()
     handler.set_client_data(_make_client_data())
     payload = opamp_pb2.CustomMessage()
@@ -95,11 +114,50 @@ def test_chatops_execute_logs_start_and_end(caplog) -> None:
     assert "custom handler execute end" in caplog.text
 
 
+def test_chatops_execute_action_reports_failure_custom_message(monkeypatch) -> None:
+    """Non-2xx local HTTP responses should return a failure custom message."""
+    captured: dict[str, object] = {}
+
+    def _fake_post(url, json=None, timeout=None):  # noqa: ANN001
+        captured["url"] = url
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return type("Resp", (), {"status_code": 500, "text": 'bad "payload"\nline2'})()
+
+    monkeypatch.setattr(
+        "opamp_consumer.custom_handlers.chatops_command.httpx.post",
+        _fake_post,
+    )
+
+    handler = ChatOpsCommand()
+    handler.set_client_data(_make_client_data())
+    handler.handle_message(
+        '{"tag":"events","attributes":"{\\"service\\":\\"orders\\",\\"count\\":1}"}',
+        "test",
+    )
+    fake_client = _FakeOpAMPClient()
+
+    returned = handler.execute_action("run", fake_client)
+
+    assert captured["url"] == "http://localhost:8888/events"
+    assert captured["json"] == {"service": "orders", "count": 1}
+    assert captured["timeout"] == 5.0
+    assert len(fake_client.sent_messages) == 0
+    assert returned is not None
+
+    assert returned.capability == "org.mp3monster.opamp_provider.chatopcommand"
+    assert returned.type == "failure"
+    payload = json.loads(returned.data.decode("utf-8"))
+    assert payload["http_code"] == "500"
+    assert payload["err_msg"] == 'bad \\"payload\\"\\nline2'
+
+
 def test_shutdowncommand_factory_creates_handler_by_fqdn() -> None:
     """Factory lookup should resolve the provider shutdown-agent custom command."""
     lookup = build_factory_lookup(
         "consumer/src/opamp_consumer/custom_handlers",
         client_data=_make_client_data(),
+        allow_custom_capabilities=True,
     )
     fqdn = "org.mp3monster.opamp_provider.command_shutdown_agent"
     assert fqdn in lookup
@@ -109,6 +167,7 @@ def test_shutdowncommand_factory_creates_handler_by_fqdn() -> None:
         "consumer/src/opamp_consumer/custom_handlers",
         client_data=_make_client_data(),
         factory_lookup=lookup,
+        allow_custom_capabilities=True,
     )
     assert instance is not None
     assert instance.get_reverse_fqdn() == fqdn
@@ -135,12 +194,25 @@ class SampleHandler(CustomMessageHandlerInterface):
     handler_path = tmp_path / "sample_handler.py"
     handler_path.write_text(handler_code)
 
-    registry = discover_handlers(tmp_path, client_data=_make_client_data())
+    registry = discover_handlers(
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert registry == {"sample.handler": "SampleHandler"}
-    lookup = build_factory_lookup(tmp_path, client_data=_make_client_data())
+    lookup = build_factory_lookup(
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert "sample.handler" in lookup
 
-    instance = create_handler("sample.handler", tmp_path, client_data=_make_client_data())
+    instance = create_handler(
+        "sample.handler",
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert instance is not None
     assert instance.get_fqdn() == "sample.handler"
     assert getattr(instance, "_data") is not None
@@ -149,9 +221,21 @@ class SampleHandler(CustomMessageHandlerInterface):
 def test_registry_ignores_missing_folder(tmp_path) -> None:
     """Return empty results when the handler folder is missing."""
     missing = tmp_path / "missing"
-    registry = discover_handlers(missing, client_data=_make_client_data())
+    registry = discover_handlers(
+        missing,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert registry == {}
-    assert create_handler("sample.handler", missing, client_data=_make_client_data()) is None
+    assert (
+        create_handler(
+            "sample.handler",
+            missing,
+            client_data=_make_client_data(),
+            allow_custom_capabilities=True,
+        )
+        is None
+    )
 
 
 def test_registry_ignores_non_handler_classes(tmp_path) -> None:
@@ -160,7 +244,11 @@ def test_registry_ignores_non_handler_classes(tmp_path) -> None:
     handler_path = tmp_path / "not_handler.py"
     handler_path.write_text(handler_code)
 
-    registry = discover_handlers(tmp_path, client_data=_make_client_data())
+    registry = discover_handlers(
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert registry == {}
 
 
@@ -170,7 +258,11 @@ def test_registry_skips_broken_module(tmp_path) -> None:
     handler_path = tmp_path / "broken.py"
     handler_path.write_text(handler_code)
 
-    registry = discover_handlers(tmp_path, client_data=_make_client_data())
+    registry = discover_handlers(
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert registry == {}
 
 
@@ -194,7 +286,12 @@ class BrokenHandler(CustomMessageHandlerInterface):
 '''
     handler_path = tmp_path / "broken_handler.py"
     handler_path.write_text(handler_code)
-    instance = create_handler("broken.handler", tmp_path, client_data=_make_client_data())
+    instance = create_handler(
+        "broken.handler",
+        tmp_path,
+        client_data=_make_client_data(),
+        allow_custom_capabilities=True,
+    )
     assert instance is not None
 
     payload = opamp_pb2.CustomMessage()

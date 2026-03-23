@@ -41,6 +41,9 @@ CFG_SERVICE_NAME = "service_name"
 CFG_SERVICE_NAMESPACE = "service_namespace"
 CFG_TRANSPORT = "transport"
 CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"
+CFG_ALLOW_CUSTOM_CAPABILITIES = "allow_custom_capabilities"
+CFG_CLIENT_STATUS_PORT = "client_status_port"
+CFG_CHAT_OPS_PORT = "chat_ops_port"
 
 
 @dataclass
@@ -51,7 +54,8 @@ class ConsumerConfig:
     additional_fluent_bit_params: list[str] | None = None
     heartbeat_frequency: int | None = None
     agent_capabilities: int | None = None
-    http_port: int | None = None
+    client_status_port: int | None = None
+    chat_ops_port: int | None = None
     http_listen: str | None = None
     http_server: str | None = None
     log_level: str | None = None
@@ -62,6 +66,7 @@ class ConsumerConfig:
     service_namespace: str | None = None
     transport: str | None = None
     log_agent_api_responses: bool | None = None
+    allow_custom_capabilities: bool = False
     fluentbit_http_port: int | None = None
     fluentbit_http_listen: str | None = None
     fluentbit_http_server: str | None = None
@@ -135,6 +140,9 @@ def load_config() -> ConsumerConfig:
     log_agent_api_responses = consumer_raw.get(
         CFG_LOG_AGENT_API_RESPONSES, False
     )
+    allow_custom_capabilities = bool(
+        consumer_raw.get(CFG_ALLOW_CUSTOM_CAPABILITIES, False)
+    )
     mask: None
 
     if not server_url:
@@ -169,6 +177,8 @@ def load_config() -> ConsumerConfig:
 
     mask = parse_capabilities(capability_names, AgentCapabilities)
     log_level = consumer_raw.get(CFG_LOG_LEVEL, "debug") or "debug"
+    client_status_port = consumer_raw.get(CFG_CLIENT_STATUS_PORT)
+    chat_ops_port = consumer_raw.get(CFG_CHAT_OPS_PORT)
 
     logger.info("loaded consumer server_url: %s", server_url)
     logger.info("loaded consumer server_port: %s", server_port)
@@ -179,11 +189,17 @@ def load_config() -> ConsumerConfig:
         "loaded consumer log_agent_api_responses: %s",
         log_agent_api_responses,
     )
+    logger.info(
+        "loaded consumer allow_custom_capabilities: %s",
+        allow_custom_capabilities,
+    )
     logger.info("loaded consumer fluentbit_config_path: %s", fluentbit_config_path)
     logger.info("loaded consumer additional_fluent_bit_params: %s", additional_params)
     logger.info("loaded consumer heartbeat_frequency: %s", heartbeat_frequency)
     logger.info("loaded consumer capabilities: %s", capability_names)
     logger.info("loaded consumer log_level: %s", log_level)
+    logger.info("loaded consumer client_status_port: %s", client_status_port)
+    logger.info("loaded consumer chat_ops_port: %s", chat_ops_port)
     return ConsumerConfig(
         server_url=server_url,
         server_port=server_port,
@@ -195,6 +211,11 @@ def load_config() -> ConsumerConfig:
         service_namespace=service_namespace,
         transport=transport,
         log_agent_api_responses=bool(log_agent_api_responses),
+        allow_custom_capabilities=allow_custom_capabilities,
+        client_status_port=(
+            int(client_status_port) if client_status_port is not None else None
+        ),
+        chat_ops_port=int(chat_ops_port) if chat_ops_port is not None else None,
     )
 
 
@@ -261,6 +282,27 @@ def load_config_with_overrides(
         CFG_CONSUMER,
         None,
         consumer_raw.get(CFG_LOG_AGENT_API_RESPONSES, False),
+        config,
+    )
+    config = apply_override(
+        CFG_ALLOW_CUSTOM_CAPABILITIES,
+        CFG_CONSUMER,
+        None,
+        bool(consumer_raw.get(CFG_ALLOW_CUSTOM_CAPABILITIES, False)),
+        config,
+    )
+    config = apply_override(
+        CFG_CLIENT_STATUS_PORT,
+        CFG_CONSUMER,
+        None,
+        consumer_raw.get(CFG_CLIENT_STATUS_PORT),
+        config,
+    )
+    config = apply_override(
+        CFG_CHAT_OPS_PORT,
+        CFG_CONSUMER,
+        None,
+        consumer_raw.get(CFG_CHAT_OPS_PORT),
         config,
     )
 
@@ -330,6 +372,12 @@ def load_config_with_overrides(
     config.log_agent_api_responses = bool(log_agent_api_responses)
 
     log_level = raw.get(CFG_CONSUMER, {}).get(CFG_LOG_LEVEL, "debug") or "debug"
+    config.client_status_port = (
+        int(config.client_status_port) if config.client_status_port is not None else None
+    )
+    config.chat_ops_port = (
+        int(config.chat_ops_port) if config.chat_ops_port is not None else None
+    )
     return config
 
 

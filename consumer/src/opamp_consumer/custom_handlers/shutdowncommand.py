@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from opamp_consumer.custom_handlers.handler_interface import (
     CustomMessageHandlerInterface,
 )
+from opamp_consumer.proto import opamp_pb2
 
 if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
@@ -57,7 +58,9 @@ class ShutdownCommand(CustomMessageHandlerInterface):
             message,
         )
 
-    def execute_action(self, action: str, opamp_client: OpAMPClientInterface) -> None:
+    def execute_action(
+        self, action: str, opamp_client: OpAMPClientInterface
+    ) -> opamp_pb2.CustomMessage | None:
         logger = logging.getLogger(__name__)
         logger.info(
             "ShutdownCommand.execute_action called action=%s opamp_client=%s",

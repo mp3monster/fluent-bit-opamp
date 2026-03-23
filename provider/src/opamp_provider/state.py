@@ -82,6 +82,21 @@ def _capabilities_from_mask(mask: int) -> list[str]:
     return capabilities
 
 
+def _normalize_custom_capabilities(capabilities: Iterable[str]) -> list[str]:
+    """Normalize, deduplicate, and sort custom capability FQDN values."""
+    normalized: set[str] = set()
+    for capability in capabilities:
+        value = str(capability).strip()
+        if not value:
+            continue
+        if value.lower().startswith("request:"):
+            value = value.split(":", 1)[1].strip()
+        if not value:
+            continue
+        normalized.add(value)
+    return sorted(normalized)
+
+
 class ClientChannel(str, Enum):
     """Allowed transport channel values stored on ClientRecord."""
 
@@ -98,6 +113,10 @@ class ClientRecord(BaseModel):
     capabilities: list[str] = Field(
         default_factory=list,
         description="Decoded list of agent capabilities currently reported by the client.",
+    )
+    custom_capabilities_reported: list[str] = Field(
+        default_factory=list,
+        description="Custom capability FQDN values reported by the client in AgentToServer payloads.",
     )
     agent_description: Optional[str] = Field(
         default=None,
@@ -218,6 +237,7 @@ class ClientStore:
                 self._clients[client_id] = record
             self._apply_comm_metadata(record, now, channel)
             self._apply_capabilities(record, agent_msg)
+            self._apply_custom_capabilities(record, agent_msg)
             self._apply_client_version(record, agent_msg)
             self._apply_health(record, agent_msg)
             self._apply_agent_description(record, agent_msg)
@@ -242,6 +262,16 @@ class ClientStore:
     ) -> None:
         """Apply agent capability bitmask to the record."""
         record.capabilities = _capabilities_from_mask(agent_msg.capabilities)
+
+    def _apply_custom_capabilities(
+        self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
+    ) -> None:
+        """Apply custom capability FQDN values when provided by the client."""
+        if not agent_msg.HasField("custom_capabilities"):
+            return
+        record.custom_capabilities_reported = _normalize_custom_capabilities(
+            agent_msg.custom_capabilities.capabilities
+        )
 
     def _apply_client_version(
         self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer

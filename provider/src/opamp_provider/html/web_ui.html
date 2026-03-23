@@ -809,6 +809,7 @@
     saveConfigBtn.addEventListener("click", saveConfig);
     customCommandSelect.addEventListener("change", () => {
       renderCustomCommandConfiguration(customCommandSelect.value);
+      updateCustomCommandSelectStyle();
     });
     sendCustomCommandBtn.addEventListener("click", queueCustomCommand);
     eventsSortBtn.addEventListener("click", () => {
@@ -840,7 +841,13 @@
     }
 
     async function fetchCustomCommands() {
-      const resp = await fetch("/api/commands/custom");
+      const clientId = activeClient && activeClient.client_id
+        ? String(activeClient.client_id)
+        : "";
+      const query = clientId
+        ? `?client_id=${encodeURIComponent(clientId)}`
+        : "";
+      const resp = await fetch(`/api/commands/custom${query}`);
       if (!resp.ok) return;
       const data = await resp.json();
       state.customCommands = Array.isArray(data.commands) ? data.commands : [];
@@ -1009,6 +1016,11 @@
       currentConfigOutput.textContent = formatConfigValue(client.current_config) || "--";
       renderEventsHistory(client);
       renderCommandButtons(client, customCommandState);
+      fetchCustomCommands().then(() => {
+        if (!activeClient || activeClient.client_id !== client.client_id) return;
+        const preserved = captureCustomCommandState();
+        renderCommandButtons(activeClient, preserved);
+      });
       let nextTab = desiredTab;
       if (nextTab === "history" && historyTabBtn.classList.contains("hidden")) {
         nextTab = "summary";
@@ -1180,6 +1192,10 @@
         const option = document.createElement("option");
         option.value = command.fqdn || "";
         option.textContent = command.displayname || command.operation || command.fqdn || "--";
+        if (command.reported_by_client === true) {
+          option.style.color = "var(--ok)";
+          option.style.fontWeight = "600";
+        }
         customCommandSelect.appendChild(option);
       });
 
@@ -1190,10 +1206,22 @@
           ? customCommandState.selectedFqdn
           : "";
       customCommandSelect.value = restoreFqdn;
+      updateCustomCommandSelectStyle();
       renderCustomCommandConfiguration(
         restoreFqdn,
         customCommandState ? customCommandState.values : null,
       );
+    }
+
+    function updateCustomCommandSelectStyle() {
+      const selectedMeta = getSelectedCustomCommandMeta(customCommandSelect.value);
+      if (selectedMeta && selectedMeta.reported_by_client === true) {
+        customCommandSelect.style.color = "var(--ok)";
+        customCommandSelect.style.fontWeight = "600";
+        return;
+      }
+      customCommandSelect.style.color = "";
+      customCommandSelect.style.fontWeight = "";
     }
 
     function getSelectedCustomCommandMeta(selectedFqdn) {
@@ -1422,7 +1450,6 @@
       const pairs = [];
       const schema = Array.isArray(selectedMeta.schema) ? selectedMeta.schema : [];
       let missingRequired = null;
-      let hasAction = false;
       const configuredValues = preservedCustomCommandState.values || {};
       schema.forEach(schemaEntry => {
         const paramName = String(schemaEntry.parametername || "").trim();
@@ -1437,9 +1464,6 @@
         const value = String(rawValue || "").trim();
         if (!paramName || !value) return;
         pairs.push({ key: paramName, value });
-        if (paramName.toLowerCase() === "action") {
-          hasAction = true;
-        }
       });
       if (missingRequired) {
         window.alert(`Missing required parameter: ${missingRequired}`);
@@ -1447,9 +1471,8 @@
       }
 
       pairs.push({ key: "classifier", value: "custom" });
-      if (!hasAction) {
-        pairs.push({ key: "action", value: selectedMeta.operation || "" });
-      }
+      pairs.push({ key: "operation", value: selectedMeta.operation || "" });
+      pairs.push({ key: "capability", value: selectedMeta.fqdn || "" });
 
       pairs.push({ key: "source", value: "ui" });
       pairs.push({ key: "requested_at", value: new Date().toISOString() });

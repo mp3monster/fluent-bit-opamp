@@ -24,7 +24,15 @@ from opamp_provider.command_interface import (
 from opamp_provider.proto import opamp_pb2
 
 CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
-CHATOPCOMMAND_TYPE = "by REST Call"
+CHATOPCOMMAND_TYPE = "request"
+COMMAND_CLASSIFIER = "custom"
+COMMAND_DESCRIPTION = "custom chatopcommand queued"
+COMMAND_DISPLAY_NAME = "ChatOps Command"
+COMMAND_ACTION = "chatopcommand"
+PARAMETER_ACTION_NAME = "tag"
+PARAMETER_ACTION_TYPE = "string"
+PARAMETER_ACTION_DESCRIPTION = "Custom command operation name."
+ENCODING_UTF8 = "utf-8"
 
 
 def _utc_now() -> datetime:
@@ -42,25 +50,33 @@ class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
         key_values: dict[str, str] | None = None,
     ) -> None:
         self._command_time = command_time or _utc_now()
-        self._key_values = key_values or {}
+        merged = self._default_key_values()
+        if key_values:
+            merged.update(key_values)
+        self._key_values = merged
+
+    def _default_key_values(self) -> dict[str, str]:
+        return {
+            "classifier": COMMAND_CLASSIFIER,
+            "action": COMMAND_ACTION,
+        }
 
     def get_command_classifier(self) -> str:
-        return "custom"
-
-    def get_command_type(self) -> str:
-        return "chatopcommand"
+        return COMMAND_CLASSIFIER
 
     def get_command_time(self) -> datetime:
         return self._command_time
 
     def get_command_description(self) -> str:
-        return "custom chatopcommand queued"
+        return COMMAND_DESCRIPTION
 
     def getdisplayname(self) -> str:
-        return "ChatOps Command"
+        return COMMAND_DISPLAY_NAME
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
-        self._key_values = dict(key_values)
+        merged = self._default_key_values()
+        merged.update(key_values)
+        self._key_values = merged
 
     def get_key_value_dictionary(self) -> dict[str, str]:
         return dict(self._key_values)
@@ -74,9 +90,9 @@ class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
     def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
         return [
             {
-                "parametername": "action",
-                "type": "string",
-                "description": "Custom command operation name.",
+                "parametername": PARAMETER_ACTION_NAME,
+                "type": PARAMETER_ACTION_TYPE,
+                "description": PARAMETER_ACTION_DESCRIPTION,
                 "isrequired": True,
             },
         ]
@@ -86,5 +102,7 @@ class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
         payload = opamp_pb2.CustomMessage()
         payload.capability = CHATOPCOMMAND_CAPABILITY
         payload.type = CHATOPCOMMAND_TYPE
-        payload.data = json.dumps(self._key_values, sort_keys=True).encode("utf-8")
+        payload.data = json.dumps(self._key_values, sort_keys=True).encode(
+            ENCODING_UTF8
+        )
         return payload

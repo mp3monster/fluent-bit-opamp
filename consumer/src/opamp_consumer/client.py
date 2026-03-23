@@ -151,6 +151,7 @@ class OpAMPClient(OpAMPClientInterface):
         self._custom_handler_lookup = build_factory_lookup(
             self._custom_handler_folder,
             client_data=self.data,
+            allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
         )
         self._ensure_reports_status_capability()
 
@@ -161,6 +162,20 @@ class OpAMPClient(OpAMPClientInterface):
     @config.setter
     def config(self, value: ConsumerConfig) -> None:
         self.data.config = value
+
+    def _get_config_value(self, key: str) -> str:
+        value: str = ""
+        try:
+            value = self.data.config[key]
+            if value is None:
+                logging.getLogger(__name__).error(f"Error handling request for {key}")
+                value = ""
+            return value
+        except KeyValue as val:
+            logging.getLogger(__name__).error(
+                f"Error handling request for {key}, error is {val}"
+            )
+            return ""
 
     def _ensure_reports_status_capability(self) -> None:
         """Ensure ReportsStatus is set on the client configuration."""
@@ -261,6 +276,9 @@ class OpAMPClient(OpAMPClientInterface):
     ) -> opamp_pb2.AgentToServer:
         msg.agent_description.CopyFrom(self.get_agent_description())
         msg.capabilities = self.get_agent_capabilities()
+        custom_capabilities = self.get_custom_capabilities_payload()
+        if custom_capabilities.capabilities:
+            msg.custom_capabilities.CopyFrom(custom_capabilities)
         msg.sequence_num = self.data.msg_sequence_number
         if self.data.uid_instance is not None:
             msg.instance_uid = self.data.uid_instance
@@ -290,8 +308,8 @@ class OpAMPClient(OpAMPClientInterface):
                     successful_message = False
             else:
                 logging.getLogger(__name__).error(
-                    "Server didnt share instance_uid, my service instance id is %s",
-                    self.config.service_instance_id,
+                    "Server didnt share instance_uid, my instance uid is %s",
+                    self.data.uid_instance,
                 )
                 successful_message = False
         except ValueError:
@@ -654,6 +672,34 @@ class OpAMPClient(OpAMPClientInterface):
             logging.getLogger(__name__).debug(f"Added to mask {name} - code now {mask}")
         return mask
 
+    def get_custom_capabilities_payload(self) -> opamp_pb2.CustomCapabilities:
+        """Build CustomCapabilities from the custom handler registry."""
+        if not self._custom_handler_lookup:
+            self._custom_handler_lookup = build_factory_lookup(
+                self._custom_handler_folder,
+                client_data=self.data,
+                allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
+            )
+        logging.getLogger(__name__).debug(
+            "custom capability lookup entries=%s",
+            sorted(self._custom_handler_lookup.keys()),
+        )
+
+        capabilities = sorted(
+            {
+                f"request:{str(fqdn).strip()}"
+                for fqdn in self._custom_handler_lookup.keys()
+                if str(fqdn).strip()
+            }
+        )
+        payload = opamp_pb2.CustomCapabilities()
+        payload.capabilities.extend(capabilities)
+        logging.getLogger(__name__).debug(
+            "custom capabilities payload generated=%s",
+            capabilities,
+        )
+        return payload
+
     def get_host_metadata(self) -> dict[str, str]:
         """Collect basic host metadata as key/value pairs."""
         return {
@@ -747,12 +793,24 @@ class OpAMPClient(OpAMPClientInterface):
         capability = str(custom_message.capability or "").strip()
         if not capability:
             raise AgentException("CustomMessage capability is missing")
+        logger.debug(
+            "handling custom message capability=%s type=%s data_len=%s",
+            capability,
+            str(custom_message.type or ""),
+            len(bytes(custom_message.data or b"")),
+        )
 
         handler = create_handler(
             capability,
             self._custom_handler_folder,
             client_data=self.data,
             factory_lookup=self._custom_handler_lookup,
+            allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
+        )
+        logger.debug(
+            "custom handler lookup initial capability=%s found=%s",
+            capability,
+            handler.__class__.__name__ if handler is not None else None,
         )
         if handler is None:
             self._custom_handler_lookup = build_factory_lookup(
@@ -764,6 +822,12 @@ class OpAMPClient(OpAMPClientInterface):
                 self._custom_handler_folder,
                 client_data=self.data,
                 factory_lookup=self._custom_handler_lookup,
+                allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
+            )
+            logger.debug(
+                "custom handler lookup after refresh capability=%s found=%s",
+                capability,
+                handler.__class__.__name__ if handler is not None else None,
             )
         if handler is None:
             raise AgentException(
@@ -771,6 +835,11 @@ class OpAMPClient(OpAMPClientInterface):
             )
 
         handler.set_custom_message_handler(custom_message)
+        logger.debug(
+            "executing custom handler capability=%s handler=%s",
+            capability,
+            handler.__class__.__name__,
+        )
         command_error = handler.execute(self)
         if command_error is not None:
             raise AgentException(str(command_error))
@@ -864,7 +933,7 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                 try:
                     if key == KEY_HTTP_PORT:
                         port_value = int(value)
-                        config.http_port = port_value
+                        config.client_status_port = port_value
                         config.fluentbit_http_port = port_value
                         logger.info(f"located >{key}< with value >{value}<")
                     elif key == KEY_HTTP_LISTEN:
@@ -949,8 +1018,8 @@ def main() -> None:
         logger.warning("about to process FLB config")
         config = load_fluentbit_config(config)
 
-        if config.http_port is None:
-            raise ValueError("http_port not found in Fluent Bit config")
+        if config.client_status_port is None:
+            raise ValueError("client_status_port not found in Fluent Bit config")
 
         if config.server_url is None and config.server_port is not None:
             config.server_url = f"{LOCALHOST_BASE}:{config.server_port}"
@@ -961,12 +1030,12 @@ def main() -> None:
         client = OpAMPClient(config.server_url, config)
 
         client.launch_agent_process()
-        client.add_agent_version(config.http_port)
+        client.add_agent_version(config.client_status_port)
 
         logger.info("introducing self to server")
         asyncio.run(run_client(client))
 
-        asyncio.run(client._heartbeat_loop(config.http_port))
+        asyncio.run(client._heartbeat_loop(config.client_status_port))
         client.terminate_agent_process()
 
     except KeyboardInterrupt as kb:

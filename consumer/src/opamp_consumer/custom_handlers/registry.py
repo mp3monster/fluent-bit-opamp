@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import logging
 import pathlib
 import types
 import uuid
@@ -60,10 +61,15 @@ def _discover_handler_classes(folder: pathlib.Path) -> list[type[CustomMessageHa
 def discover_handlers(
     folder: str | pathlib.Path,
     client_data: OpAMPClientData | None = None,
+    allow_custom_capabilities: bool = False,
 ) -> dict[str, str]:
     """Return a map of fqdn -> class name for handlers in a folder."""
     registry: dict[str, str] = {}
-    for fqdn, cls in build_factory_lookup(folder, client_data=client_data).items():
+    for fqdn, cls in build_factory_lookup(
+        folder,
+        client_data=client_data,
+        allow_custom_capabilities=allow_custom_capabilities,
+    ).items():
         registry[fqdn] = cls.__name__
     return registry
 
@@ -71,8 +77,15 @@ def discover_handlers(
 def build_factory_lookup(
     folder: str | pathlib.Path,
     client_data: OpAMPClientData | None = None,
+    allow_custom_capabilities: bool = False,
 ) -> dict[str, type[CustomMessageHandlerInterface]]:
     """Build and return the custom message handler factory lookup."""
+    logger = logging.getLogger(__name__)
+    if not allow_custom_capabilities:
+        logger.info(
+            "Custom capabilities disabled by config; handler registry discovery skipped"
+        )
+        return {}
     folder_path = pathlib.Path(folder)
     if not folder_path.exists():
         return {}
@@ -85,6 +98,13 @@ def build_factory_lookup(
             lookup[instance.get_reverse_fqdn()] = cls
         except Exception:
             continue
+    if lookup:
+        logger.info(
+            "Custom capabilities available: %s",
+            ", ".join(sorted(lookup.keys())),
+        )
+    else:
+        logger.info("Custom capabilities available: none")
     return lookup
 
 
@@ -93,9 +113,14 @@ def create_handler(
     folder: str | pathlib.Path,
     client_data: OpAMPClientData | None = None,
     factory_lookup: dict[str, type[CustomMessageHandlerInterface]] | None = None,
+    allow_custom_capabilities: bool = False,
 ) -> CustomMessageHandlerInterface | None:
     """Create a handler instance by fqdn from a folder of handlers."""
-    lookup = factory_lookup or build_factory_lookup(folder, client_data=client_data)
+    lookup = factory_lookup or build_factory_lookup(
+        folder,
+        client_data=client_data,
+        allow_custom_capabilities=allow_custom_capabilities,
+    )
     cls = lookup.get(fqdn)
     if cls is None:
         return None

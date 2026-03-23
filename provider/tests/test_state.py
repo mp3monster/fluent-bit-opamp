@@ -30,3 +30,41 @@ def test_disconnect_marks_and_purges() -> None:
 
     assert len(removed) == 1
     assert store.get(record.client_id) is None
+
+
+def test_custom_capabilities_are_stored_from_agent_message() -> None:
+    store = ClientStore()
+    msg = opamp_pb2.AgentToServer(instance_uid=b"\x0a\x0b")
+    msg.custom_capabilities.capabilities.extend(
+        [
+            "org.mp3monster.opamp_provider.chatopcommand",
+            "org.mp3monster.opamp_provider.command_shutdown_agent",
+            "org.mp3monster.opamp_provider.chatopcommand",
+            "",
+        ]
+    )
+
+    record = store.upsert_from_agent_msg(msg)
+
+    assert record.custom_capabilities_reported == [
+        "org.mp3monster.opamp_provider.chatopcommand",
+        "org.mp3monster.opamp_provider.command_shutdown_agent",
+    ]
+
+
+def test_custom_capabilities_strip_request_status_prefix() -> None:
+    store = ClientStore()
+    msg = opamp_pb2.AgentToServer(instance_uid=b"\x0c\x0d")
+    msg.custom_capabilities.capabilities.extend(
+        [
+            "request:org.mp3monster.opamp_provider.chatopcommand",
+            "request:org.mp3monster.opamp_provider.command_shutdown_agent",
+        ]
+    )
+
+    record = store.upsert_from_agent_msg(msg)
+
+    assert record.custom_capabilities_reported == [
+        "org.mp3monster.opamp_provider.chatopcommand",
+        "org.mp3monster.opamp_provider.command_shutdown_agent",
+    ]

@@ -1,12 +1,14 @@
 {
   "consumer": {
     "server_url": "http://localhost",
-    "http_port": 2020,
+    "client_status_port": 2020,
+    "chat_ops_port": 8888,
     "transport": "http",
     "log_agent_api_responses": false,
     "fluentbit_config_path": "d://dev//opamp//consumer//fluent-bit.yaml",
     "additional_fluent_bit_params": [],
     "heartbeat_frequency": 30,
+    "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",
     "service_namespace": "FluentBitNS",

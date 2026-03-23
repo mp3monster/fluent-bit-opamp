@@ -45,7 +45,6 @@ def test_restart_agent_implements_command_interface_methods() -> None:
     obj.set_key_value_dictionary({"classifier": "command", "action": "restart"})
 
     assert obj.get_command_classifier() == "command"
-    assert obj.get_command_type() == "restart"
     assert obj.get_command_description() == "Restart Agent"
     assert obj.getdisplayname() == "Restart Agent"
     assert isinstance(obj.get_command_time(), datetime)
@@ -67,13 +66,12 @@ def test_restart_agent_implements_command_interface_methods() -> None:
 def test_command_object_factory_creates_restart_agent() -> None:
     obj = command_object_factory(
         classifier="command",
-        operation="restart",
         key_values={"classifier": "command", "action": "restart"},
     )
 
     assert isinstance(obj, RestartAgent)
     assert obj.get_command_classifier() == "command"
-    assert obj.get_command_type() == "restart"
+    assert obj.get_key_value_dictionary()["action"] == "restart"
 
 
 def test_chatopcommand_implements_command_interface_methods() -> None:
@@ -81,7 +79,6 @@ def test_chatopcommand_implements_command_interface_methods() -> None:
     obj.set_key_value_dictionary({"classifier": "custom", "action": "chatopcommand"})
 
     assert obj.get_command_classifier() == "custom"
-    assert obj.get_command_type() == "chatopcommand"
     assert obj.get_command_description() == "custom chatopcommand queued"
     assert obj.getdisplayname() == "ChatOps Command"
     assert isinstance(obj.get_command_time(), datetime)
@@ -92,7 +89,7 @@ def test_chatopcommand_implements_command_interface_methods() -> None:
     assert obj.isOpAMPStandard() is False
     assert obj.get_user_parameter_schema() == [
         {
-            "parametername": "action",
+            "parametername": "tag",
             "type": "string",
             "description": "Custom command operation name.",
             "isrequired": True,
@@ -103,24 +100,30 @@ def test_chatopcommand_implements_command_interface_methods() -> None:
 def test_command_object_factory_creates_chatopcommand() -> None:
     obj = command_object_factory(
         classifier="custom",
-        operation="chatopcommand",
-        key_values={"classifier": "custom", "action": "chatopcommand"},
+        key_values={
+            "classifier": "custom",
+            "operation": "chatopcommand",
+            "action": "chatopcommand",
+        },
     )
 
     assert isinstance(obj, ChatOpCommand)
     assert obj.get_command_classifier() == "custom"
-    assert obj.get_command_type() == "chatopcommand"
+    assert obj.get_key_value_dictionary()["action"] == "chatopcommand"
 
 
 def test_command_object_factory_creates_shutdownagent() -> None:
     obj = command_object_factory(
         classifier="custom",
-        operation="shutdownagent",
-        key_values={"classifier": "custom", "action": "shutdownagent"},
+        key_values={
+            "classifier": "custom",
+            "operation": "shutdownagent",
+            "action": "shutdownagent",
+        },
     )
 
     assert obj.get_command_classifier() == "custom"
-    assert obj.get_command_type() == "shutdownagent"
+    assert obj.get_key_value_dictionary()["action"] == "shutdownagent"
     assert obj.getdisplayname() == "Shutdown Agent"
     assert obj.get_user_parameter_schema() == []
 
@@ -128,12 +131,15 @@ def test_command_object_factory_creates_shutdownagent() -> None:
 def test_command_object_factory_creates_nullcommand() -> None:
     obj = command_object_factory(
         classifier="custom",
-        operation="nullcommand",
-        key_values={"classifier": "custom", "action": "nullcommand"},
+        key_values={
+            "classifier": "custom",
+            "operation": "nullcommand",
+            "action": "nullcommand",
+        },
     )
 
     assert obj.get_command_classifier() == "custom"
-    assert obj.get_command_type() == "nullcommand"
+    assert obj.get_key_value_dictionary()["action"] == "nullcommand"
     assert obj.getdisplayname() == "Null Command"
     assert obj.get_user_parameter_schema() == []
 
@@ -166,8 +172,11 @@ def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -
 def test_shutdownagent_generates_custom_message_with_reverse_fqdn_capability() -> None:
     obj = command_object_factory(
         classifier="custom",
-        operation="shutdownagent",
-        key_values={"classifier": "custom", "action": "shutdownagent"},
+        key_values={
+            "classifier": "custom",
+            "operation": "shutdownagent",
+            "action": "shutdownagent",
+        },
     )
     message = obj.to_custom_message()
     assert message.capability == SHUTDOWN_AGENT_CAPABILITY
@@ -177,8 +186,11 @@ def test_shutdownagent_generates_custom_message_with_reverse_fqdn_capability() -
 def test_nullcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
     obj = command_object_factory(
         classifier="custom",
-        operation="nullcommand",
-        key_values={"classifier": "custom", "action": "nullcommand"},
+        key_values={
+            "classifier": "custom",
+            "operation": "nullcommand",
+            "action": "nullcommand",
+        },
     )
     message = obj.to_custom_message()
     assert message.capability == NULLCOMMAND_CAPABILITY
@@ -189,7 +201,6 @@ def test_command_object_factory_rejects_unknown_mapping() -> None:
     with pytest.raises(ValueError):
         command_object_factory(
             classifier="custom_command",
-            operation="unknown",
             key_values={"classifier": "custom_command", "action": "unknown"},
         )
 
@@ -239,7 +250,7 @@ def test_command_metadata_returns_custom_schema_with_display_name() -> None:
     assert entry["classifier"] == "custom"
     assert entry["operation"] == "chatopcommand"
     assert {
-        "parametername": "action",
+        "parametername": "tag",
         "type": "string",
         "description": "Custom command operation name.",
         "isrequired": True,

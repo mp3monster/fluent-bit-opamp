@@ -15,11 +15,14 @@ Example `opamp.json`:
   "consumer": {
     "server_url": "http://localhost:4320",
     "server_port": 4320,
+    "client_status_port": 2020,
+    "chat_ops_port": 8888,
     "transport": "http",
     "log_agent_api_responses": false,
     "fluentbit_config_path": "./fluent-bit.conf",
     "additional_fluent_bit_params": ["-R"],
     "heartbeat_frequency": 30,
+    "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",
     "service_namespace": "FluentBitNS",
@@ -40,6 +43,11 @@ Example `opamp.json`:
   Optional server port override used when building default URLs.
 - `consumer.transport` (string, optional, default `http`)
   Transport to use when sending OpAMP messages. Supported values: `http`, `websocket`.
+- `consumer.client_status_port` (integer, optional)
+  Port used for polling the local agent status endpoints. If omitted, it is read from the Fluent Bit
+  `http_port` setting.
+- `consumer.chat_ops_port` (integer, optional)
+  Port used by the ChatOps custom handler for local HTTP commands. If omitted, defaults to `8888`.
 - `consumer.log_agent_api_responses` (boolean, optional, default `false`)
   When true, heartbeat polling logs full Fluent Bit API responses; when false, it logs response codes only.
 - `consumer.fluentbit_config_path` (string, required)
@@ -48,6 +56,9 @@ Example `opamp.json`:
   Extra command-line arguments passed to `fluentbit`.
 - `consumer.heartbeat_frequency` (integer, optional, default `30`)
   Heartbeat interval in seconds.
+- `consumer.allow_custom_capabilities` (boolean, optional, default `false` when omitted)
+  Enables custom handler registry discovery and custom capability publishing. Set this to `true` to
+  allow custom capability detection; when the field is missing the consumer behaves as `false`.
 - `consumer.log_level` (string, optional, default `debug`)
   Log level for the consumer (`debug`, `info`, `warning`, `error`, `critical`).
 - `consumer.service_name` (string, optional)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 import pkgutil
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from opamp_provider.chatop_command import ChatOpCommand
 from opamp_provider.command_interface import CommandObjectInterface
 from opamp_provider.command_nullcommand import CommandNullCommand
 from opamp_provider.command_restart_agent import RestartAgent
+from opamp_provider.command_shutdown_agent import CommandShutdownAgent
 
 _MODULE_EXCLUSIONS = {
     "__init__",
@@ -40,6 +42,7 @@ _MODULE_EXCLUSIONS = {
 CommandKey = tuple[str, str]
 CommandType = type[CommandObjectInterface]
 _INTERNAL_SCHEMA_PARAMETERS = {"classifier", "type", "data"}
+_LOGGER = logging.getLogger(__name__)
 
 
 def _module_name_to_import(module_name: str) -> str:
@@ -69,9 +72,13 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
             if class_obj is CommandObjectInterface or inspect.isabstract(class_obj):
                 continue
             command_instance = class_obj()
+            key_values = command_instance.get_key_value_dictionary()
+            operation = str(key_values.get("action", "")).strip().lower()
+            if not operation:
+                continue
             key = (
                 command_instance.get_command_classifier().strip().lower(),
-                command_instance.get_command_type().strip().lower(),
+                operation,
             )
             if key in discovered:
                 raise ValueError(
@@ -175,18 +182,59 @@ def get_command_fqdn(*, classifier: str, operation: str) -> str:
 def command_object_factory(
     *,
     classifier: str,
-    operation: str,
     key_values: dict[str, str] | None = None,
 ) -> CommandObjectInterface:
-    """Create a command object from classifier and operation."""
-    key = (classifier.strip().lower(), operation.strip().lower())
-    command_class = _COMMAND_REGISTRY.get(key)
-    if command_class is not None:
-        return command_class(key_values=key_values)
-
-    raise ValueError(
-        f"Unsupported command object classifier={key[0]} operation={key[1]}"
+    """Create a command object from classifier and internal routing fields."""
+    normalized_classifier = classifier.strip().lower()
+    values = dict(key_values or {})
+    operation = str(values.get("operation", "")).strip().lower()
+    action = str(values.get("action", "")).strip().lower()
+    capability = str(values.get("capability", "") or values.get("fqdn", "")).strip()
+    _LOGGER.debug(
+        "command_object_factory input classifier=%s operation=%s action=%s capability=%s",
+        normalized_classifier,
+        operation,
+        action,
+        capability,
     )
+
+    if normalized_classifier == "command":
+        _LOGGER.debug("command_object_factory selected class=%s", RestartAgent.__name__)
+        return RestartAgent(key_values=values)
+
+    if normalized_classifier in {"custom", "custom_command"}:
+        if capability == "org.mp3monster.opamp_provider.chatopcommand":
+            _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
+            return ChatOpCommand(key_values=values)
+        if capability == "org.mp3monster.opamp_provider.command_shutdown_agent":
+            _LOGGER.debug(
+                "command_object_factory selected class=%s", CommandShutdownAgent.__name__
+            )
+            return CommandShutdownAgent(key_values=values)
+        if capability == "org.mp3monster.opamp_provider.nullcommand":
+            _LOGGER.debug(
+                "command_object_factory selected class=%s", CommandNullCommand.__name__
+            )
+            return CommandNullCommand(key_values=values)
+        if operation == "chatopcommand":
+            _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
+            return ChatOpCommand(key_values=values)
+        if operation == "shutdownagent":
+            _LOGGER.debug(
+                "command_object_factory selected class=%s", CommandShutdownAgent.__name__
+            )
+            return CommandShutdownAgent(key_values=values)
+        if operation == "nullcommand":
+            _LOGGER.debug(
+                "command_object_factory selected class=%s", CommandNullCommand.__name__
+            )
+            return CommandNullCommand(key_values=values)
+        raise ValueError(
+            "Unsupported command object classifier="
+            f"{normalized_classifier} operation={operation} capability={capability} action={action}"
+        )
+
+    raise ValueError(f"Unsupported command object classifier={normalized_classifier}")
 
 
 def get_command_metadata(
@@ -199,9 +247,9 @@ def get_command_metadata(
     filtered_registry = _get_command_registry_by_standard_filter(
         parameter_exclude_opamp_standard=parameter_exclude_opamp_standard
     )
-    for command_class in filtered_registry.values():
+    for (classifier_key, operation_key), command_class in filtered_registry.items():
         instance = command_class()
-        classifier = instance.get_command_classifier().strip().lower()
+        classifier = classifier_key
         if custom_only and classifier != "custom":
             continue
         capability_fqdn = (instance.get_capability_fqdn() or "").strip()
@@ -218,7 +266,7 @@ def get_command_metadata(
                 "displayname": instance.getdisplayname(),
                 "description": instance.get_command_description(),
                 "classifier": classifier,
-                "operation": instance.get_command_type().strip().lower(),
+                "operation": operation_key,
                 "schema": schema,
             }
         )

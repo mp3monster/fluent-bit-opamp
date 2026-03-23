@@ -34,10 +34,6 @@ class CommandObjectInterface(ABC):
         """Return the command classifier."""
 
     @abstractmethod
-    def get_command_type(self) -> str:
-        """Return the command operation/type."""
-
-    @abstractmethod
     def get_command_time(self) -> datetime:
         """Return the command creation timestamp."""
 

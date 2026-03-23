@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -64,8 +65,8 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
     @abstractmethod
     def execute_action(
         self, action: str, opamp_client: OpAMPClientInterface
-    ) -> None:
-        """Execute a named action with access to the OpAMP client interface."""
+    ) -> opamp_pb2.CustomMessage | None:
+        """Execute a named action and optionally return a CustomMessage response."""
 
     def get_reverse_fqdn(self) -> str:
         """Return the reverse-FQDN used for capability lookup."""
@@ -99,7 +100,21 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
                     action = ""
 
             self.handle_message(payload_text, message_type)
-            self.execute_action(action, opamp_client)
+            custom_response = self.execute_action(action, opamp_client)
+            if custom_response is not None:
+                sender = getattr(opamp_client, "send", None)
+                if not callable(sender):
+                    return CommandException(
+                        "Custom response could not be sent: client send method unavailable"
+                    )
+                outbound = opamp_pb2.AgentToServer()
+                outbound.custom_message.CopyFrom(custom_response)
+                try:
+                    asyncio.run(sender(msg=outbound, send_as_is=True))
+                except TypeError:
+                    return CommandException(
+                        "Custom response could not be sent: client send signature mismatch"
+                    )
         except Exception as err:  # pragma: no cover - depends on implementation details
             return CommandException(f"Command handler execute failed: {err}")
         finally:

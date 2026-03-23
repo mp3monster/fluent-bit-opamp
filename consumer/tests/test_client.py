@@ -275,3 +275,38 @@ def test_handle_custom_message_execute_error_raises_agent_exception(monkeypatch)
 
     with pytest.raises(AgentException):
         instance.handle_custom_message(custom_message)
+
+
+def test_get_custom_capabilities_payload_from_registry() -> None:
+    """Build custom capability payload from registered custom handlers."""
+    instance = client.OpAMPClient("http://localhost")
+    instance._custom_handler_lookup = {
+        "org.mp3monster.opamp_provider.command_shutdown_agent": object,
+        "org.mp3monster.opamp_provider.chatopcommand": object,
+        "": object,
+    }
+
+    payload = instance.get_custom_capabilities_payload()
+
+    assert payload.capabilities == [
+        "request:org.mp3monster.opamp_provider.chatopcommand",
+        "request:org.mp3monster.opamp_provider.command_shutdown_agent",
+    ]
+
+
+def test_populate_agent_to_server_includes_custom_capabilities() -> None:
+    """Populate AgentToServer with custom capabilities from handler registry."""
+    instance = client.OpAMPClient("http://localhost")
+    instance._custom_handler_lookup = {
+        "org.mp3monster.opamp_provider.command_shutdown_agent": object,
+        "org.mp3monster.opamp_provider.chatopcommand": object,
+    }
+    msg = opamp_pb2.AgentToServer()
+
+    populated = instance._populate_agent_to_server(msg)
+
+    assert populated.HasField("custom_capabilities")
+    assert populated.custom_capabilities.capabilities == [
+        "request:org.mp3monster.opamp_provider.chatopcommand",
+        "request:org.mp3monster.opamp_provider.command_shutdown_agent",
+    ]

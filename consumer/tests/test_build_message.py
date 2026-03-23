@@ -49,6 +49,7 @@ Flush 1
 
     assert config.agent_description == "test-agent"
     assert config.service_instance_id == "abcdef1234567890"
+    assert config.client_status_port == 2020
     assert config.fluentbit_http_port == 2020
     assert config.fluentbit_http_listen == "0.0.0.0"
     assert config.fluentbit_http_server == "On"

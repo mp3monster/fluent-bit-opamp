@@ -302,6 +302,7 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     assert first["description"] == "custom chatopcommand queued"
     assert first["classifier"] == "custom"
     assert first["operation"] == "chatopcommand"
+    assert first["reported_by_client"] is False
     assert isinstance(first["schema"], list)
     assert {
         "parametername": "action",
@@ -320,7 +321,28 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     assert nullcommand["fqdn"] == "org.mp3monster.opamp_provider.nullcommand"
     assert nullcommand["displayname"] == "Null Command"
     assert nullcommand["description"] == "custom nullcommand queued"
+    assert nullcommand["reported_by_client"] is False
     assert nullcommand["schema"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_custom_commands_marks_reported_capabilities_for_client() -> None:
+    client_id = "00000000000000000000000000000033"
+    STORE._clients.clear()
+    agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+    agent_msg.custom_capabilities.capabilities.extend(
+        ["org.mp3monster.opamp_provider.chatopcommand"]
+    )
+    STORE.upsert_from_agent_msg(agent_msg, channel="HTTP")
+
+    async with app.test_client() as client:
+        resp = await client.get(f"/api/commands/custom?client_id={client_id}")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    command_map = {entry["operation"]: entry for entry in payload["commands"]}
+    assert command_map["chatopcommand"]["reported_by_client"] is True
+    assert command_map["shutdownagent"]["reported_by_client"] is False
 
 
 @pytest.mark.asyncio
