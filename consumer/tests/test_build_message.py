@@ -11,7 +11,11 @@
 # limitations under the License.
 
 import opamp_consumer.client as client
-from opamp_consumer.client import build_minimal_agent, load_fluentbit_config
+from opamp_consumer.client import (
+    build_minimal_agent,
+    load_fluentbit_config,
+    resolve_service_instance_id_template,
+)
 from opamp_consumer.config import ConsumerConfig
 from shared.opamp_config import UTF8_ENCODING
 
@@ -53,3 +57,44 @@ Flush 1
     assert config.fluentbit_http_port == 2020
     assert config.fluentbit_http_listen == "0.0.0.0"
     assert config.fluentbit_http_server == "On"
+
+
+def test_resolve_service_instance_id_template_tokens(monkeypatch) -> None:
+    monkeypatch.setattr(client.socket, "gethostname", lambda: "agent-host")
+    monkeypatch.setattr(client.socket, "gethostbyname", lambda _name: "10.2.3.4")
+    monkeypatch.setattr(client.uuid, "getnode", lambda: 0xAABBCCDDEEFF)
+
+    resolved = resolve_service_instance_id_template(
+        "node-__hostname__-__IP__-__mac-ad__"
+    )
+
+    assert resolved == "node-agent-host-10.2.3.4-aa:bb:cc:dd:ee:ff"
+
+
+def test_load_agent_identity_resolves_template_tokens(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(client.socket, "gethostname", lambda: "edge-01")
+    monkeypatch.setattr(client.socket, "gethostbyname", lambda _name: "192.168.10.5")
+    monkeypatch.setattr(client.uuid, "getnode", lambda: 0x001122334455)
+    sample_path = tmp_path / "fluent-bit.conf"
+    sample_path.write_text(
+        """
+# service_instance_id: __hostname__-__IP__-__mac-ad__
+[SERVICE]
+HTTP_Server On
+HTTP_Listen 0.0.0.0
+HTTP_Port 2020
+""",
+        encoding=UTF8_ENCODING,
+    )
+    config = ConsumerConfig(
+        server_url="http://localhost",
+        fluentbit_config_path=str(sample_path),
+        additional_fluent_bit_params=[],
+        heartbeat_frequency=30,
+        agent_capabilities=0,
+        log_level="debug",
+    )
+
+    load_fluentbit_config(config)
+
+    assert config.service_instance_id == "edge-01-192.168.10.5-00:11:22:33:44:55"

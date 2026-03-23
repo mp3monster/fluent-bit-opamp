@@ -8,6 +8,9 @@ The consumer reads `opamp.json` from the current working directory by default. Y
 config file location with the `OPAMP_CONFIG_PATH` environment variable or the `--config-path`
 CLI argument.
 
+The consumer also reads optional metadata comments from the Fluent Bit config file (for example
+`# service_instance_id: ...`).
+
 Example `opamp.json`:
 
 ```json
@@ -67,6 +70,20 @@ Example `opamp.json`:
   Service namespace reported in the agent description.
 - `consumer.agent_capabilities` (array of strings, required)
   Capabilities list. Names must match `AgentCapabilities` enum values in `shared/opamp_config.py`.
+
+### `service_instance_id` template tokens (Fluent Bit config comment)
+
+When `service_instance_id` is set in a Fluent Bit config comment, the client resolves these tokens:
+
+- `__IP__` -> local host IP address
+- `__hostname__` -> local hostname
+- `__mac-ad__` -> local MAC address (colon-delimited)
+
+Example:
+
+```ini
+# service_instance_id: fb-__hostname__-__IP__-__mac-ad__
+```
 
 ## CLI overrides
 

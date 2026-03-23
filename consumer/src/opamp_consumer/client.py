@@ -31,6 +31,7 @@ import threading
 import time
 import tracemalloc
 import asyncio
+import uuid
 from venv import logger
 import traceback
 
@@ -75,6 +76,9 @@ KEY_HTTP_SERVER_ON = "on"  # Expected value token when HTTP server is enabled.
 KEY_SERVICE_NAME = "service.name"  # Agent description service name key.
 KEY_SERVICE_NAMESPACE = "service.namespace"  # Agent description service namespace key.
 KEY_SERVICE_INSTANCE_ID = "service.instance.id"  # Agent description instance id key.
+TOKEN_IP = "__IP__"
+TOKEN_HOSTNAME = "__hostname__"
+TOKEN_MAC_ADDR = "__mac-ad__"
 KEY_SERVICE_VERSION = "service.version"  # Agent description version key.
 CAPABILITIES_MAP = {
     "UnspecifiedAgentCapability": 0x00000000,
@@ -621,6 +625,8 @@ class OpAMPClient(OpAMPClientInterface):
             if instance_uid is not None
             else self.config.service_instance_id
         )
+        if isinstance(service_instance_id, str):
+            service_instance_id = resolve_service_instance_id_template(service_instance_id)
         if service_instance_id:
             desc.identifying_attributes.append(
                 anyvalue_pb2.KeyValue(
@@ -919,6 +925,8 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                 key = comment_match.group("key").lower()
                 value = comment_match.group("value")
                 try:
+                    if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
+                        value = resolve_service_instance_id_template(value)
                     config[key] = value
                     logger.info(f"located >{key}< with value >{value}<")
                     continue
@@ -987,6 +995,34 @@ def _force_exit_on_lingering_threads() -> None:
         [thread.name for thread in alive_threads],
     )
     os._exit(0)
+
+
+def _get_local_ip() -> str:
+    """Return a best-effort local host IP address."""
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "127.0.0.1"
+
+
+def _get_local_mac() -> str:
+    """Return local MAC address in colon-delimited lower-case format."""
+    node = int(uuid.getnode())
+    return ":".join(f"{(node >> shift) & 0xFF:02x}" for shift in range(40, -1, -8))
+
+
+def resolve_service_instance_id_template(value: str | None) -> str | None:
+    """Resolve service_instance_id template tokens into runtime host values."""
+    if value is None:
+        return None
+    resolved = str(value)
+    if TOKEN_IP in resolved:
+        resolved = resolved.replace(TOKEN_IP, _get_local_ip())
+    if TOKEN_HOSTNAME in resolved:
+        resolved = resolved.replace(TOKEN_HOSTNAME, socket.gethostname())
+    if TOKEN_MAC_ADDR in resolved:
+        resolved = resolved.replace(TOKEN_MAC_ADDR, _get_local_mac())
+    return resolved
 
 
 def main() -> None:

@@ -108,6 +108,30 @@ def test_get_agent_description_includes_config_and_version(monkeypatch) -> None:
     }
 
 
+def test_get_agent_description_resolves_service_instance_template(monkeypatch) -> None:
+    _set_config(["ReportsStatus"])
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.service_instance_id = "__hostname__-__IP__-__mac-ad__"
+    instance.data.agent_version = "3.0.0"
+
+    monkeypatch.setattr(client.socket, "gethostname", lambda: "agent-01")
+    monkeypatch.setattr(client.socket, "gethostbyname", lambda _name: "10.0.1.2")
+    monkeypatch.setattr(client.uuid, "getnode", lambda: 0xA1B2C3D4E5F6)
+
+    desc = instance.get_agent_description()
+    identifying = {
+        item.key: item.value.string_value
+        if item.value.WhichOneof("value") == "string_value"
+        else ""
+        for item in desc.identifying_attributes
+    }
+
+    assert (
+        identifying[KEY_SERVICE_INSTANCE_ID]
+        == "agent-01-10.0.1.2-a1:b2:c3:d4:e5:f6"
+    )
+
+
 def test_handle_error_response_logs(caplog) -> None:
     """Log server error response details including message and retry info."""
     instance = client.OpAMPClient("http://localhost")
