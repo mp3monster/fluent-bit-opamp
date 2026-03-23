@@ -283,6 +283,10 @@
       font-size: 0.9rem;
     }
 
+    .field.full-width {
+      grid-column: 1 / -1;
+    }
+
     .field label {
       font-size: 0.75rem;
       color: var(--muted);
@@ -412,6 +416,33 @@
 
     .history-table {
       margin-top: 10px;
+    }
+
+    .health-row-ok {
+      background: rgba(46, 125, 100, 0.1);
+    }
+
+    .health-row-bad {
+      background: rgba(228, 87, 78, 0.14);
+    }
+
+    .health-row-unknown {
+      background: rgba(66, 92, 199, 0.08);
+    }
+
+    .health-text-healthy {
+      color: var(--ok);
+      font-weight: 700;
+    }
+
+    .health-text-unhealthy {
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    .health-text-unknown {
+      color: var(--accent);
+      font-weight: 700;
     }
 
     .sort-toggle {
@@ -580,7 +611,8 @@
     <table class="table fade-in">
       <thead>
         <tr>
-          <th data-sort="client_id">Client ID</th>
+          <th data-sort="client_id">Service Instance ID</th>
+          <th data-sort="client_id">Instance UID</th>
           <th data-sort="status">Status</th>
           <th data-sort="last_communication">Last Seen</th>
           <th data-sort="current_config_version">Config Version</th>
@@ -618,9 +650,29 @@
       <div class="modal-tab-body">
         <div id="tab-summary" class="tab-panel active">
           <div class="modal-grid" id="modalFields"></div>
+          <div id="componentHealthPanel" class="data-panel hidden">
+            <label style="font-size: 0.85rem; color: var(--muted);">Component Health Map</label>
+            <table class="table history-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Healthy</th>
+                  <th>Status</th>
+                  <th>Last Error</th>
+                </tr>
+              </thead>
+              <tbody id="componentHealthBody"></tbody>
+            </table>
+            <div class="tab-actions">
+              <button id="hideHealthDataBtn" class="cancel" type="button">Hide Health Data</button>
+            </div>
+          </div>
           <div id="clientDataPanel" class="data-panel hidden">
             <label style="font-size: 0.85rem; color: var(--muted);">Client Data (YAML)</label>
             <pre id="clientDataYaml" class="data-output"></pre>
+            <div class="tab-actions">
+              <button id="hideClientDataBtn" class="cancel" type="button">Hide Data</button>
+            </div>
           </div>
           <div class="tab-actions">
             <button id="toggleDataBtn" class="data-toggle" type="button">View Data</button>
@@ -728,8 +780,12 @@
     const modalTitle = document.getElementById("modalTitle");
     const configInput = document.getElementById("configInput");
     const currentConfigOutput = document.getElementById("currentConfigOutput");
+    const componentHealthPanel = document.getElementById("componentHealthPanel");
+    const componentHealthBody = document.getElementById("componentHealthBody");
+    const hideHealthDataBtn = document.getElementById("hideHealthDataBtn");
     const clientDataPanel = document.getElementById("clientDataPanel");
     const clientDataYaml = document.getElementById("clientDataYaml");
+    const hideClientDataBtn = document.getElementById("hideClientDataBtn");
     const toggleDataBtn = document.getElementById("toggleDataBtn");
     const commandButtons = document.getElementById("commandButtons");
     const customCommandSelect = document.getElementById("customCommandSelect");
@@ -821,6 +877,15 @@
         renderEventsHistory(activeClient);
       }
     });
+    hideClientDataBtn.addEventListener("click", () => {
+      clientDataPanel.classList.add("hidden");
+      clientDataYaml.textContent = "";
+      toggleDataBtn.classList.remove("hidden");
+      toggleDataBtn.textContent = "View Data";
+    });
+    hideHealthDataBtn.addEventListener("click", () => {
+      componentHealthPanel.classList.add("hidden");
+    });
 
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
@@ -832,6 +897,26 @@
       if (event.key === "Escape") {
         closeModal();
       }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (!modal.classList.contains("open")) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const targetTag = String(event.target?.tagName || "").toLowerCase();
+      if (targetTag === "input" || targetTag === "textarea" || targetTag === "select") {
+        return;
+      }
+
+      const visibleTabs = tabButtons.filter(btn => !btn.classList.contains("hidden"));
+      if (visibleTabs.length === 0) return;
+      const currentName = activeTabName();
+      const currentIndex = visibleTabs.findIndex(btn => btn.dataset.tab === currentName);
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const delta = event.key === "ArrowRight" ? 1 : -1;
+      const nextIndex = (baseIndex + delta + visibleTabs.length) % visibleTabs.length;
+      const nextTabName = visibleTabs[nextIndex].dataset.tab;
+      if (!nextTabName) return;
+      event.preventDefault();
+      setActiveTab(nextTabName);
     });
 
     async function fetchSettings() {
@@ -935,8 +1020,10 @@
           contextMenu.classList.add("open");
         });
 
+        const displayId = getClientDisplayId(client);
         tr.innerHTML = `
-          <td>${client.client_id}</td>
+          <td>${displayId}</td>
+          <td>${client.client_id ?? "--"}</td>
           <td><span class="status-dot ${status.cls}"><span class="dot"></span>${status.label}</span></td>
           <td>${client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"}</td>
           <td>${client.current_config_version ?? "--"}</td>
@@ -967,6 +1054,7 @@
       openModal(refreshed, {
         preserveTab: true,
         customCommandState: captureCustomCommandState(),
+        healthPanelOpen: !componentHealthPanel.classList.contains("hidden"),
       });
     }
 
@@ -974,8 +1062,8 @@
       const preserveTab = options.preserveTab === true;
       const desiredTab = preserveTab ? activeTabName() : "summary";
       const customCommandState = options.customCommandState || null;
+      const preserveHealthPanel = options.healthPanelOpen === true;
       activeClient = client;
-      modalTitle.textContent = `Client ${client.client_id}`;
       const status = computeStatus(client);
       modalCard.classList.remove("late-amber", "late-red", "row-disconnected");
       if (status.cls === "late-amber") modalCard.classList.add("late-amber");
@@ -983,18 +1071,49 @@
       if (status.cls === "disconnected") modalCard.classList.add("row-disconnected");
 
       modalFields.innerHTML = "";
+      componentHealthPanel.classList.add("hidden");
+      componentHealthBody.innerHTML = "";
       clientDataPanel.classList.add("hidden");
       clientDataYaml.textContent = "";
+      toggleDataBtn.classList.remove("hidden");
       toggleDataBtn.textContent = "View Data";
       const agentDesc = client.agent_description || "";
       const serviceName = extractAgentField(agentDesc, "service.name");
+      const serviceInstanceId = extractAgentField(agentDesc, "service.instance.id");
       const hostType = extractAgentField(agentDesc, "os_type");
       const hostVersion = extractAgentField(agentDesc, "os_version");
       const hostName = extractAgentField(agentDesc, "hostname");
       const nextExpected = computeNextExpected(client);
+      const instanceUid = client.client_id ?? "--";
+      const titleName = serviceInstanceId || "Client";
+      modalTitle.textContent = `${titleName} (${instanceUid})`;
+      const healthInfo = getClientHealthInfo(client);
 
-      const fields = [
-        ["Status", status.label],
+      const fields = [];
+      fields.push(["Status", status.label]);
+      if (serviceName) {
+        fields.push(["Service Name", serviceName, true]);
+      }
+      if (serviceInstanceId) {
+        fields.push(["Service Instance ID", serviceInstanceId, true]);
+      }
+      fields.push(["Instance UID", instanceUid, true]);
+      fields.push([
+        "Health Status",
+        healthInfo.hasComponents
+          ? `<button type="button" class="data-toggle" title="click for more details" aria-label="click for more details"><span class="${healthInfo.textClass}">${healthInfo.summary}</span></button>`
+          : `<span class="${healthInfo.textClass}">${healthInfo.summary}</span>`,
+      ]);
+      if (hostType) {
+        fields.push(["Host Type", hostType]);
+      }
+      if (hostVersion) {
+        fields.push(["Host Version", hostVersion]);
+      }
+      if (hostName) {
+        fields.push(["Host Name", hostName]);
+      }
+      fields.push(
         ["First Registered", client.first_seen ? new Date(client.first_seen).toLocaleString() : "--"],
         ["Last Communication", client.last_communication ? new Date(client.last_communication).toLocaleString() : "--"],
         ["Next Expected", nextExpected ? new Date(nextExpected).toLocaleString() : "--"],
@@ -1002,20 +1121,37 @@
         ["Client Version", client.client_version ?? "--"],
         ["Last Channel", client.last_channel ?? "--"],
         ["Capabilities", renderCapabilitiesList(client.capabilities)],
-      ];
-      if (serviceName) fields.splice(1, 0, ["Service Name", serviceName]);
-      if (hostType) fields.splice(2, 0, ["Host Type", hostType]);
-      if (hostVersion) fields.splice(3, 0, ["Host Version", hostVersion]);
-      if (hostName) fields.splice(4, 0, ["Host Name", hostName]);
-      fields.forEach(([label, value]) => {
+      );
+      fields.forEach(([label, value, fullWidth]) => {
         const div = document.createElement("div");
         div.className = "field";
+        if (fullWidth === true) {
+          div.classList.add("full-width");
+        }
         div.innerHTML = `<label>${label}</label><div>${value}</div>`;
+        if (label === "Health Status" && healthInfo.hasComponents) {
+          const btn = div.querySelector("button");
+          if (btn) {
+            btn.addEventListener("click", () => {
+              const isHidden = componentHealthPanel.classList.contains("hidden");
+              if (isHidden) {
+                renderComponentHealthMap(healthInfo.componentMap);
+                componentHealthPanel.classList.remove("hidden");
+              } else {
+                componentHealthPanel.classList.add("hidden");
+              }
+            });
+          }
+        }
         modalFields.appendChild(div);
       });
 
       configInput.value = formatConfigValue(client.requested_config) || "";
       currentConfigOutput.textContent = formatConfigValue(client.current_config) || "--";
+      if (preserveHealthPanel && healthInfo.hasComponents) {
+        renderComponentHealthMap(healthInfo.componentMap);
+        componentHealthPanel.classList.remove("hidden");
+      }
       renderEventsHistory(client);
       renderCommandButtons(client, customCommandState);
       fetchCustomCommands().then(() => {
@@ -1038,6 +1174,10 @@
       currentConfigOutput.textContent = "";
       eventsHistoryList.innerHTML = "";
       historyTabBtn.classList.add("hidden");
+      componentHealthPanel.classList.add("hidden");
+      componentHealthBody.innerHTML = "";
+      toggleDataBtn.classList.remove("hidden");
+      toggleDataBtn.textContent = "View Data";
     }
 
     function yamlScalar(value) {
@@ -1139,10 +1279,11 @@
       if (hidden) {
         clientDataYaml.textContent = toYaml(normalizeClientData(activeClient));
         clientDataPanel.classList.remove("hidden");
-        toggleDataBtn.textContent = "Hide Data";
+        toggleDataBtn.classList.add("hidden");
       } else {
         clientDataPanel.classList.add("hidden");
         clientDataYaml.textContent = "";
+        toggleDataBtn.classList.remove("hidden");
         toggleDataBtn.textContent = "View Data";
       }
     }
@@ -1514,9 +1655,69 @@
 
     function extractAgentField(text, key) {
       if (!text) return "";
-      const regex = new RegExp(`key: \\"${key}\\"[\\s\\S]*?string_value: \\"([^\\"]*)\\"`);
-      const match = text.match(regex);
-      return match ? match[1] : "";
+      const stringRegex = new RegExp(`key: \\"${key}\\"[\\s\\S]*?string_value: \\"([^\\"]*)\\"`);
+      const stringMatch = text.match(stringRegex);
+      if (stringMatch) return stringMatch[1];
+      const bytesRegex = new RegExp(`key: \\"${key}\\"[\\s\\S]*?bytes_value: \\"([^\\"]*)\\"`);
+      const bytesMatch = text.match(bytesRegex);
+      if (bytesMatch) return bytesMatch[1];
+      return "";
+    }
+
+    function getClientDisplayId(client) {
+      const agentDesc = client && client.agent_description ? String(client.agent_description) : "";
+      const serviceInstanceId = extractAgentField(agentDesc, "service.instance.id");
+      if (serviceInstanceId) return serviceInstanceId;
+      return client && client.client_id ? String(client.client_id) : "--";
+    }
+
+    function getClientHealthInfo(client) {
+      const health = client && typeof client.health === "object" ? client.health : null;
+      const healthyRaw = String((health && health.healthy) ?? "");
+      let healthyLabel = "unknown";
+      if (healthyRaw === "1" || healthyRaw.toLowerCase() === "true") healthyLabel = "healthy";
+      if (healthyRaw === "0" || healthyRaw.toLowerCase() === "false") healthyLabel = "unhealthy";
+      const summary = healthyLabel;
+      const componentMap =
+        client && typeof client.component_health === "object" && client.component_health
+          ? client.component_health
+          : health && typeof health.component_health_map === "object" && health.component_health_map
+            ? health.component_health_map
+            : {};
+      return {
+        summary,
+        textClass: `health-text-${healthyLabel}`,
+        componentMap,
+        hasComponents: Object.keys(componentMap).length > 0,
+      };
+    }
+
+    function renderComponentHealthMap(componentMap) {
+      componentHealthBody.innerHTML = "";
+      Object.entries(componentMap).forEach(([name, value]) => {
+        const row = document.createElement("tr");
+        const healthyRaw = String((value && value.healthy) ?? "");
+        const healthy =
+          healthyRaw === "1" || healthyRaw.toLowerCase() === "true" ? "yes"
+          : healthyRaw === "0" || healthyRaw.toLowerCase() === "false" ? "no"
+          : "--";
+        const status = value && value.status ? String(value.status) : "--";
+        const lastError = value && value.last_error ? String(value.last_error) : "--";
+        if (healthy === "yes") {
+          row.classList.add("health-row-ok");
+        } else if (healthy === "no") {
+          row.classList.add("health-row-bad");
+        } else {
+          row.classList.add("health-row-unknown");
+        }
+        row.innerHTML = `
+          <td>${name}</td>
+          <td>${healthy}</td>
+          <td>${status}</td>
+          <td>${lastError}</td>
+        `;
+        componentHealthBody.appendChild(row);
+      });
     }
 
     function renderCapabilitiesList(capabilities) {
