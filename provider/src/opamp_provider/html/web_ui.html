@@ -391,11 +391,13 @@
       justify-content: center;
       width: 20px;
       height: 20px;
+      padding: 0;
       border-radius: 999px;
       background: #e9eefb;
       color: #32457f;
       border: 1px solid #cfd7ea;
       font-weight: 700;
+      line-height: 1;
       cursor: help;
       user-select: none;
     }
@@ -1229,17 +1231,8 @@
     }
 
     function toSchemaTooltip(schemaEntry, currentValue) {
-      const isSet = String(currentValue || "").trim().length > 0;
-      const isRequired = schemaEntry.isRequired === true || schemaEntry.isrequired === true;
-      const tooltipPayload = {
-        parametername: schemaEntry.parametername ?? "",
-        type: schemaEntry.type ?? "",
-        description: schemaEntry.description ?? "",
-        isRequired,
-        set_value: isSet ? currentValue : null,
-        unset_value: isSet ? null : "",
-      };
-      return JSON.stringify(tooltipPayload, null, 2);
+      const description = String(schemaEntry.description ?? "").trim();
+      return description || "No description provided.";
     }
 
     function isSchemaRequired(schemaEntry) {

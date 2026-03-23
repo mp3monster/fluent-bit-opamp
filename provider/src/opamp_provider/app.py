@@ -184,7 +184,6 @@ def _build_custom_command_payload(
         try:
             command_obj = command_object_factory(
                 classifier=classifier,
-                operation=action,
                 key_values={pair["key"]: pair["value"] for pair in pending_command.key_value_pairs},
             )
             if hasattr(command_obj, "to_custom_message"):
@@ -542,12 +541,26 @@ async def list_clients() -> Response:
 @app.get("/api/commands/custom")
 async def list_custom_commands() -> Response:
     """Return custom command metadata for UI command selection/configuration."""
+    client_id = (request.args.get("client_id") or "").strip()
+    reported_capabilities: set[str] = set()
+    if client_id:
+        record = STORE.get(client_id)
+        if record is not None:
+            reported_capabilities = {
+                str(capability).strip()
+                for capability in record.custom_capabilities_reported
+                if str(capability).strip()
+            }
+    commands = get_command_metadata(
+        parameter_exclude_opamp_standard=True,
+        custom_only=True,
+    )
+    for command in commands:
+        fqdn = str(command.get("fqdn", "") or "").strip()
+        command["reported_by_client"] = bool(fqdn and fqdn in reported_capabilities)
     return jsonify(
         {
-            "commands": get_command_metadata(
-                parameter_exclude_opamp_standard=True,
-                custom_only=True,
-            )
+            "commands": commands
         }
     )
 
@@ -579,6 +592,7 @@ async def delete_client(client_id: str) -> Response:
 async def queue_command(client_id: str) -> Response:
     """Queue a structured command intent for a client."""
     payload = await request.get_json(silent=True)
+    logger.debug("queue_command request client_id=%s payload=%s", client_id, payload)
     pairs = None
     if isinstance(payload, list):
         pairs = payload
@@ -596,6 +610,7 @@ async def queue_command(client_id: str) -> Response:
             jsonify({"error": "pairs array is required"}),
             HTTPStatus.BAD_REQUEST,
         )
+    logger.debug("queue_command parsed pairs client_id=%s pairs=%s", client_id, pairs)
 
     normalized_pairs: list[dict[str, str]] = []
     values: dict[str, str] = {}
@@ -613,7 +628,17 @@ async def queue_command(client_id: str) -> Response:
         values[key.lower()] = value
 
     classifier = values.get("classifier", "").strip().lower()
+    operation = values.get("operation", "").strip().lower()
     action = values.get("action", "").strip().lower()
+    routing_action = operation or action
+    logger.debug(
+        "queue_command routing fields client_id=%s classifier=%s operation=%s action=%s routing_action=%s",
+        client_id,
+        classifier,
+        operation,
+        action,
+        routing_action,
+    )
     if classifier not in {
         CLASSIFIER_COMMAND,
         CLASSIFIER_CUSTOM_COMMAND,
@@ -628,19 +653,26 @@ async def queue_command(client_id: str) -> Response:
             ),
             HTTPStatus.BAD_REQUEST,
         )
-    if not action:
-        return jsonify({"error": "action is required"}), HTTPStatus.BAD_REQUEST
+    if not routing_action:
+        return jsonify({"error": "operation is required"}), HTTPStatus.BAD_REQUEST
 
     if (
-        (classifier, action) not in COMMAND_BUILDERS
+        (classifier, routing_action) not in COMMAND_BUILDERS
         and (classifier, "*") not in COMMAND_BUILDERS
     ):
+        logger.debug(
+            "queue_command unsupported mapping client_id=%s classifier=%s routing_action=%s builders=%s",
+            client_id,
+            classifier,
+            routing_action,
+            sorted(COMMAND_BUILDERS.keys()),
+        )
         return (
             jsonify(
                 {
                     "error": "unsupported classifier/action",
                     "classifier": classifier,
-                    "action": action,
+                    "action": routing_action,
                 }
             ),
             HTTPStatus.BAD_REQUEST,
@@ -648,33 +680,46 @@ async def queue_command(client_id: str) -> Response:
 
     # Build a command object when a concrete class exists for the operation.
     key_value_dict = {pair["key"]: pair["value"] for pair in normalized_pairs}
-    event_description = f"{classifier} {action} command queued"
+    event_description = f"{classifier} {routing_action} command queued"
     command_obj = None
     if (
-        (classifier, action) in COMMAND_BUILDERS
+        (classifier, routing_action) in COMMAND_BUILDERS
         and (
-            (classifier == CLASSIFIER_COMMAND and action == COMMAND_RESTART)
+            (classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART)
             or (
                 classifier == CLASSIFIER_CUSTOM
-                and action
+                and routing_action
                 in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT, COMMAND_NULLCOMMAND}
             )
         )
     ):
+        logger.debug(
+            "queue_command building command object client_id=%s classifier=%s routing_action=%s key_values=%s",
+            client_id,
+            classifier,
+            routing_action,
+            key_value_dict,
+        )
         command_obj = command_object_factory(
             classifier=classifier,
-            operation=action,
             key_values=key_value_dict,
         )
         command_obj.set_key_value_dictionary(key_value_dict)
         classifier = command_obj.get_command_classifier()
-        action = command_obj.get_command_type()
+        routing_action = str(routing_action).strip().lower()
         event_description = command_obj.get_command_description()
+        logger.debug(
+            "queue_command built command object client_id=%s object_type=%s classifier=%s routing_action=%s",
+            client_id,
+            command_obj.__class__.__name__,
+            classifier,
+            routing_action,
+        )
 
     cmd = STORE.queue_command(
         client_id,
         classifier=classifier,
-        action=action,
+        action=routing_action,
         key_value_pairs=(
             [{"key": k, "value": v} for k, v in command_obj.get_key_value_dictionary().items()]
             if command_obj is not None
