@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+import json
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from quart import Blueprint, Response, jsonify
@@ -76,83 +79,16 @@ def _list_all_commands_payload() -> dict[str, Any]:
 
 
 def _tool_openapi_spec_payload() -> dict[str, Any]:
-    """Build the OpenAPI specification payload shared by HTTP and MCP tools."""
-    spec = {
-        "openapi": "3.0.3",
-        "info": {
-            "title": "OpAMP Provider Tool API",
-            "version": "1.0.0",
-            "description": "OpenAPI specification for /tool endpoints.",
-        },
-        "paths": {
-            "/tool/otelAgents": {
-                "get": {
-                    "summary": "List connected agents",
-                    "description": "Returns agents that are not disconnected.",
-                    "responses": {
-                        "200": {
-                            "description": "Connected agents returned successfully.",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "agents": {
-                                                "type": "array",
-                                                "items": {"type": "object"},
-                                            },
-                                            "total": {"type": "integer"},
-                                        },
-                                        "required": ["agents", "total"],
-                                    }
-                                }
-                            },
-                        }
-                    },
-                }
-            },
-            "/tool/commands": {
-                "get": {
-                    "summary": "List available commands",
-                    "description": (
-                        "Returns all available commands, including OpAMP-standard and custom."
-                    ),
-                    "responses": {
-                        "200": {
-                            "description": "Commands returned successfully.",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "commands": {
-                                                "type": "array",
-                                                "items": {"type": "object"},
-                                            },
-                                            "total": {"type": "integer"},
-                                        },
-                                        "required": ["commands", "total"],
-                                    }
-                                }
-                            },
-                        }
-                    },
-                }
-            },
-            "/tool": {
-                "get": {
-                    "summary": "Get tool API specification",
-                    "description": "Returns this OpenAPI specification document.",
-                    "responses": {
-                        "200": {
-                            "description": "Tool OpenAPI specification returned successfully."
-                        }
-                    },
-                }
-            },
-        },
-    }
-    return spec
+    """Load the OpenAPI specification payload shared by HTTP and MCP tools."""
+    return _load_tool_openapi_spec_payload()
+
+
+@lru_cache(maxsize=1)
+def _load_tool_openapi_spec_payload() -> dict[str, Any]:
+    """Read and cache the tool OpenAPI spec JSON from disk."""
+    spec_path = Path(__file__).with_name("tool_openapi_spec.json")
+    with spec_path.open("r", encoding="utf-8") as spec_file:
+        return json.load(spec_file)
 
 
 @mcptool_blueprint.get("/tool/otelAgents")
