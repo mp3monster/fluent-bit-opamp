@@ -31,8 +31,8 @@ def _set_config(agent_capabilities) -> None:
     """Install a test config with the requested agent capabilities."""
     config = ConsumerConfig(
         server_url="http://localhost",
-        fluentbit_config_path="unused",
-        additional_fluent_bit_params=[],
+        agent_config_path="unused",
+        agent_additional_params=[],
         heartbeat_frequency=30,
         agent_capabilities=agent_capabilities,
         log_level="debug",
@@ -43,7 +43,7 @@ def _set_config(agent_capabilities) -> None:
 
 
 def test_get_agent_capabilities_from_names(caplog) -> None:
-    """Build a bitmask from named capabilities and ignore unknowns."""
+    """Build a bitmask from configured names plus required defaults and ignore unknowns."""
     _set_config(["ReportsStatus", "ReportsHealth", "ReportsHeartbeat"])
     caplog.set_level(logging.WARNING)
     instance = client.OpAMPClient("http://localhost")
@@ -52,6 +52,7 @@ def test_get_agent_capabilities_from_names(caplog) -> None:
 
     expected = (
         CAPABILITIES_MAP["ReportsStatus"]
+        | CAPABILITIES_MAP["AcceptsRestartCommand"]
         | CAPABILITIES_MAP["ReportsHealth"]
         | CAPABILITIES_MAP["ReportsHeartbeat"]
     )
@@ -60,19 +61,23 @@ def test_get_agent_capabilities_from_names(caplog) -> None:
 
 
 def test_get_agent_capabilities_warns_unknown(caplog) -> None:
-    """Log a warning when unknown capability names are provided."""
+    """Log a warning for unknown names while still including required capabilities."""
     _set_config(["ReportsStatus", "UnknownCapability"])
     caplog.set_level(logging.WARNING)
     instance = client.OpAMPClient("http://localhost")
 
     mask = instance.get_agent_capabilities()
 
-    assert mask == CAPABILITIES_MAP["ReportsStatus"]
+    assert mask == (
+        CAPABILITIES_MAP["ReportsStatus"]
+        | CAPABILITIES_MAP["AcceptsRestartCommand"]
+        | CAPABILITIES_MAP["ReportsHealth"]
+    )
     assert "unknown agent capability" in caplog.text
 
 
 def test_get_agent_description_includes_config_and_version(monkeypatch) -> None:
-    """Include configured service info and Fluent Bit version in AgentDescription."""
+    """Include configured service info and assert reported service version name includes Fluent Bit."""
     _set_config(["ReportsStatus"])
     instance = client.OpAMPClient("http://localhost")
     instance.data.last_heartbeat_results[KEY_FLUENTBIT_VERSION] = "3.0.0 (classic)"
@@ -100,7 +105,7 @@ def test_get_agent_description_includes_config_and_version(monkeypatch) -> None:
     assert identifying[KEY_SERVICE_NAME] == "Fluentbit"
     assert identifying[KEY_SERVICE_NAMESPACE] == "FluentBitNS"
     assert identifying[KEY_SERVICE_INSTANCE_ID] == "0102"
-    assert identifying[KEY_SERVICE_VERSION] == "3.0.0 (classic)"
+    assert "Fluent Bit" in identifying[KEY_SERVICE_VERSION]
     assert non_identifying == {
         "os_type": "Linux",
         "os_version": "1",

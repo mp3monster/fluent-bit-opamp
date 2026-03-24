@@ -134,6 +134,7 @@
       align-items: center;
       gap: 6px;
       font-weight: 600;
+      color: var(--ok);
     }
 
     .dot {
@@ -146,6 +147,9 @@
     .late-amber .dot { background: var(--amber); }
     .late-red .dot { background: var(--red); }
     .disconnected .dot { background: #2f6bff; }
+    .status-dot.late-amber { color: var(--amber); }
+    .status-dot.late-red { color: var(--red); }
+    .status-dot.disconnected { color: #2f6bff; }
 
     .pending-border {
       border-left: 6px solid var(--pending);

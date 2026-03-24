@@ -13,6 +13,7 @@
 import json
 
 from opamp_consumer import config as consumer_config
+from shared.opamp_config import AgentCapabilities
 
 
 def _base_consumer_config() -> dict:
@@ -21,13 +22,12 @@ def _base_consumer_config() -> dict:
             "server_url": "http://localhost:4320",
             "transport": "http",
             "log_agent_api_responses": False,
-            "fluentbit_config_path": "./fluent-bit.conf",
-            "additional_fluent_bit_params": [],
+            "agent_config_path": "./fluent-bit.conf",
+            "agent_additional_params": [],
             "heartbeat_frequency": 30,
             "log_level": "debug",
             "service_name": "Fluentbit",
             "service_namespace": "FluentBitNS",
-            "agent_capabilities": ["ReportsStatus"],
         }
     }
 
@@ -86,3 +86,23 @@ def test_chat_ops_port_and_client_status_port_load_when_configured(
 
     assert loaded.chat_ops_port == 8888
     assert loaded.client_status_port == 2020
+
+
+def test_agent_capabilities_are_hardwired_and_ignore_config_value(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify agent capabilities are hardwired regardless of config content."""
+    raw = _base_consumer_config()
+    raw["consumer"]["agent_capabilities"] = ["ReportsHeartbeat"]
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    expected_mask = int(
+        AgentCapabilities.ReportsStatus
+        | AgentCapabilities.AcceptsRestartCommand
+        | AgentCapabilities.ReportsHealth
+    )
+    assert loaded.agent_capabilities == expected_mask

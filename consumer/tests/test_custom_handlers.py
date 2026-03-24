@@ -30,8 +30,8 @@ def _make_client_data() -> OpAMPClientData:
     """Create a minimal OpAMPClientData instance for handler tests."""
     config = ConsumerConfig(
         server_url="http://localhost",
-        fluentbit_config_path="unused",
-        additional_fluent_bit_params=[],
+        agent_config_path="unused",
+        agent_additional_params=[],
         heartbeat_frequency=30,
         agent_capabilities=["ReportsStatus"],
         allow_custom_capabilities=True,

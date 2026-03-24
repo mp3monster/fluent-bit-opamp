@@ -42,8 +42,8 @@ Flush 1
     )
     config = ConsumerConfig(
         server_url="http://localhost",
-        fluentbit_config_path=str(sample_path),
-        additional_fluent_bit_params=[],
+        agent_config_path=str(sample_path),
+        agent_additional_params=[],
         heartbeat_frequency=30,
         agent_capabilities=0,
         log_level="debug",
@@ -54,9 +54,9 @@ Flush 1
     assert config.agent_description == "test-agent"
     assert config.service_instance_id == "abcdef1234567890"
     assert config.client_status_port == 2020
-    assert config.fluentbit_http_port == 2020
-    assert config.fluentbit_http_listen == "0.0.0.0"
-    assert config.fluentbit_http_server == "On"
+    assert config.agent_http_port == 2020
+    assert config.agent_http_listen == "0.0.0.0"
+    assert config.agent_http_server == "On"
 
 
 def test_resolve_service_instance_id_template_tokens(monkeypatch) -> None:
@@ -88,8 +88,8 @@ HTTP_Port 2020
     )
     config = ConsumerConfig(
         server_url="http://localhost",
-        fluentbit_config_path=str(sample_path),
-        additional_fluent_bit_params=[],
+        agent_config_path=str(sample_path),
+        agent_additional_params=[],
         heartbeat_frequency=30,
         agent_capabilities=0,
         log_level="debug",

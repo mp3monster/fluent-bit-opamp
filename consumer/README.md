@@ -1,83 +1,113 @@
 # OpAMP Consumer Configuration
 
-This document describes how to configure and run the OpAMP consumer using a config file or CLI overrides.
+This document consolidates all consumer configuration options and their CLI override support.
 
-## Config file
+## Config Source
 
-The consumer reads `opamp.json` from the current working directory by default. You can override the
-config file location with the `OPAMP_CONFIG_PATH` environment variable or the `--config-path`
-CLI argument.
+The consumer reads `opamp.json` from the current working directory by default.
 
-The consumer also reads optional metadata comments from the Fluent Bit config file (for example
-`# service_instance_id: ...`).
+You can override config path with:
+- environment variable: `OPAMP_CONFIG_PATH`
+- CLI flag: `--config-path`
 
-Example `opamp.json`:
+## Override Precedence
+
+Configuration is applied in this order (later wins):
+1. Built-in defaults
+2. `opamp.json` values
+3. CLI parameters (these are overrides for config file values)
+4. Agent config file parsing (`agent_config_path`) for runtime HTTP settings
+
+Notes:
+- If a CLI parameter is provided, it overrides the corresponding `opamp.json` value.
+- Values parsed from the agent config file (`http_port`, `http_listen`, `http_server`) populate runtime fields:
+  - `client_status_port`
+  - `agent_http_port`
+  - `agent_http_listen`
+  - `agent_http_server`
+
+## Quick Start Minimal Config
+
+Use this minimal config for a fast local startup:
 
 ```json
 {
   "consumer": {
-    "server_url": "http://localhost:4320",
+    "server_url": "http://localhost",
+    "agent_config_path": "./fluent-bit.conf",
+    "agent_additional_params": [],
+    "heartbeat_frequency": 30
+  }
+}
+```
+
+## Example `opamp.json`
+
+```json
+{
+  "consumer": {
+    "server_url": "http://localhost",
     "server_port": 4320,
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
     "log_agent_api_responses": false,
-    "fluentbit_config_path": "./fluent-bit.conf",
-    "additional_fluent_bit_params": ["-R"],
+    "agent_config_path": "./fluent-bit.conf",
+    "agent_additional_params": ["-R"],
     "heartbeat_frequency": 30,
     "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",
-    "service_namespace": "FluentBitNS",
-    "agent_capabilities": [
-      "ReportsStatus",
-      "ReportsHealth",
-      "ReportsHeartbeat"
-    ]
+    "service_namespace": "FluentBitNS"
   }
 }
 ```
 
-### Fields
+## Consumer Config Keys
 
-- `consumer.server_url` (string, required)
-  OpAMP server base URL.
-- `consumer.server_port` (integer, optional)
-  Optional server port override used when building default URLs.
-- `consumer.transport` (string, optional, default `http`)
-  Transport to use when sending OpAMP messages. Supported values: `http`, `websocket`.
-- `consumer.client_status_port` (integer, optional)
-  Port used for polling the local agent status endpoints. If omitted, it is read from the Fluent Bit
-  `http_port` setting.
-- `consumer.chat_ops_port` (integer, optional)
-  Port used by the ChatOps custom handler for local HTTP commands. If omitted, defaults to `8888`.
-- `consumer.log_agent_api_responses` (boolean, optional, default `false`)
-  When true, heartbeat polling logs full Fluent Bit API responses; when false, it logs response codes only.
-- `consumer.fluentbit_config_path` (string, required)
-  Path to the Fluent Bit configuration file.
-- `consumer.additional_fluent_bit_params` (array of strings, required)
-  Extra command-line arguments passed to `fluentbit`.
-- `consumer.heartbeat_frequency` (integer, optional, default `30`)
-  Heartbeat interval in seconds.
-- `consumer.allow_custom_capabilities` (boolean, optional, default `false` when omitted)
-  Enables custom handler registry discovery and custom capability publishing. Set this to `true` to
-  allow custom capability detection; when the field is missing the consumer behaves as `false`.
-- `consumer.log_level` (string, optional, default `debug`)
-  Log level for the consumer (`debug`, `info`, `warning`, `error`, `critical`).
-- `consumer.service_name` (string, optional)
-  Service name reported in the agent description.
-- `consumer.service_namespace` (string, optional)
-  Service namespace reported in the agent description.
-- `consumer.agent_capabilities` (array of strings, required)
-  Capabilities list. Names must match `AgentCapabilities` enum values in `shared/opamp_config.py`.
+`CLI` indicates direct CLI override support.
 
-### `service_instance_id` template tokens (Fluent Bit config comment)
+| Key | Type | CLI | Description | Example |
+|---|---|---|---|---|
+| `consumer.server_url` | string | Yes (`--server-url`) | OpAMP provider base URL. | `"http://localhost"` |
+| `consumer.server_port` | integer | Yes (`--server-port`) | Optional port hint used by startup logic. | `4320` |
+| `consumer.agent_config_path` | string | Yes (`--agent-config-path`) | Path to agent config file loaded by consumer. | `"./fluent-bit.conf"` |
+| `consumer.agent_additional_params` | array[string] | Yes (`--agent-additional-params`) | Extra args passed to the launched agent process. | `["-R"]` |
+| `consumer.heartbeat_frequency` | integer | Yes (`--heartbeat-frequency`) | Heartbeat interval in seconds. | `30` |
+| `consumer.transport` | string | No | OpAMP transport mode (`http` or `websocket`). | `"http"` |
+| `consumer.log_agent_api_responses` | boolean | No | Enables verbose logging of local API responses. | `false` |
+| `consumer.allow_custom_capabilities` | boolean | No | Enables publishing/discovery of custom capabilities. | `true` |
+| `consumer.log_level` | string | No | Consumer log level (`debug`, `info`, `warning`, `error`, `critical`). | `"debug"` |
+| `consumer.service_name` | string | No | Reported service name in agent description. | `"Fluentbit"` |
+| `consumer.service_namespace` | string | No | Reported service namespace in agent description. | `"FluentBitNS"` |
+| `consumer.client_status_port` | integer | No | Local status polling port. If unset, parsed from agent config `http_port`. | `2020` |
+| `consumer.chat_ops_port` | integer | No | Local ChatOps port used by custom command handler. Defaults to `8888` when unset. | `8888` |
 
-When `service_instance_id` is set in a Fluent Bit config comment, the client resolves these tokens:
+## Hardwired Capabilities
 
-- `__IP__` -> local host IP address
+`agent_capabilities` is not read from config. The consumer hardwires:
+- `ReportsStatus`
+- `AcceptsRestartCommand`
+- `ReportsHealth`
+
+## Legacy Compatibility
+
+The following legacy keys/flags are still accepted:
+- `consumer.fluentbit_config_path` -> alias for `consumer.agent_config_path`
+- `consumer.additional_fluent_bit_params` -> alias for `consumer.agent_additional_params`
+- `--fluentbit-config-path` -> alias for `--agent-config-path`
+- `--additional-fluent-bit-params` -> alias for `--agent-additional-params`
+
+## Fluent Bit Comment Metadata
+
+The consumer reads optional metadata comments from the agent config file:
+- `# agent_description: ...`
+- `# service_instance_id: ...`
+
+Supported tokens in `service_instance_id`:
+- `__IP__` -> local host IP
 - `__hostname__` -> local hostname
-- `__mac-ad__` -> local MAC address (colon-delimited)
+- `__mac-ad__` -> local MAC address
 
 Example:
 
@@ -85,38 +115,24 @@ Example:
 # service_instance_id: fb-__hostname__-__IP__-__mac-ad__
 ```
 
-## CLI overrides
-
-CLI flags override config file values. When a CLI value is provided, the file value is ignored and
-this decision is logged by the application.
+## CLI Example
 
 ```bash
 python -m opamp_consumer.client \
   --config-path ./opamp.json \
   --server-url http://localhost:4320 \
-  --fluentbit-config-path ./fluent-bit.conf \
-  --additional-fluent-bit-params -R \
-  --heartbeat-frequency 15 \
-  --agent-capabilities ReportsStatus ReportsHealth ReportsHeartbeat
+  --server-port 4320 \
+  --agent-config-path ./fluent-bit.conf \
+  --agent-additional-params -R \
+  --heartbeat-frequency 15
 ```
 
-### CLI flags
+## Run Scripts
 
-- `--config-path` Path to the config file. If omitted, defaults to `./opamp.json`.
-- `--server-url` Override `consumer.server_url`.
-- `--fluentbit-config-path` Override `consumer.fluentbit_config_path`.
-- `--additional-fluent-bit-params` Override `consumer.additional_fluent_bit_params`.
-- `--heartbeat-frequency` Override `consumer.heartbeat_frequency`.
-- `--agent-capabilities` Override `consumer.agent_capabilities`.
+Helper scripts in repo root:
+- `scripts/run_supervisor.cmd`
+- `scripts/run_supervisor.sh`
 
-## Run scripts
+Both write logs to `logs/supervisor.log` and rotate on startup.
 
-Helper scripts live in `scripts/` at the repo root:
-
-- Windows CMD: `scripts/run_supervisor.cmd`
-- Bash: `scripts/run_supervisor.sh`
-
-Both scripts write logs to `logs/supervisor.log` and rotate it on startup.
-
-You can also gracefully stop the supervisor by creating a semaphore file named
-`OpAMPSupervisor.signal` in the folder where the supervisor was started.
+Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directory.

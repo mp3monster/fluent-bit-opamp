@@ -41,7 +41,7 @@ import websockets
 from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
-from opamp_consumer.config import CFG_FLUENTBIT_CONFIG_PATH, ConsumerConfig
+from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.exceptions import AgentException
 from opamp_consumer.opamp_client_interface import OpAMPClientInterface
@@ -99,6 +99,11 @@ CAPABILITIES_MAP = {
     "ReportsAvailableComponents": 0x00004000,
     "ReportsConnectionSettingsStatus": 0x00008000,
 }
+REQUIRED_AGENT_CAPABILITIES = (
+    "ReportsStatus",
+    "AcceptsRestartCommand",
+    "ReportsHealth",
+)
 LOG_INVALID_HTTP_PORT = "invalid http_port value: %s"  # Log format for bad ports.
 LOG_HTTP_SERVER_DISABLED = (
     "http_server is not enabled: %s"  # Log format for disabled HTTP.
@@ -157,7 +162,7 @@ class OpAMPClient(OpAMPClientInterface):
             client_data=self.data,
             allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
         )
-        self._ensure_reports_status_capability()
+        self._ensure_required_agent_capabilities()
 
     @property
     def config(self) -> ConsumerConfig:
@@ -181,26 +186,46 @@ class OpAMPClient(OpAMPClientInterface):
             )
             return ""
 
-    def _ensure_reports_status_capability(self) -> None:
-        """Ensure ReportsStatus is set on the client configuration."""
-        required_bit = CAPABILITIES_MAP.get("ReportsStatus", 0)
+    def _ensure_required_agent_capabilities(self) -> None:
+        """Ensure required capability flags are set on the client configuration."""
+        required_mask = 0
+        for name in REQUIRED_AGENT_CAPABILITIES:
+            required_mask |= CAPABILITIES_MAP.get(name, 0)
+
         configured = self.config.agent_capabilities
         logger = logging.getLogger(__name__)
+
         if isinstance(configured, int):
-            if required_bit and (configured & required_bit) == 0:
-                self.config.agent_capabilities = configured | required_bit
-                logger.info("Added ReportsStatus to agent capabilities bitmask")
+            missing_bits = required_mask & ~configured
+            if missing_bits:
+                self.config.agent_capabilities = configured | required_mask
+                logger.info(
+                    "Added required agent capabilities to bitmask: %s",
+                    ", ".join(REQUIRED_AGENT_CAPABILITIES),
+                )
             return
+
         if not configured:
-            self.config.agent_capabilities = required_bit
-            logger.info("Defaulted agent capabilities to ReportsStatus")
+            self.config.agent_capabilities = required_mask
+            logger.info(
+                "Defaulted agent capabilities to required set: %s",
+                ", ".join(REQUIRED_AGENT_CAPABILITIES),
+            )
             return
+
         if isinstance(configured, (list, tuple, set)):
-            if "ReportsStatus" not in {str(name) for name in configured}:
+            configured_names = {str(name) for name in configured}
+            missing_names = [
+                name for name in REQUIRED_AGENT_CAPABILITIES if name not in configured_names
+            ]
+            if missing_names:
                 updated = list(configured)
-                updated.append("ReportsStatus")
+                updated.extend(missing_names)
                 self.config.agent_capabilities = updated
-                logger.info("Added ReportsStatus to agent capabilities list")
+                logger.info(
+                    "Added required agent capabilities to list: %s",
+                    ", ".join(missing_names),
+                )
 
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response."""
@@ -464,12 +489,12 @@ class OpAMPClient(OpAMPClientInterface):
         logger = logging.getLogger(__name__)
         cmd = [
             FLUENTBIT_CMD,
-            *(self.config.additional_fluent_bit_params or []),
+            *(self.config.agent_additional_params or []),
             FLUENTBIT_CONFIG_FLAG,
-            self.config.fluentbit_config_path,
+            self.config.agent_config_path,
         ]
         logger.debug(
-            f"About to start Fluent Bit with {self.config.fluentbit_config_path} and cmd {cmd}"
+            f"About to start Fluent Bit with {self.config.agent_config_path} and cmd {cmd}"
         )
 
         with self.data.process_lock:
@@ -903,9 +928,9 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
     """Load Fluent Bit config values and agent metadata into the config object."""
     logger = logging.getLogger(__name__)
     logger.warning(f"All config is {config}")
-    path = config.fluentbit_config_path
+    path = config.agent_config_path
     if not path:
-        raise ValueError(f"{CFG_FLUENTBIT_CONFIG_PATH} is not set")
+        raise ValueError(f"{CFG_AGENT_CONFIG_PATH} is not set")
 
     comment_kv = re.compile(
         rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*[:=]\s*(?P<value>.+?)\s*$",
@@ -942,15 +967,13 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                     if key == KEY_HTTP_PORT:
                         port_value = int(value)
                         config.client_status_port = port_value
-                        config.fluentbit_http_port = port_value
+                        config.agent_http_port = port_value
                         logger.info(f"located >{key}< with value >{value}<")
                     elif key == KEY_HTTP_LISTEN:
-                        config.http_listen = value
-                        config.fluentbit_http_listen = value
+                        config.agent_http_listen = value
                         logger.info(f"located >{key}< with value >{value}<")
                     elif key == KEY_HTTP_SERVER:
-                        config.http_server = value
-                        config.fluentbit_http_server = value
+                        config.agent_http_server = value
                         logger.info(f"located >{key}< with value >{value}<")
                     else:
                         config[key] = value
@@ -1036,8 +1059,14 @@ def main() -> None:
         parser.add_argument("--config-path", type=str)
         parser.add_argument("--server-url", type=str)
         parser.add_argument("--server-port", type=int)
-        parser.add_argument("--fluentbit-config-path", type=str)
-        parser.add_argument("--additional-fluent-bit-params", nargs="*")
+        parser.add_argument("--agent-config-path", "--fluentbit-config-path", dest="agent_config_path", type=str)
+        parser.add_argument(
+            "--agent-additional-params",
+            "--additional-agent-params",
+            "--additional-fluent-bit-params",
+            dest="agent_additional_params",
+            nargs="*",
+        )
         parser.add_argument("--heartbeat-frequency", type=int)
         args = parser.parse_args()
 
@@ -1046,8 +1075,8 @@ def main() -> None:
             config_path=pathlib.Path(args.config_path) if args.config_path else None,
             server_url=args.server_url,
             server_port=args.server_port,
-            fluentbit_config_path=args.fluentbit_config_path,
-            additional_fluent_bit_params=args.additional_fluent_bit_params,
+            agent_config_path=args.agent_config_path,
+            agent_additional_params=args.agent_additional_params,
             heartbeat_frequency=args.heartbeat_frequency,
         )
 
