@@ -17,6 +17,7 @@ from opamp_provider.proto import opamp_pb2
 
 
 def test_disconnect_marks_and_purges() -> None:
+    """Verify disconnect lifecycle by upserting an `agent_disconnect` message, aging the timestamp, then asserting purge removes the record."""
     store = ClientStore()
     msg = opamp_pb2.AgentToServer(instance_uid=b"\x01\x02")
     msg.agent_disconnect.SetInParent()
@@ -33,6 +34,7 @@ def test_disconnect_marks_and_purges() -> None:
 
 
 def test_custom_capabilities_are_stored_from_agent_message() -> None:
+    """Verify capability deduplication/filtering by upserting repeated and empty capabilities and asserting normalized stored values."""
     store = ClientStore()
     msg = opamp_pb2.AgentToServer(instance_uid=b"\x0a\x0b")
     msg.custom_capabilities.capabilities.extend(
@@ -53,6 +55,7 @@ def test_custom_capabilities_are_stored_from_agent_message() -> None:
 
 
 def test_custom_capabilities_strip_request_status_prefix() -> None:
+    """Verify `request:` capability prefixes are normalized by upserting prefixed values and asserting stripped stored capabilities."""
     store = ClientStore()
     msg = opamp_pb2.AgentToServer(instance_uid=b"\x0c\x0d")
     msg.custom_capabilities.capabilities.extend(

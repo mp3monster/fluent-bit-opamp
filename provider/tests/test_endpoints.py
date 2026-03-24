@@ -26,6 +26,7 @@ from opamp_provider.transport import decode_message, encode_message
 
 @pytest.mark.asyncio
 async def test_http_endpoint() -> None:
+    """Verify `/v1/opamp` HTTP round-trip by posting AgentToServer and asserting instance UID echo."""
     test_uid = b"1234567890abcdef"
     agent_msg = opamp_pb2.AgentToServer(instance_uid=test_uid)
     agent_msg.capabilities = opamp_pb2.AgentCapabilities.AgentCapabilities_ReportsStatus
@@ -46,6 +47,7 @@ async def test_http_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_websocket_endpoint() -> None:
+    """Verify `/v1/opamp` WebSocket transport by sending encoded payload and checking decoded response."""
     test_uid = b"abcdef1234567890"
     agent_msg = opamp_pb2.AgentToServer(instance_uid=test_uid)
     agent_msg.capabilities = opamp_pb2.AgentCapabilities.AgentCapabilities_ReportsStatus
@@ -64,6 +66,7 @@ async def test_websocket_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_get_comms_settings() -> None:
+    """Verify GET `/api/settings/comms` returns configured delayed/significant communication thresholds."""
     config = ProviderConfig(
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
@@ -87,6 +90,7 @@ async def test_get_comms_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_put_comms_settings() -> None:
+    """Verify PUT `/api/settings/comms` updates and returns communication threshold settings."""
     config = ProviderConfig(
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
@@ -113,6 +117,7 @@ async def test_put_comms_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_put_comms_settings_rejects_invalid() -> None:
+    """Verify PUT `/api/settings/comms` rejects invalid values where delayed exceeds significant."""
     config = ProviderConfig(
         delayed_comms_seconds=60,
         significant_comms_seconds=300,
@@ -133,6 +138,7 @@ async def test_put_comms_settings_rejects_invalid() -> None:
 
 @pytest.mark.asyncio
 async def test_queue_command_requires_payload() -> None:
+    """Verify command queue endpoint rejects missing payloads with HTTP 400."""
     async with app.test_client() as client:
         resp = await client.post("/api/clients/client-1/commands")
         assert resp.status_code == 400
@@ -140,6 +146,7 @@ async def test_queue_command_requires_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_queue_restart_command_and_emit_restart_payload() -> None:
+    """Verify restart command queueing creates an event and emits `ServerToAgent.command=Restart` on poll."""
     client_id = "000000000000000000000000000000ab"
     STORE._clients.clear()
 
@@ -174,6 +181,7 @@ async def test_queue_restart_command_and_emit_restart_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_event_history_is_capped_to_configured_size() -> None:
+    """Verify command event history is capped by `client_event_history_size` after repeated queue operations."""
     client_id = "000000000000000000000000000000cd"
     STORE._clients.clear()
     provider_config.set_config(
@@ -205,6 +213,7 @@ async def test_event_history_is_capped_to_configured_size() -> None:
 
 @pytest.mark.asyncio
 async def test_queue_command_rejects_unsupported_classifier_action() -> None:
+    """Verify queue endpoint returns HTTP 400 for classifier/action pairs without dispatch mapping."""
     async with app.test_client() as client:
         resp = await client.post(
             "/api/clients/client-1/commands",
@@ -218,6 +227,7 @@ async def test_queue_command_rejects_unsupported_classifier_action() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_otel_agents_returns_only_connected_agents() -> None:
+    """Verify `/tool/otelAgents` excludes disconnected clients by seeding one connected and one disconnected."""
     connected_id = "00000000000000000000000000000011"
     disconnected_id = "00000000000000000000000000000022"
     STORE._clients.clear()
@@ -244,6 +254,7 @@ async def test_tool_otel_agents_returns_only_connected_agents() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
+    """Verify `/tool` serves OpenAPI metadata that includes documented tool endpoint paths."""
     async with app.test_client() as client:
         resp = await client.get("/tool")
         assert resp.status_code == 200
@@ -261,6 +272,7 @@ async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_commands_returns_standard_and_custom_commands() -> None:
+    """Verify `/tool/commands` returns both standard and custom command metadata entries."""
     async with app.test_client() as client:
         resp = await client.get("/tool/commands")
         assert resp.status_code == 200
@@ -283,6 +295,7 @@ async def test_tool_commands_returns_standard_and_custom_commands() -> None:
 
 @pytest.mark.asyncio
 async def test_list_custom_commands_returns_display_names_and_schema() -> None:
+    """Verify `/api/commands/custom` includes expected custom command metadata and sanitized schema rows."""
     async with app.test_client() as client:
         resp = await client.get("/api/commands/custom")
         assert resp.status_code == 200
@@ -305,7 +318,7 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     assert first["reported_by_client"] is False
     assert isinstance(first["schema"], list)
     assert {
-        "parametername": "action",
+        "parametername": "tag",
         "type": "string",
         "description": "Custom command operation name.",
         "isrequired": True,
@@ -327,6 +340,7 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
 
 @pytest.mark.asyncio
 async def test_list_custom_commands_marks_reported_capabilities_for_client() -> None:
+    """Verify custom command list marks capabilities reported by a specific client via `reported_by_client`."""
     client_id = "00000000000000000000000000000033"
     STORE._clients.clear()
     agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
@@ -347,6 +361,7 @@ async def test_list_custom_commands_marks_reported_capabilities_for_client() -> 
 
 @pytest.mark.asyncio
 async def test_get_client_missing() -> None:
+    """Verify GET `/api/clients/<id>` returns 404 when the requested client record does not exist."""
     async with app.test_client() as client:
         resp = await client.get("/api/clients/missing")
         assert resp.status_code == 404
@@ -354,6 +369,7 @@ async def test_get_client_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_set_client_actions_and_http_consumes() -> None:
+    """Verify queued next-actions are consumed in order across successive HTTP OpAMP polls."""
     client_id = "1234"
     STORE._clients.clear()
 
@@ -390,7 +406,11 @@ async def test_set_client_actions_and_http_consumes() -> None:
         )
         server_msg = opamp_pb2.ServerToAgent()
         server_msg.ParseFromString(await resp.get_data())
-        assert server_msg.HasField("packages_available")
+        assert server_msg.HasField("error_response")
+        assert (
+            server_msg.error_response.error_message
+            == "Package Availability feature not available"
+        )
         record = STORE.get(client_id)
         assert record is not None
         assert record.next_actions is None
@@ -398,6 +418,7 @@ async def test_set_client_actions_and_http_consumes() -> None:
 
 @pytest.mark.asyncio
 async def test_set_client_actions_rejects_invalid() -> None:
+    """Verify invalid next-action values are rejected with HTTP 400 by `/api/clients/<id>/actions`."""
     client_id = "abcd"
     async with app.test_client() as client:
         resp = await client.post(

@@ -20,6 +20,7 @@ from opamp_provider import mcptool
 
 @pytest.mark.asyncio
 async def test_register_mcp_transport_wraps_quart_asgi_dispatch() -> None:
+    """Verify MCP transport wrapping by injecting a fake server app and asserting `/sse` and `/messages` are dispatched to MCP ASGI."""
     app = Quart(__name__)
     calls: list[str] = []
 
@@ -59,6 +60,7 @@ async def test_register_mcp_transport_wraps_quart_asgi_dispatch() -> None:
 
 
 def test_register_mcp_transport_skips_when_http_app_unavailable() -> None:
+    """Verify MCP transport setup is skipped when server lacks `http_app` by asserting False and unchanged Quart ASGI handler."""
     app = Quart(__name__)
     original_asgi_func = app.asgi_app.__func__
     original_server = mcptool.mcpserver

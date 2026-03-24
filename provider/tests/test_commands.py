@@ -41,6 +41,7 @@ from opamp_provider.command_nullcommand import (
 
 
 def test_restart_agent_implements_command_interface_methods() -> None:
+    """Verify `RestartAgent` interface behavior by setting key-values and asserting classifier, metadata, timestamp, and schema outputs."""
     obj = RestartAgent()
     obj.set_key_value_dictionary({"classifier": "command", "action": "restart"})
 
@@ -64,6 +65,7 @@ def test_restart_agent_implements_command_interface_methods() -> None:
 
 
 def test_command_object_factory_creates_restart_agent() -> None:
+    """Verify the factory returns `RestartAgent` by passing command classifier/action keys and asserting the concrete type and payload."""
     obj = command_object_factory(
         classifier="command",
         key_values={"classifier": "command", "action": "restart"},
@@ -75,6 +77,7 @@ def test_command_object_factory_creates_restart_agent() -> None:
 
 
 def test_chatopcommand_implements_command_interface_methods() -> None:
+    """Verify `ChatOpCommand` interface behavior by asserting custom classifier metadata, serialized parameters, and non-standard flag."""
     obj = ChatOpCommand()
     obj.set_key_value_dictionary({"classifier": "custom", "action": "chatopcommand"})
 
@@ -98,6 +101,7 @@ def test_chatopcommand_implements_command_interface_methods() -> None:
 
 
 def test_command_object_factory_creates_chatopcommand() -> None:
+    """Verify the factory builds `ChatOpCommand` by providing custom classifier/operation mapping and asserting type plus stored action."""
     obj = command_object_factory(
         classifier="custom",
         key_values={
@@ -113,6 +117,7 @@ def test_command_object_factory_creates_chatopcommand() -> None:
 
 
 def test_command_object_factory_creates_shutdownagent() -> None:
+    """Verify shutdown command creation by mapping `custom/shutdownagent` through the factory and asserting display and schema data."""
     obj = command_object_factory(
         classifier="custom",
         key_values={
@@ -129,6 +134,7 @@ def test_command_object_factory_creates_shutdownagent() -> None:
 
 
 def test_command_object_factory_creates_nullcommand() -> None:
+    """Verify null command creation by mapping `custom/nullcommand` through the factory and checking metadata defaults."""
     obj = command_object_factory(
         classifier="custom",
         key_values={
@@ -145,6 +151,7 @@ def test_command_object_factory_creates_nullcommand() -> None:
 
 
 def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
+    """Verify chatops command message encoding by calling `to_custom_message` and asserting capability/type plus JSON-encoded payload."""
     obj = ChatOpCommand()
     obj.set_key_value_dictionary(
         {
@@ -170,6 +177,7 @@ def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -
 
 
 def test_shutdownagent_generates_custom_message_with_reverse_fqdn_capability() -> None:
+    """Verify shutdown command wire message by converting the factory object and checking reverse-FQDN capability and type constants."""
     obj = command_object_factory(
         classifier="custom",
         key_values={
@@ -184,6 +192,7 @@ def test_shutdownagent_generates_custom_message_with_reverse_fqdn_capability() -
 
 
 def test_nullcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
+    """Verify null command wire message by converting the factory object and asserting expected capability/type constants."""
     obj = command_object_factory(
         classifier="custom",
         key_values={
@@ -198,6 +207,7 @@ def test_nullcommand_generates_custom_message_with_reverse_fqdn_capability() -> 
 
 
 def test_command_object_factory_rejects_unknown_mapping() -> None:
+    """Verify invalid classifier/action pairs fail by asserting `command_object_factory` raises `ValueError`."""
     with pytest.raises(ValueError):
         command_object_factory(
             classifier="custom_command",
@@ -206,6 +216,7 @@ def test_command_object_factory_rejects_unknown_mapping() -> None:
 
 
 def test_command_registry_discovers_supported_commands_on_startup() -> None:
+    """Verify registry defaults by reading registered keys and asserting known custom commands exist while standard restart is excluded."""
     keys = get_registered_command_keys(includedisplayname=False)
     assert ("custom", "chatopcommand") in keys
     assert ("custom", "nullcommand") in keys
@@ -214,6 +225,7 @@ def test_command_registry_discovers_supported_commands_on_startup() -> None:
 
 
 def test_command_registry_can_return_opamp_standard_entries() -> None:
+    """Verify standard-command inclusion toggle by requesting non-filtered keys and asserting `command/restart` appears."""
     keys = get_registered_command_keys(
         parameter_exclude_opamp_standard=False,
         includedisplayname=False,
@@ -223,6 +235,7 @@ def test_command_registry_can_return_opamp_standard_entries() -> None:
 
 
 def test_available_command_list_excludes_opamp_standard_entries() -> None:
+    """Verify available-command list filtering by asserting only custom commands are present when standard commands are excluded."""
     keys = get_available_command_keys(includedisplayname=False)
     assert ("custom", "chatopcommand") in keys
     assert ("custom", "nullcommand") in keys
@@ -231,6 +244,7 @@ def test_available_command_list_excludes_opamp_standard_entries() -> None:
 
 
 def test_registered_command_list_returns_display_map_by_default() -> None:
+    """Verify default registry format by requesting registered keys and asserting capability-to-display-name mapping output."""
     commands = get_registered_command_keys()
     assert commands == {
         CHATOPCOMMAND_CAPABILITY: "ChatOps Command",
@@ -240,6 +254,7 @@ def test_registered_command_list_returns_display_map_by_default() -> None:
 
 
 def test_command_metadata_returns_custom_schema_with_display_name() -> None:
+    """Verify custom command metadata shape by indexing entries per operation and asserting fqdn, display fields, and sanitized schema rows."""
     metadata = get_command_metadata(parameter_exclude_opamp_standard=True, custom_only=True)
     entries = {entry["operation"]: entry for entry in metadata}
     assert set(entries.keys()) == {"chatopcommand", "nullcommand", "shutdownagent"}
@@ -268,6 +283,7 @@ def test_command_metadata_returns_custom_schema_with_display_name() -> None:
 
 
 def test_command_registry_exposes_reverse_fqdn_map() -> None:
+    """Verify reverse-FQDN lookup map by checking registry contents and `get_command_fqdn` return values for known and unknown operations."""
     fqdns = get_registered_command_fqdns()
     assert ("custom", "chatopcommand") in fqdns
     assert ("custom", "nullcommand") in fqdns
@@ -291,6 +307,7 @@ def test_command_registry_exposes_reverse_fqdn_map() -> None:
 
 
 def test_custom_capabilities_list_excludes_empty_or_none_capabilities() -> None:
+    """Verify capability list sanitization by asserting known custom capabilities remain and empty entries are removed."""
     capabilities = get_custom_capabilities_list()
     assert CHATOPCOMMAND_CAPABILITY in capabilities
     assert NULLCOMMAND_CAPABILITY in capabilities

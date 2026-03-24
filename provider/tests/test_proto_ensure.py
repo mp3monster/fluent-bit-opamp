@@ -16,6 +16,7 @@ from opamp_provider.proto import ensure as proto_ensure
 
 
 def test_generate_invokes_protoc(tmp_path, monkeypatch) -> None:
+    """Verify proto generation shell-out by stubbing directories/subprocess call and asserting protoc is invoked with both proto files."""
     out_dir = tmp_path / "out"
     proto_dir = tmp_path / "proto"
     proto_dir.mkdir()

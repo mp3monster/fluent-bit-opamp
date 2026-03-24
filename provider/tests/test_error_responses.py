@@ -19,6 +19,7 @@ from shared.opamp_config import OPAMP_HTTP_PATH
 
 @pytest.mark.asyncio
 async def test_package_statuses_returns_error_response() -> None:
+    """Verify package status uploads are rejected by posting `package_statuses` and asserting `error_response` fields."""
     msg = opamp_pb2.AgentToServer(instance_uid=b"\x01\x02")
     msg.package_statuses.SetInParent()
 
@@ -40,6 +41,7 @@ async def test_package_statuses_returns_error_response() -> None:
 
 @pytest.mark.asyncio
 async def test_connection_settings_request_returns_error_response() -> None:
+    """Verify connection settings requests are rejected by setting `connection_settings_request` and checking error reply contents."""
     msg = opamp_pb2.AgentToServer(instance_uid=b"\x03\x04")
     msg.connection_settings_request.opamp.SetInParent()
 

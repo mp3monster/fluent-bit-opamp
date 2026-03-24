@@ -21,6 +21,7 @@ from opamp_provider.transport import (
 
 
 def test_encode_decode_varint_round_trip() -> None:
+    """Verify varint round-trip correctness by encoding an integer and asserting decoded value and consumed byte count."""
     value = 300
     encoded = encode_varint(value)
     decoded, size = decode_varint(encoded)
@@ -29,21 +30,25 @@ def test_encode_decode_varint_round_trip() -> None:
 
 
 def test_encode_varint_rejects_negative() -> None:
+    """Verify encoder validation by passing a negative integer and asserting a `ValueError` is raised."""
     with pytest.raises(ValueError, match="varint cannot be negative"):
         encode_varint(-1)
 
 
 def test_decode_varint_incomplete() -> None:
+    """Verify incomplete varint handling by decoding a continuation byte without terminator and asserting `ValueError`."""
     with pytest.raises(ValueError, match="incomplete varint"):
         decode_varint(bytes([0x80]))
 
 
 def test_decode_varint_too_long() -> None:
+    """Verify oversized varint protection by decoding a 10-byte continuation stream and asserting `ValueError`."""
     with pytest.raises(ValueError, match="varint too long"):
         decode_varint(bytes([0x80] * 10))
 
 
 def test_encode_decode_message() -> None:
+    """Verify framed message round-trip by encoding payload/header and asserting decoded header and payload match inputs."""
     payload = b"hello"
     header = 5
     message = encode_message(payload, header=header)

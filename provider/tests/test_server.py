@@ -18,6 +18,7 @@ from opamp_provider import server as provider_server
 
 
 def test_server_main_invokes_app(monkeypatch) -> None:
+    """Verify server bootstrap by monkeypatching config/app hooks and asserting `main()` forwards parsed host, port, and config."""
     called = {}
 
     def fake_run(*, host: str, port: int) -> None:

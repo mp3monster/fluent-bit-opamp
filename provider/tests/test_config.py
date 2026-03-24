@@ -17,6 +17,7 @@ from opamp_provider import config as provider_config
 
 
 def test_minutes_keep_disconnected_default() -> None:
+    """Verify default disconnect retention by loading config from test JSON and comparing to provider default constant."""
     root = pathlib.Path(__file__).resolve().parents[2]
     os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(root / "tests" / "opamp.json")
     config = provider_config.load_config()
