@@ -135,7 +135,8 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
                     return parsed
             except Exception:
                 logging.getLogger(__name__).warning(
-                    "ChatOpsCommand._parse_attributes_payload - failed to convert as unicode escaped to JSON %s",
+                    "ChatOpsCommand._parse_attributes_payload - failed to convert as "
+                    "unicode escaped to JSON %s",
                     raw_attributes,
                 )
                 return {}

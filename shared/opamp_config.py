@@ -46,6 +46,13 @@ class AgentCapabilities(IntEnum):
     ReportsConnectionSettingsStatus = 0x00008000
 
 
+AGENT_CAPABILITIES_MAP: dict[str, int] = {
+    name: int(value) for name, value in AgentCapabilities.__members__.items()
+}
+# Backward-compatible alias used by older call sites/tests.
+AGENT_CAPABILITIES_MAP["UnspecifiedAgentCapability"] = int(AgentCapabilities.Unspecified)
+
+
 class ServerCapabilities(IntEnum):
     """Server capability bit flags from OpAMP specification."""
 

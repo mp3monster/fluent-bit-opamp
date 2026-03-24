@@ -80,7 +80,9 @@ class ConsumerConfig:
         None  # Local HTTP port used for status/health/version probes.
     )
     chat_ops_port: int | None = (
-        None  # Local ChatOps endpoint port for custom command handling.This aligns with the HTTP input configuration
+        None
+        # Local ChatOps endpoint port for custom command handling.
+        # This aligns with the HTTP input configuration.
     )
     log_level: str | None = (
         None  # Application logging verbosity (for example debug/info).
@@ -250,13 +252,13 @@ def load_config() -> ConsumerConfig:
     mask: None
 
     if not server_url:
-        logger.warning(msg=f"{CFG_CONSUMER}.{CFG_SERVER_URL} is required")
+        logger.warning("%s.%s is required", CFG_CONSUMER, CFG_SERVER_URL)
     agent_config_path = consumer_raw.get(CFG_AGENT_CONFIG_PATH)
     if agent_config_path is None:
         agent_config_path = consumer_raw.get(CFG_FLUENTBIT_CONFIG_PATH, ".")
 
     if not agent_config_path:
-        logger.warning(msg=f"{CFG_CONSUMER}.{CFG_AGENT_CONFIG_PATH} is expected")
+        logger.warning("%s.%s is expected", CFG_CONSUMER, CFG_AGENT_CONFIG_PATH)
     additional_params = consumer_raw.get(CFG_AGENT_ADDITIONAL_PARAMS)
     if additional_params is None:
         additional_params = consumer_raw.get(CFG_ADDITIONAL_AGENT_PARAMS)
@@ -264,9 +266,9 @@ def load_config() -> ConsumerConfig:
         additional_params = consumer_raw.get(CFG_ADDITIONAL_FLUENTBIT_PARAMS)
 
     if additional_params is None:
-        logger.info(msg=f"{CFG_CONSUMER}.{CFG_AGENT_ADDITIONAL_PARAMS} no settings")
+        logger.info("%s.%s no settings", CFG_CONSUMER, CFG_AGENT_ADDITIONAL_PARAMS)
     if not isinstance(additional_params, list):
-        logger.info(msg=f"{CFG_CONSUMER}.{CFG_AGENT_ADDITIONAL_PARAMS} must be a list")
+        logger.info("%s.%s must be a list", CFG_CONSUMER, CFG_AGENT_ADDITIONAL_PARAMS)
 
     heartbeat_frequency = consumer_raw.get(CFG_HEARTBEAT_FREQUENCY, 30)
     if heartbeat_frequency is None:

@@ -48,9 +48,12 @@ from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
+    AGENT_CAPABILITIES_MAP,
+    AgentCapabilities,
     OPAMP_HTTP_PATH,
     OPAMP_TRANSPORT_HEADER_NONE,
     UTF8_ENCODING,
+    parse_capabilities,
 )
 from shared.uuid_utils import generate_uuid7_bytes
 
@@ -60,8 +63,10 @@ TRANSPORT_WEBSOCKET = "websocket"
 HEARTBEAT_SKEW_SECONDS = 1  # Sleep interval is heartbeat_frequency minus this value.
 LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
 CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf payloads.
+HEADER_CONTENT_TYPE = "Content-Type"  # HTTP header key for protobuf content type.
 ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header error text.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
+ERR_STATUS = "error"  # Status marker for failed local heartbeat HTTP calls.
 FLUENTBIT_CMD = "fluent-bit"  # Fluent Bit executable name.
 FLUENTBIT_CONFIG_FLAG = "-c"  # Fluent Bit config flag.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
@@ -73,32 +78,40 @@ KEY_HTTP_PORT = "http_port"  # Fluent Bit HTTP port config key.
 KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit HTTP listen config key.
 KEY_HTTP_SERVER = "http_server"  # Fluent Bit HTTP server config key.
 KEY_HTTP_SERVER_ON = "on"  # Expected value token when HTTP server is enabled.
+KEY_FLUENT_BIT_VERSION = "fluent-bit.version"  # Fluent Bit version JSON field key.
+KEY_FLUENT_BIT_EDITION = "fluent-bit.edition"  # Fluent Bit edition JSON field key.
 KEY_SERVICE_NAME = "service.name"  # Agent description service name key.
 KEY_SERVICE_NAMESPACE = "service.namespace"  # Agent description service namespace key.
 KEY_SERVICE_INSTANCE_ID = "service.instance.id"  # Agent description instance id key.
+KEY_SERVICE_TYPE = "service.type"  # Agent description service type key.
 TOKEN_IP = "__IP__"
 TOKEN_HOSTNAME = "__hostname__"
 TOKEN_MAC_ADDR = "__mac-ad__"
 KEY_SERVICE_VERSION = "service.version"  # Agent description version key.
-CAPABILITIES_MAP = {
-    "UnspecifiedAgentCapability": 0x00000000,
-    "ReportsStatus": 0x00000001,
-    "AcceptsRemoteConfig": 0x00000002,
-    "ReportsEffectiveConfig": 0x00000004,
-    "AcceptsPackages": 0x00000008,
-    "ReportsPackageStatuses": 0x00000010,
-    "ReportsOwnTraces": 0x00000020,
-    "ReportsOwnMetrics": 0x00000040,
-    "ReportsOwnLogs": 0x00000080,
-    "AcceptsOpAMPConnectionSettings": 0x00000100,
-    "AcceptsOtherConnectionSettings": 0x00000200,
-    "AcceptsRestartCommand": 0x00000400,
-    "ReportsHealth": 0x00000800,
-    "ReportsRemoteConfig": 0x00001000,
-    "ReportsHeartbeat": 0x00002000,
-    "ReportsAvailableComponents": 0x00004000,
-    "ReportsConnectionSettingsStatus": 0x00008000,
-}
+KEY_HEALTH = "health"  # Heartbeat dictionary key for health endpoint results.
+VALUE_HEARTBEAT_STATUS = "heartbeat"  # Health status value used in heartbeats.
+VALUE_SUPERVISOR_NO_STATE = "Supervisor has not state"  # Error message when no heartbeat data.
+VALUE_AGENT_TYPE_FLUENT_BIT = "Fluent Bit"  # Display name for Fluent Bit agent type.
+JSON_KEY_FLUENT_BIT = "fluent-bit"  # JSON key for Fluent Bit map payload.
+JSON_KEY_FLUENTBIT = "fluentbit"  # Alternate JSON key for Fluent Bit map payload.
+JSON_KEY_VERSION = "version"  # Generic JSON version key.
+JSON_KEY_EDITION = "edition"  # Generic JSON edition key.
+FIELD_INSTANCE_UID = "instance_uid"  # Protobuf field name for instance UID.
+FIELD_ERROR_RESPONSE = "error_response"  # Protobuf field name for server error response.
+FIELD_REMOTE_CONFIG = "remote_config"  # Protobuf field name for remote config.
+FIELD_CONNECTION_SETTINGS = "connection_settings"  # Protobuf field name for settings.
+FIELD_PACKAGES_AVAILABLE = "packages_available"  # Protobuf field name for packages.
+FIELD_AGENT_IDENTIFICATION = "agent_identification"  # Protobuf field name for agent ID command.
+FIELD_COMMAND = "command"  # Protobuf field name for command payload.
+FIELD_CUSTOM_CAPABILITIES = "custom_capabilities"  # Protobuf field name for custom capabilities.
+FIELD_CUSTOM_MESSAGE = "custom_message"  # Protobuf field name for custom message.
+FIELD_RETRY_INFO = "retry_info"  # Protobuf field name for retry info.
+CAPABILITY_PREFIX_REQUEST = "request:"  # Prefix used for custom request capability fqdn.
+HOST_META_KEY_OS_TYPE = "os_type"  # Host metadata key for OS type.
+HOST_META_KEY_OS_VERSION = "os_version"  # Host metadata key for OS version.
+HOST_META_KEY_HOSTNAME = "hostname"  # Host metadata key for hostname.
+# Keep a local alias for backward compatibility with existing imports/tests.
+CAPABILITIES_MAP = AGENT_CAPABILITIES_MAP
 REQUIRED_AGENT_CAPABILITIES = (
     "ReportsStatus",
     "AcceptsRestartCommand",
@@ -177,20 +190,23 @@ class OpAMPClient(OpAMPClientInterface):
         try:
             value = self.data.config[key]
             if value is None:
-                logging.getLogger(__name__).error(f"Error handling request for {key}")
+                logging.getLogger(__name__).error("Error handling request for %s", key)
                 value = ""
             return value
         except KeyValue as val:
             logging.getLogger(__name__).error(
-                f"Error handling request for {key}, error is {val}"
+                "Error handling request for %s, error is %s",
+                key,
+                val,
             )
             return ""
 
     def _ensure_required_agent_capabilities(self) -> None:
         """Ensure required capability flags are set on the client configuration."""
-        required_mask = 0
-        for name in REQUIRED_AGENT_CAPABILITIES:
-            required_mask |= CAPABILITIES_MAP.get(name, 0)
+        required_mask = parse_capabilities(
+            REQUIRED_AGENT_CAPABILITIES,
+            AgentCapabilities,
+        )
 
         configured = self.config.agent_capabilities
         logger = logging.getLogger(__name__)
@@ -230,13 +246,13 @@ class OpAMPClient(OpAMPClientInterface):
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response."""
         url = f"{self.data.base_url}{OPAMP_HTTP_PATH}"
-        logging.getLogger(__name__).debug(f"Calling REST endpoint at {url}")
+        logging.getLogger(__name__).debug("Calling REST endpoint at %s", url)
         payload = msg.SerializeToString()
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 url,
                 content=payload,
-                headers={"Content-Type": CONTENT_TYPE_PROTO},
+                headers={HEADER_CONTENT_TYPE: CONTENT_TYPE_PROTO},
             )
             resp.raise_for_status()
             reply = opamp_pb2.ServerToAgent()
@@ -251,7 +267,7 @@ class OpAMPClient(OpAMPClientInterface):
         if self.data.last_heartbeat_results:
             healthy = (
                 self.data.last_heartbeat_http_codes is not None
-                and self.data.last_heartbeat_http_codes["health"]
+                and self.data.last_heartbeat_http_codes[KEY_HEALTH]
             )
             last_error = ""
             for value in self.data.last_heartbeat_results.values():
@@ -263,17 +279,17 @@ class OpAMPClient(OpAMPClientInterface):
 
                 msg = self._health_from_metrics(msg, text)
 
-            msg.health.status = "heartbeat"
+            msg.health.status = VALUE_HEARTBEAT_STATUS
             if not healthy and last_error:
                 msg.health.last_error = last_error
         else:
             healthy = False
-            msg.health.last_error = "Supervisor has not state"
+            msg.health.last_error = VALUE_SUPERVISOR_NO_STATE
 
         msg.health.start_time_unix_nano = time.time_ns() - self.data.launched_at
         msg.health.status_time_unix_nano = time.time_ns()
         msg.health.healthy = int(healthy)
-        logging.getLogger(__name__).debug(f"Health info sending is >{msg.health}<")
+        logging.getLogger(__name__).debug("Health info sending is >%s<", msg.health)
         return msg
 
     def _health_from_metrics(self, msg, text) -> opamp_pb2.AgentToServer:
@@ -322,22 +338,24 @@ class OpAMPClient(OpAMPClientInterface):
         logger.debug("_handle_server_to_agent called")
         successful_message = True
 
-        logger.debug(f"Handling Server to agent payload:{reply}")
+        logger.debug("Handling Server to agent payload:%s", reply)
         if reply is None:
             logger.error("Been given None response")
             return False
 
         try:
-            if reply.HasField("instance_uid"):
-                logger.debug(f"reply target is {reply.instance_uid}")
+            if reply.HasField(FIELD_INSTANCE_UID):
+                logger.debug("reply target is %s", reply.instance_uid)
                 if reply.instance_uid != self.data.uid_instance:
                     logger.error(
-                        "Message doesn't have an instance uid or doesn't match our service instance id {self.data.uid_instance}",
+                        "Message doesn't have an instance uid or doesn't match our "
+                        "service instance id %s",
+                        self.data.uid_instance,
                     )
                     successful_message = False
             else:
                 logging.getLogger(__name__).error(
-                    "Server didnt share instance_uid, my instance uid is %s",
+                    "Server didn't share instance_uid, my instance uid is %s",
                     self.data.uid_instance,
                 )
                 successful_message = False
@@ -346,29 +364,29 @@ class OpAMPClient(OpAMPClientInterface):
             successful_message = False
 
         try:
-            if reply.HasField("error_response"):
+            if reply.HasField(FIELD_ERROR_RESPONSE):
                 self.handle_error_response(reply.error_response)
-            if reply.HasField("remote_config"):
+            if reply.HasField(FIELD_REMOTE_CONFIG):
                 self.handle_remote_config(reply.remote_config)
-            if reply.HasField("connection_settings"):
+            if reply.HasField(FIELD_CONNECTION_SETTINGS):
                 self.handle_connection_settings(reply.connection_settings)
-            if reply.HasField("packages_available"):
+            if reply.HasField(FIELD_PACKAGES_AVAILABLE):
                 self.handle_packages_available(reply.packages_available)
             if reply.flags:
                 self.handle_flags(reply.flags)
             if reply.capabilities:
                 self.handle_capabilities(reply.capabilities)
-            if reply.HasField("agent_identification"):
+            if reply.HasField(FIELD_AGENT_IDENTIFICATION):
                 self.handle_agent_identification(reply.agent_identification)
-            if reply.HasField("command"):
+            if reply.HasField(FIELD_COMMAND):
                 self.handle_command(reply.command)
-            if reply.HasField("custom_capabilities"):
+            if reply.HasField(FIELD_CUSTOM_CAPABILITIES):
                 self.handle_custom_capabilities(reply.custom_capabilities)
-            if reply.HasField("custom_message"):
+            if reply.HasField(FIELD_CUSTOM_MESSAGE):
                 self.handle_custom_message(reply.custom_message)
 
         except AgentException as agentErr:
-            logger.error(f"Agent Error received - {agentErr}")
+            logger.error("Agent Error received - %s", agentErr)
             successful_message = False
         return successful_message
 
@@ -396,7 +414,8 @@ class OpAMPClient(OpAMPClientInterface):
             return await self.send_http(msg)
         except Exception as err:
             logging.getLogger(__name__).warning(
-                f"Error sending HTTP client-to-server message\n {err}"
+                "Error sending HTTP client-to-server message\n %s",
+                err,
             )
         return None
 
@@ -407,7 +426,7 @@ class OpAMPClient(OpAMPClientInterface):
         if self.data.uid_instance is not None:
             msg.instance_uid = self.data.uid_instance
             logging.getLogger(__name__).warning(
-                f"Set disconnect message instance UID to %s", self.data.uid_instance
+                "Set disconnect message instance UID to %s", self.data.uid_instance
             )
         msg.agent_disconnect.SetInParent()
         return msg
@@ -436,7 +455,7 @@ class OpAMPClient(OpAMPClientInterface):
         """Best-effort finalizer to send disconnect."""
         try:
             loop = asyncio.get_running_loop()
-            logging.getLogger(__name__).debug(f"finalize - got loop")
+            logging.getLogger(__name__).debug("finalize - got loop")
         except RuntimeError:
 
             def _runner() -> None:
@@ -447,7 +466,7 @@ class OpAMPClient(OpAMPClientInterface):
                     asyncio.run(self._send_disconnect_with_timeout())
                 except Exception as err:
                     logging.getLogger(__name__).error(
-                        f"Failed to send disconnect message, error is:\n {err}"
+                        "Failed to send disconnect message, error is:\n %s", err
                     )
                     return
 
@@ -465,7 +484,7 @@ class OpAMPClient(OpAMPClientInterface):
     ) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via WebSocket and return the response."""
         url = f"{self.data.base_url}{OPAMP_HTTP_PATH}"
-        logging.getLogger(__name__).debug(f"Calling web socket at {url}")
+        logging.getLogger(__name__).debug("Calling web socket at %s", url)
 
         async with websockets.connect(url) as web_socket:
             await web_socket.send(encode_message(msg.SerializeToString()))
@@ -494,14 +513,16 @@ class OpAMPClient(OpAMPClientInterface):
             self.config.agent_config_path,
         ]
         logger.debug(
-            f"About to start Fluent Bit with {self.config.agent_config_path} and cmd {cmd}"
+            "About to start Fluent Bit with %s and cmd %s",
+            self.config.agent_config_path,
+            cmd,
         )
 
         with self.data.process_lock:
             processResponse: subprocess.Popen[bytes] = subprocess.Popen(cmd)
             self.data.agent_process = processResponse
             self.data.launched_at = time.time_ns()
-        logger.info(f"Launch result = {processResponse}")
+        logger.info("Launch result = %s", processResponse)
         return launched
 
     def terminate_agent_process(self) -> None:
@@ -562,7 +583,7 @@ class OpAMPClient(OpAMPClientInterface):
                 resp.raise_for_status()
             except Exception as exc:  # pragma: no cover - error path varies by env
                 results[key] = f"{ERR_PREFIX}{exc}"
-                codes[key] = "error"
+                codes[key] = ERR_STATUS
         return results, codes
 
     def add_agent_version(self, port: int) -> None:
@@ -577,13 +598,13 @@ class OpAMPClient(OpAMPClientInterface):
                 version = None
                 edition = None
                 if isinstance(data, dict):
-                    version = data.get("fluent-bit.version")
-                    edition = data.get("fluent-bit.edition")
-                    fb = data.get("fluent-bit") or data.get("fluentbit")
+                    version = data.get(KEY_FLUENT_BIT_VERSION)
+                    edition = data.get(KEY_FLUENT_BIT_EDITION)
+                    fb = data.get(JSON_KEY_FLUENT_BIT) or data.get(JSON_KEY_FLUENTBIT)
                     if isinstance(fb, dict):
-                        self.data.agent_type_name = "Fluent Bit"
-                        version = version or fb.get("version")
-                        edition = edition or fb.get("edition")
+                        self.data.agent_type_name = VALUE_AGENT_TYPE_FLUENT_BIT
+                        version = version or fb.get(JSON_KEY_VERSION)
+                        edition = edition or fb.get(JSON_KEY_EDITION)
                 if version or edition:
                     if version and edition:
                         value = f"{version} ({edition})"
@@ -640,7 +661,7 @@ class OpAMPClient(OpAMPClientInterface):
 
         desc.identifying_attributes.append(
             anyvalue_pb2.KeyValue(
-                key="service.type",
+                key=KEY_SERVICE_TYPE,
                 value=anyvalue_pb2.AnyValue(string_value="Fluent Bit"),
             )
         )
@@ -676,7 +697,7 @@ class OpAMPClient(OpAMPClientInterface):
         else:
             logger.warning("No Client version to provide")
 
-        logger.debug(f"Agent description is :{desc}")
+        logger.debug("Agent description is :%s", desc)
 
         return desc
 
@@ -684,7 +705,7 @@ class OpAMPClient(OpAMPClientInterface):
         """Return the configured agent capability bitmask."""
         configured = self.config.agent_capabilities
         if isinstance(configured, int):
-            logging.getLogger(__name__).debug(f"Capabilities named - {configured}")
+            logging.getLogger(__name__).debug("Capabilities named - %s", configured)
             return configured
         if not configured:
             logging.getLogger(__name__).warning(
@@ -700,7 +721,11 @@ class OpAMPClient(OpAMPClientInterface):
                 )
                 continue
             mask |= value
-            logging.getLogger(__name__).debug(f"Added to mask {name} - code now {mask}")
+            logging.getLogger(__name__).debug(
+                "Added to mask %s - code now %s",
+                name,
+                mask,
+            )
         return mask
 
     def get_custom_capabilities_payload(self) -> opamp_pb2.CustomCapabilities:
@@ -718,7 +743,7 @@ class OpAMPClient(OpAMPClientInterface):
 
         capabilities = sorted(
             {
-                f"request:{str(fqdn).strip()}"
+                f"{CAPABILITY_PREFIX_REQUEST}{str(fqdn).strip()}"
                 for fqdn in self._custom_handler_lookup.keys()
                 if str(fqdn).strip()
             }
@@ -734,9 +759,9 @@ class OpAMPClient(OpAMPClientInterface):
     def get_host_metadata(self) -> dict[str, str]:
         """Collect basic host metadata as key/value pairs."""
         return {
-            "os_type": platform.system(),
-            "os_version": platform.version(),
-            "hostname": socket.gethostname(),
+            HOST_META_KEY_OS_TYPE: platform.system(),
+            HOST_META_KEY_OS_VERSION: platform.version(),
+            HOST_META_KEY_HOSTNAME: socket.gethostname(),
         }
 
     def handle_error_response(
@@ -750,7 +775,7 @@ class OpAMPClient(OpAMPClientInterface):
                 "*******/nserver error_response message=%s/n*******",
                 error_response.error_message,
             )
-        if error_response.HasField("retry_info"):
+        if error_response.HasField(FIELD_RETRY_INFO):
             logger.warning(
                 "server error_response retry_after_nanoseconds=%s",
                 error_response.retry_info.retry_after_nanoseconds,
@@ -879,7 +904,7 @@ class OpAMPClient(OpAMPClientInterface):
         """Run a periodic polling loop that updates last heartbeat results."""
         logger = logging.getLogger(__name__)
         interval = max(0, int(self.config.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
-        logger.debug(f"Heartbeat cycle start - checking every {interval}")
+        logger.debug("Heartbeat cycle start - checking every %s", interval)
         try:
             while self.data.allow_heartbeat:
                 await asyncio.sleep(interval)
@@ -894,17 +919,17 @@ class OpAMPClient(OpAMPClientInterface):
                         self.add_agent_version(port)
                         self.data.last_heartbeat_http_codes = codes
                     if self.config.log_agent_api_responses and self.data.logFLB:
-                        logger.debug(f"Heartbeat outcome --> {results}")
+                        logger.debug("Heartbeat outcome --> %s", results)
 
                     logger.info("Heartbeat response codes: %s", codes)
 
                 except KeyboardInterrupt as kb:
-                    logger.error(f"Error - a disturbance in the force\n {kb}")
+                    logger.error("Error - a disturbance in the force\n %s", kb)
                     self.data.allow_heartbeat = False
                     await self._send_disconnect_with_timeout()
                     break
                 except Exception as err:
-                    logger.error(f"Something stumbled - we catch and carry on\n {err}")
+                    logger.error("Something stumbled - we catch and carry on\n %s", err)
                     self.data.last_heartbeat_results = None
                     self.data.last_heartbeat_http_codes = None
 
@@ -912,7 +937,9 @@ class OpAMPClient(OpAMPClientInterface):
         except BaseException as err:
             await self._send_disconnect_with_timeout()
             logger.error(
-                f"heartbeat outer error trap triggered by:\n{err}\n {traceback.format_exc()}"
+                "heartbeat outer error trap triggered by:\n%s\n %s",
+                err,
+                traceback.format_exc(),
             )
             print("...ouch, bye")
 
@@ -927,15 +954,16 @@ def check_semaphore() -> bool:
 def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
     """Load Fluent Bit config values and agent metadata into the config object."""
     logger = logging.getLogger(__name__)
-    logger.warning(f"All config is {config}")
+    logger.warning("All config is %s", config)
     path = config.agent_config_path
     if not path:
         raise ValueError(f"{CFG_AGENT_CONFIG_PATH} is not set")
 
-    comment_kv = re.compile(
-        rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*[:=]\s*(?P<value>.+?)\s*$",
-        re.IGNORECASE,
+    comment_pattern = (
+        rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
+        r"[:=]\s*(?P<value>.+?)\s*$"
     )
+    comment_kv = re.compile(comment_pattern, re.IGNORECASE)
     config_kv = re.compile(
         r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
         re.IGNORECASE,
@@ -953,10 +981,10 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                     if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
                         value = resolve_service_instance_id_template(value)
                     config[key] = value
-                    logger.info(f"located >{key}< with value >{value}<")
+                    logger.info("located >%s< with value >%s<", key, value)
                     continue
                 except KeyError:
-                    logger.error(f"barfed with comment match {key} --> {value}")
+                    logger.error("barfed with comment match %s --> %s", key, value)
                     continue
 
             config_match = config_kv.match(raw_line)
@@ -968,19 +996,19 @@ def load_fluentbit_config(config: consumer_config.ConsumerConfig) -> ConsumerCon
                         port_value = int(value)
                         config.client_status_port = port_value
                         config.agent_http_port = port_value
-                        logger.info(f"located >{key}< with value >{value}<")
+                        logger.info("located >%s< with value >%s<", key, value)
                     elif key == KEY_HTTP_LISTEN:
                         config.agent_http_listen = value
-                        logger.info(f"located >{key}< with value >{value}<")
+                        logger.info("located >%s< with value >%s<", key, value)
                     elif key == KEY_HTTP_SERVER:
                         config.agent_http_server = value
-                        logger.info(f"located >{key}< with value >{value}<")
+                        logger.info("located >%s< with value >%s<", key, value)
                     else:
                         config[key] = value
-                        logger.info(f"located >{key}< with value >{value}<")
+                        logger.info("located >%s< with value >%s<", key, value)
                     continue
                 except KeyError:
-                    logger.error(f"barfed with config match {key} --> {value}")
+                    logger.error("barfed with config match %s --> %s", key, value)
                     continue
 
     return config
@@ -1059,7 +1087,12 @@ def main() -> None:
         parser.add_argument("--config-path", type=str)
         parser.add_argument("--server-url", type=str)
         parser.add_argument("--server-port", type=int)
-        parser.add_argument("--agent-config-path", "--fluentbit-config-path", dest="agent_config_path", type=str)
+        parser.add_argument(
+            "--agent-config-path",
+            "--fluentbit-config-path",
+            dest="agent_config_path",
+            type=str,
+        )
         parser.add_argument(
             "--agent-additional-params",
             "--additional-agent-params",
