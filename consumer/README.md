@@ -74,10 +74,10 @@ Use this minimal config for a fast local startup:
 | `consumer.agent_config_path` | string | Yes (`--agent-config-path`) | Path to agent config file loaded by consumer. | `"./fluent-bit.conf"` |
 | `consumer.agent_additional_params` | array[string] | Yes (`--agent-additional-params`) | Extra args passed to the launched agent process. | `["-R"]` |
 | `consumer.heartbeat_frequency` | integer | Yes (`--heartbeat-frequency`) | Heartbeat interval in seconds. | `30` |
+| `consumer.log_level` | string | Yes (`--log-level`) | Consumer log level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Resolved via Python `logging` names. | `"debug"` |
 | `consumer.transport` | string | No | OpAMP transport mode (`http` or `websocket`). | `"http"` |
 | `consumer.log_agent_api_responses` | boolean | No | Enables verbose logging of local API responses. | `false` |
 | `consumer.allow_custom_capabilities` | boolean | No | Enables publishing/discovery of custom capabilities. | `true` |
-| `consumer.log_level` | string | No | Consumer log level (`debug`, `info`, `warning`, `error`, `critical`). | `"debug"` |
 | `consumer.service_name` | string | No | Reported service name in agent description. | `"Fluentbit"` |
 | `consumer.service_namespace` | string | No | Reported service namespace in agent description. | `"FluentBitNS"` |
 | `consumer.client_status_port` | integer | No | Local status polling port. If unset, parsed from agent config `http_port`. | `2020` |
@@ -124,7 +124,8 @@ python -m opamp_consumer.client \
   --server-port 4320 \
   --agent-config-path ./fluent-bit.conf \
   --agent-additional-params -R \
-  --heartbeat-frequency 15
+  --heartbeat-frequency 15 \
+  --log-level INFO
 ```
 
 ## Run Scripts
