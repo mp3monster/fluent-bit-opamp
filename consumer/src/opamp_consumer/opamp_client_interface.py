@@ -47,5 +47,47 @@ class OpAMPClientInterface(ABC):
         """Handle a custom message received from the server."""
 
     @abstractmethod
+    def handle_custom_capabilities(
+        self, custom_capabilities: opamp_pb2.CustomCapabilities
+    ) -> None:
+        """Handle custom capability declarations received from the server."""
+
+    @abstractmethod
+    def handle_connection_settings(
+        self, connection_settings: opamp_pb2.ConnectionSettingsOffers
+    ) -> None:
+        """Handle connection settings sent by the server."""
+
+    @abstractmethod
+    def handle_packages_available(
+        self, packages_available: opamp_pb2.PackagesAvailable
+    ) -> None:
+        """Handle package availability payloads sent by the server."""
+
+    @abstractmethod
+    def handle_remote_config(self, remote_config: opamp_pb2.AgentRemoteConfig) -> None:
+        """Handle remote configuration payloads sent by the server."""
+
+    @abstractmethod
+    def poll_local_status_with_codes(
+        self, port: int
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Poll local agent endpoints and return response text and status code maps."""
+
+    @abstractmethod
+    def add_agent_version(self, port: int) -> None:
+        """Fetch and cache agent version details from the local status endpoint."""
+
+    @abstractmethod
+    def get_agent_description(
+        self, instance_uid: bytes | str | None = None
+    ) -> opamp_pb2.AgentDescription:
+        """Build and return AgentDescription metadata for outbound OpAMP payloads."""
+
+    @abstractmethod
+    def get_agent_capabilities(self) -> int:
+        """Build and return agent capability bitmask for outbound OpAMP payloads."""
+
+    @abstractmethod
     def finalize(self) -> None:
         """Finalize the client and release resources."""

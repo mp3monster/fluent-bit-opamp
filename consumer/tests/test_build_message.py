@@ -13,7 +13,7 @@
 import opamp_consumer.client as client
 from opamp_consumer.client import (
     build_minimal_agent,
-    load_fluentbit_config,
+    load_agent_config,
     resolve_service_instance_id_template,
 )
 from opamp_consumer.config import ConsumerConfig
@@ -49,7 +49,7 @@ Flush 1
         log_level="debug",
     )
     client.CONFIG = config
-    load_fluentbit_config(config)
+    load_agent_config(config)
 
     assert config.agent_description == "test-agent"
     assert config.service_instance_id == "abcdef1234567890"
@@ -95,6 +95,6 @@ HTTP_Port 2020
         log_level="debug",
     )
 
-    load_fluentbit_config(config)
+    load_agent_config(config)
 
     assert config.service_instance_id == "edge-01-192.168.10.5-00:11:22:33:44:55"

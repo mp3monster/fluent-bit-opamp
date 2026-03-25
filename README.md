@@ -10,7 +10,6 @@ This repository hosts a small OpAMP provider (server) and consumer (client) setu
 - [docs/scripts.md](docs/scripts.md) — script reference table by platform.
 - [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](provider/README.md) — provider configuration and web UI notes.
-- [shared/scripts/notes.md](shared/scripts/notes.md) — shared script notes.
 - [future_features.md](future_features.md) — backlog and ideas for future work.
 
 ## Folder summary
@@ -23,5 +22,4 @@ This repository hosts a small OpAMP provider (server) and consumer (client) setu
 - `provider` — the OpAMP provider (server) package, UI, and tests.
 - `scripts` — helper run and shutdown scripts.
 - `shared` — shared utilities used by provider/consumer.
-- `src` — top-level Python package glue (if needed for tooling).
 - `tests` — repository-level tests.

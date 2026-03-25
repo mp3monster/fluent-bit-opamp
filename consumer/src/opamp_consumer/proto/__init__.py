@@ -8,11 +8,13 @@ import sys
 
 
 def _generated_exists() -> bool:
+    """Return True when generated consumer protobuf modules already exist on disk."""
     here = pathlib.Path(__file__).resolve().parent
     return (here / "opamp_pb2.py").exists() and (here / "anyvalue_pb2.py").exists()
 
 
 def _ensure() -> None:
+    """Generate protobuf Python modules on demand when generated files are missing."""
     if _generated_exists():
         return
     from . import ensure

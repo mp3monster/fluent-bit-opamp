@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -35,6 +36,7 @@ CFG_WEBUI_PORT = "webui_port"
 CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"
 CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"
 CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"
+CFG_LOG_LEVEL = "log_level"
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
@@ -42,6 +44,7 @@ DEFAULT_WEBUI_PORT = 8080
 DEFAULT_MINUTES_KEEP_DISCONNECTED = 30
 DEFAULT_RETRY_AFTER_SECONDS = 30
 DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50
+DEFAULT_LOG_LEVEL = "INFO"
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,18 @@ class ProviderConfig:
     minutes_keep_disconnected: int
     retry_after_seconds: int
     client_event_history_size: int
+    log_level: str
+
+
+def resolve_log_level(log_level: str | None) -> int:
+    """Resolve a log level name to a logging level using logging's level map."""
+    normalized_level = str(log_level or DEFAULT_LOG_LEVEL).strip().upper()
+    # Use getLevelName() for compatibility with Python 3.10 where
+    # getLevelNamesMapping() is not available.
+    level = logging.getLevelName(normalized_level)
+    if isinstance(level, int):
+        return level
+    return logging.INFO
 
 
 def _repo_root() -> pathlib.Path:
@@ -105,12 +120,14 @@ def load_config() -> ProviderConfig:
                 )
             ),
         ),
+        log_level=str(provider_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL)),
     )
 
 
 def load_config_with_overrides(
     *,
     config_path: pathlib.Path | None,
+    log_level: str | None,
 ) -> ProviderConfig:
     """Load provider config with CLI overrides applied."""
     base_raw = _load_json(config_path or _config_path())
@@ -137,6 +154,9 @@ def load_config_with_overrides(
                 )
             ),
         ),
+        log_level=str(provider_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL))
+        if log_level is None
+        else str(log_level),
     )
 
 
@@ -155,6 +175,7 @@ def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig
         minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
         retry_after_seconds=CONFIG.retry_after_seconds,
         client_event_history_size=CONFIG.client_event_history_size,
+        log_level=CONFIG.log_level,
     )
     set_config(config)
     return config

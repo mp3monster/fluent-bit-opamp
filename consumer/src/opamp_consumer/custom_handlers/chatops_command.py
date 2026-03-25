@@ -40,34 +40,32 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
     """Stub ChatOps command handler."""
 
     def __init__(self) -> None:
-        # Keep runtime state for configuration and parsed message payload, so
-        # execute_action can operate without reparsing raw protobuf fields.
+        """Initialize runtime fields used to route and execute ChatOps requests."""
         super().__init__()
         self._data: OpAMPClientData | None = None
         self._payload_data: dict[str, object] = {}
 
     def set_client_data(self, data: OpAMPClientData) -> None:
-        # Capture client runtime/config values (notably HTTP port) used to route
-        # local ChatOps requests during execution.
-        #
-        # Parameters:
-        # - data: Client data object containing configuration and runtime state.
+        """Store client runtime/config data used while building local ChatOps calls.
+
+        Args:
+            data: Client runtime state and configuration.
+        """
         logging.getLogger(__name__).info("ChatOpsCommand.set_client_data called")
         self._data = data
 
     def get_fqdn(self) -> str:
-        # Return the capability identifier used by registry lookup and message
-        # routing so this handler only processes matching custom commands.
+        """Return the capability FQDN this handler is responsible for processing."""
         logging.getLogger(__name__).info("ChatOpsCommand.get_fqdn called")
         return CHATOPCOMMAND_CAPABILITY
 
     def handle_message(self, message: str, message_type: str) -> None:
-        # Parse and store the inbound payload once, so execute_action can focus
-        # on HTTP behavior instead of payload decoding concerns.
-        #
-        # Parameters:
-        # - message: JSON payload string from the incoming custom message.
-        # - message_type: Custom message type for logging/diagnostics.
+        """Parse and cache inbound payload data for later action execution.
+
+        Args:
+            message: Raw custom-message body string.
+            message_type: Custom-message type value.
+        """
         self._payload_data = {}
         if message:
             try:
@@ -83,11 +81,11 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
         )
 
     def _build_local_url(self) -> str:
-        # Build the local ChatOps target URL using chat_ops_port and optional
-        # path tag. This centralizes URL rules to keep execute_action simple.
-        #
-        # Returns:
-        # - Fully qualified localhost URL to invoke.
+        """Build the localhost ChatOps endpoint URL from config port and payload tag.
+
+        Returns:
+            Fully-qualified localhost URL for the ChatOps call.
+        """
         port = 8888
         if self._data is not None and self._data.config is not None:
             configured_port = self._data.config.chat_ops_port or 8888
@@ -98,12 +96,11 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
         return f"http://localhost:{port}"
 
     def _parse_attributes_payload(self) -> dict[str, object]:
-        # Convert optional attributes into a JSON object for HTTP body usage.
-        # Accepts both direct dict payloads and escaped JSON strings from custom
-        # command transport, improving compatibility with caller formats.
-        #
-        # Returns:
-        # - Parsed dictionary payload, or empty dict when no valid attributes exist.
+        """Normalize attributes payload into a dict from object, JSON, or escaped JSON.
+
+        Returns:
+            Parsed attributes dictionary, or `{}` when parsing fails.
+        """
         raw_attributes = self._payload_data.get("attributes")
 
         if raw_attributes is None:
@@ -149,15 +146,15 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
         http_code: int,
         response_text: str,
     ) -> opamp_pb2.CustomMessage:
-        # Build a standard failure CustomMessage so upstream code can send a
-        # consistent error response for non-2xx ChatOps HTTP calls.
-        #
-        # Parameters:
-        # - http_code: HTTP response status code from the local ChatOps endpoint.
-        # - response_text: Raw response body text to preserve error detail.
-        #
-        # Returns:
-        # - A populated CustomMessage with type "failure".
+        """Create a failure CustomMessage payload for non-success ChatOps responses.
+
+        Args:
+            http_code: HTTP status code from the ChatOps endpoint.
+            response_text: Raw response body text from the ChatOps endpoint.
+
+        Returns:
+            CustomMessage with failure metadata encoded in `data`.
+        """
         escaped_response = json.dumps(str(response_text))[1:-1]
         payload = opamp_pb2.CustomMessage()
         payload.capability = self.get_fqdn()
@@ -174,16 +171,15 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
     def execute_action(
         self, action: str, opamp_client: OpAMPClientInterface
     ) -> opamp_pb2.CustomMessage | None:
-        # Execute the ChatOps command by calling the local endpoint and convert
-        # non-2xx outcomes into a structured failure CustomMessage.
-        #
-        # Parameters:
-        # - action: Requested action name from payload (currently logged only).
-        # - opamp_client: Client interface instance (available for parity with
-        #   handler contract; not directly used by this implementation).
-        #
-        # Returns:
-        # - None for success, or a failure CustomMessage for non-2xx responses.
+        """Invoke local ChatOps endpoint and return failure payload for non-2xx status.
+
+        Args:
+            action: Action name associated with the custom command.
+            opamp_client: Active OpAMP client instance invoking this handler.
+
+        Returns:
+            None for success, else a failure CustomMessage.
+        """
         logger = logging.getLogger(__name__)
         logger.info(
             "ChatOpsCommand.execute_action called action=%s opamp_client=%s",

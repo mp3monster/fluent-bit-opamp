@@ -10,10 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from opamp.cli import main
+from shared.opamp_config import UTF8_ENCODING
 
 
-def test_main_runs(capsys) -> None:
-    main()
-    captured = capsys.readouterr()
-    assert "ready" in captured.out
+def test_shared_constants_available() -> None:
+    assert UTF8_ENCODING == "utf-8"

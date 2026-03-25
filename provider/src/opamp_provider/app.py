@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Set
+from typing import Callable
 import logging
 import os
 import pathlib
@@ -38,11 +38,15 @@ from opamp_provider.commands import (
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.mcptool import register_mcp_transport, register_tool_routes
 from opamp_provider.proto import opamp_pb2
-from opamp_provider.state import STORE
+from opamp_provider.state import STORE, ClientRecord
 from opamp_provider.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
     OPAMP_TRANSPORT_HEADER_NONE,
+    PB_FIELD_COMMAND,
+    PB_FIELD_CONNECTION_SETTINGS_REQUEST,
+    PB_FIELD_CUSTOM_MESSAGE,
+    PB_FIELD_PACKAGE_STATUSES,
     ServerCapabilities,
     UTF8_ENCODING,
 )
@@ -141,6 +145,40 @@ def _build_package_available(
     response = _build_error(
         msg=response, error_message="Package Availability feature not available"
     )
+    return response
+
+
+def _build_agent_remote_config(
+    response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
+) -> opamp_pb2.ServerToAgent:
+    """Placeholder builder for AgentRemoteConfig server offers."""
+    logger.info("%s: TBD", _build_agent_remote_config.__name__)
+    return response
+
+
+def _build_connection_settings_offers(
+    response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
+) -> opamp_pb2.ServerToAgent:
+    """Placeholder builder for ConnectionSettingsOffers server offers."""
+    logger.info("%s: TBD", _build_connection_settings_offers.__name__)
+    return response
+
+
+def _build_packages_available(
+    response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
+) -> opamp_pb2.ServerToAgent:
+    """Placeholder builder for PackagesAvailable server offers."""
+    logger.info("%s: TBD", _build_packages_available.__name__)
+    return response
+
+
+def _build_offer_payloads(
+    response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
+) -> opamp_pb2.ServerToAgent:
+    """Apply placeholder offer builders for request-driven server payloads."""
+    response = _build_agent_remote_config(response, request_msg)
+    response = _build_connection_settings_offers(response, request_msg)
+    response = _build_packages_available(response, request_msg)
     return response
 
 
@@ -251,8 +289,8 @@ def _apply_command_intent(
         "created command intent payload summary client classifier=%s action=%s has_command=%s has_custom_message=%s",
         classifier,
         action,
-        updated_response.HasField("command"),
-        updated_response.HasField("custom_message"),
+        updated_response.HasField(PB_FIELD_COMMAND),
+        updated_response.HasField(PB_FIELD_CUSTOM_MESSAGE),
     )
     return updated_response
 
@@ -281,7 +319,7 @@ def _apply_next_action(
 def _build_response(
     request_msg: opamp_pb2.AgentToServer,
     pending_command: CommandRecord | None,
-    client_id: str | None = None,
+    client: ClientRecord | None = None,
     channel: str | None = None,
 ) -> opamp_pb2.ServerToAgent:
     """Build a minimal ServerToAgent response for a request."""
@@ -297,19 +335,13 @@ def _build_response(
     custom_capabilities = get_custom_capabilities_list()
     if custom_capabilities:
         response.custom_capabilities.capabilities.extend(custom_capabilities)
-    if client_id:
-        pending_identification = STORE.pop_agent_identification(client_id)
+    if client:
+        pending_identification = STORE.pop_agent_identification(client.client_id)
         if pending_identification:
             response.agent_identification.new_instance_uid = pending_identification
-    # TODO(opamp): Implement operations that respond to AgentToServer fields:
-    # - remote config offers (AgentRemoteConfig)
-    # - connection settings offers (ConnectionSettingsOffers)
-    # - packages available (PackagesAvailable)
-    # - commands (ServerToAgentCommand)
-    # - custom capabilities and custom messages
-    # - instance UID reassignment (AgentIdentification)
-    if channel == CHANNEL_HTTP and client_id:
-        next_action = STORE.pop_next_action(client_id)
+    response = _build_offer_payloads(response, request_msg)
+    if channel == CHANNEL_HTTP and client:
+        next_action = STORE.pop_next_action(client.client_id)
         if next_action:
             response = _apply_next_action(
                 response, action=next_action, pending_command=pending_command
@@ -350,7 +382,8 @@ def _build_error(
         response.error_response.retry_info.retry_after_nanoseconds = retry_ns
 
     logging.getLogger(__name__).info(
-        f"Constructed an error response to transmit: {response.error_response}"
+        "Constructed an error response to transmit: %s",
+        response.error_response,
     )
     return response
 
@@ -366,10 +399,10 @@ async def opamp_http() -> Response:
 
         logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
         unsupported = []
-        if agent_msg.HasField("package_statuses"):
-            unsupported.append("package_statuses")
-        if agent_msg.HasField("connection_settings_request"):
-            unsupported.append("connection_settings_request")
+        if agent_msg.HasField(PB_FIELD_PACKAGE_STATUSES):
+            unsupported.append(PB_FIELD_PACKAGE_STATUSES)
+        if agent_msg.HasField(PB_FIELD_CONNECTION_SETTINGS_REQUEST):
+            unsupported.append(PB_FIELD_CONNECTION_SETTINGS_REQUEST)
         if unsupported:
             response_msg = opamp_pb2.ServerToAgent()
             response_msg.instance_uid = agent_msg.instance_uid
@@ -386,23 +419,16 @@ async def opamp_http() -> Response:
             )
         client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
         pending_command = STORE.next_pending_command(client.client_id)
-
-        # TODO(opamp): Implement per-operation processing for HTTP transport:
-        # - status/health updates
-        # - effective config reporting
-        # - remote config status
-        # - package statuses
-        # - connection settings requests and status
-        # - custom messages
         response_msg = _build_response(
             agent_msg,
             pending_command,
-            client.client_id,
+            client=client,
             channel=CHANNEL_HTTP,
         )
         payload = response_msg.SerializeToString()
         if pending_command is not None and (
-            response_msg.HasField("command") or response_msg.HasField("custom_message")
+            response_msg.HasField(PB_FIELD_COMMAND)
+            or response_msg.HasField(PB_FIELD_CUSTOM_MESSAGE)
         ):
             STORE.mark_command_sent(client.client_id, pending_command)
             logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
@@ -449,17 +475,10 @@ async def opamp_ws() -> None:
                     )
                     _WEBSOCKET_CLIENTS[websocket] = client.client_id
                     pending_command = STORE.next_pending_command(client.client_id)
-                    # TODO(opamp): Implement per-operation processing for WebSocket transport:
-                    # - status/health updates
-                    # - effective config reporting
-                    # - remote config status
-                    # - package statuses
-                    # - connection settings requests and status
-                    # - custom messages
                     response_msg = _build_response(
                         agent_msg,
                         pending_command,
-                        client.client_id,
+                        client=client,
                         channel=CHANNEL_WEBSOCKET,
                     )
             except ValueError as exc:
@@ -479,8 +498,8 @@ async def opamp_ws() -> None:
 
             out_payload = response_msg.SerializeToString()
             await websocket.send(encode_message(out_payload))
-            if response_msg.HasField("command") or response_msg.HasField(
-                "custom_message"
+            if response_msg.HasField(PB_FIELD_COMMAND) or response_msg.HasField(
+                PB_FIELD_CUSTOM_MESSAGE
             ):
                 STORE.mark_command_sent(client.client_id, pending_command)
                 logger.info(

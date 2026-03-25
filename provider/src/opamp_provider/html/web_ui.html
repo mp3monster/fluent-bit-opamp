@@ -32,6 +32,19 @@
       min-height: 100vh;
     }
 
+    body.shutdown-armed {
+      background: radial-gradient(circle at top left, #ffe3e1 0%, #ffd5d1 55%, #ffc4bf 100%);
+    }
+
+    body.shutdown-armed::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: rgba(228, 87, 78, 0.28);
+      pointer-events: none;
+      z-index: 40;
+    }
+
     header {
       padding: 28px 36px 16px;
     }
@@ -1777,18 +1790,23 @@
     async function requestShutdown() {
       const ok = window.confirm("Shutdown the OpAMP server? This will stop the process.");
       if (!ok) return;
+      document.body.classList.add("shutdown-armed");
       shutdownButton.disabled = true;
       shutdownButton.textContent = "Shutting down...";
-      const resp = await fetch("/api/shutdown", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: true }),
-      });
-      if (!resp.ok) {
-        shutdownButton.disabled = false;
-        shutdownButton.textContent = "Shutdown Server";
-        window.alert("Shutdown request failed.");
+      try {
+        const resp = await fetch("/api/shutdown", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true }),
+        });
+        if (resp.ok) return;
+      } catch (_error) {
+        // Fall through to reset UI and show failure prompt.
       }
+      document.body.classList.remove("shutdown-armed");
+      shutdownButton.disabled = false;
+      shutdownButton.textContent = "Shutdown Server";
+      window.alert("Shutdown request failed.");
     }
 
     function scheduleRefresh() {

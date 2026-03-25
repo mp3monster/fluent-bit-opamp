@@ -69,6 +69,40 @@ class _FakeOpAMPClient(OpAMPClientInterface):
     def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
         return None
 
+    def handle_custom_capabilities(
+        self, custom_capabilities: opamp_pb2.CustomCapabilities
+    ) -> None:
+        return None
+
+    def handle_connection_settings(
+        self, connection_settings: opamp_pb2.ConnectionSettingsOffers
+    ) -> None:
+        return None
+
+    def handle_packages_available(
+        self, packages_available: opamp_pb2.PackagesAvailable
+    ) -> None:
+        return None
+
+    def handle_remote_config(self, remote_config: opamp_pb2.AgentRemoteConfig) -> None:
+        return None
+
+    def poll_local_status_with_codes(
+        self, port: int
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        return {}, {}
+
+    def add_agent_version(self, port: int) -> None:
+        return None
+
+    def get_agent_description(
+        self, instance_uid: bytes | str | None = None
+    ) -> opamp_pb2.AgentDescription:
+        return opamp_pb2.AgentDescription()
+
+    def get_agent_capabilities(self) -> int:
+        return 0
+
     def finalize(self) -> None:
         return None
 

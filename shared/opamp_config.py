@@ -3,91 +3,97 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Iterable
 import logging
+from typing import Any, Iterable
 
 
 class AgentCapabilities(IntEnum):
     """Agent capability bit flags from OpAMP specification."""
 
-    # The capabilities field is unspecified.
     Unspecified = 0x00000000
-    # The Agent can report status (required).
     ReportsStatus = 0x00000001
-    # The Agent can accept remote configuration from the Server.
     AcceptsRemoteConfig = 0x00000002
-    # The Agent will report EffectiveConfig in AgentToServer.
     ReportsEffectiveConfig = 0x00000004
-    # The Agent can accept package offers.
     AcceptsPackages = 0x00000008
-    # The Agent can report package status.
     ReportsPackageStatuses = 0x00000010
-    # The Agent can report own traces via connection settings.
     ReportsOwnTraces = 0x00000020
-    # The Agent can report own metrics via connection settings.
     ReportsOwnMetrics = 0x00000040
-    # The Agent can report own logs via connection settings.
     ReportsOwnLogs = 0x00000080
-    # The Agent can accept OpAMP connection settings.
     AcceptsOpAMPConnectionSettings = 0x00000100
-    # The Agent can accept other connection settings.
     AcceptsOtherConnectionSettings = 0x00000200
-    # The Agent can accept restart commands.
     AcceptsRestartCommand = 0x00000400
-    # The Agent will report health.
     ReportsHealth = 0x00000800
-    # The Agent will report remote config status.
     ReportsRemoteConfig = 0x00001000
-    # The Agent can report heartbeats.
     ReportsHeartbeat = 0x00002000
-    # The Agent will report available components.
     ReportsAvailableComponents = 0x00004000
-    # The Agent will report connection settings status.
     ReportsConnectionSettingsStatus = 0x00008000
 
 
 AGENT_CAPABILITIES_MAP: dict[str, int] = {
     name: int(value) for name, value in AgentCapabilities.__members__.items()
 }
-# Backward-compatible alias used by older call sites/tests.
 AGENT_CAPABILITIES_MAP["UnspecifiedAgentCapability"] = int(AgentCapabilities.Unspecified)
 
 
 class ServerCapabilities(IntEnum):
     """Server capability bit flags from OpAMP specification."""
 
-    # The capabilities field is unspecified.
     Unspecified = 0x00000000
-    # The Server can accept status reports (required).
     AcceptsStatus = 0x00000001
-    # The Server can offer remote configuration to the Agent.
     OffersRemoteConfig = 0x00000002
-    # The Server can accept EffectiveConfig in AgentToServer.
     AcceptsEffectiveConfig = 0x00000004
-    # The Server can offer packages.
     OffersPackages = 0x00000008
-    # The Server can accept package status.
     AcceptsPackagesStatus = 0x00000010
-    # The Server can offer connection settings.
     OffersConnectionSettings = 0x00000020
-    # The Server can accept connection settings requests.
     AcceptsConnectionSettingsRequest = 0x00000040
 
 
-OPAMP_HTTP_PATH = "/v1/opamp"  # Standard OpAMP HTTP/WebSocket path.
-UTF8_ENCODING = "utf-8"  # Default UTF-8 encoding name.
-OPAMP_TRANSPORT_HEADER_NONE = 0  # OpAMP transport header value for "no header".
+OPAMP_HTTP_PATH = "/v1/opamp"
+UTF8_ENCODING = "utf-8"
+OPAMP_TRANSPORT_HEADER_NONE = 0
+PB_FIELD_INSTANCE_UID = "instance_uid"
+PB_FIELD_ERROR_RESPONSE = "error_response"
+PB_FIELD_REMOTE_CONFIG = "remote_config"
+PB_FIELD_CONNECTION_SETTINGS = "connection_settings"
+PB_FIELD_PACKAGES_AVAILABLE = "packages_available"
+PB_FIELD_AGENT_IDENTIFICATION = "agent_identification"
+PB_FIELD_COMMAND = "command"
+PB_FIELD_CUSTOM_CAPABILITIES = "custom_capabilities"
+PB_FIELD_CUSTOM_MESSAGE = "custom_message"
+PB_FIELD_RETRY_INFO = "retry_info"
+PB_FIELD_AGENT_DESCRIPTION = "agent_description"
+PB_FIELD_AGENT_DISCONNECT = "agent_disconnect"
+PB_FIELD_HEALTH = "health"
+PB_FIELD_PACKAGE_STATUSES = "package_statuses"
+PB_FIELD_CONNECTION_SETTINGS_REQUEST = "connection_settings_request"
+PB_FLAG_REPORT_FULL_STATE = "ReportFullState"
 
 
 def parse_capabilities(names: Iterable[str], enum_cls: type[IntEnum]) -> int:
     """Convert capability names into a bitmask for the given enum class."""
     mask = 0
     if not isinstance(names, Iterable):
-        logging.getLogger(__name__).warning(f"unknown capability: {names}")
+        logging.getLogger(__name__).warning("unknown capability: %s", names)
     else:
         for name in names:
             try:
                 mask |= int(enum_cls[name])
             except KeyError:
-                logging.getLogger(__name__).warning(f"unknown capability: {name}")
+                logging.getLogger(__name__).warning("unknown capability: %s", name)
     return mask
+
+
+def anyvalue_to_string(value: Any) -> str | None:
+    """Convert a protobuf AnyValue-like object into a string representation."""
+    kind = value.WhichOneof("value")
+    if kind == "string_value":
+        return value.string_value
+    if kind == "bytes_value":
+        return value.bytes_value.hex()
+    if kind == "int_value":
+        return str(value.int_value)
+    if kind == "bool_value":
+        return "true" if value.bool_value else "false"
+    if kind == "double_value":
+        return str(value.double_value)
+    return None

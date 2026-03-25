@@ -114,6 +114,12 @@ class ConsumerConfig:
     agent_http_server: str | None = None  # Parsed agent internal HTTP server setting.
 
     def __setitem__(self, key, value):
+        """Support dict-style assignment by forwarding writes to dataclass attributes.
+
+        Args:
+            key: Attribute name to set.
+            value: Value to assign to the target attribute.
+        """
         return setattr(self, key, value)
 
     @property
@@ -140,16 +146,14 @@ class ConsumerConfig:
 
 
 def resolve_log_level(log_level: str) -> int:
-    """Map a string log level to a logging module constant."""
-    normalized_level = log_level.strip().upper()
-    level_map = {
-        "CRITICAL": logging.CRITICAL,
-        "ERROR": logging.ERROR,
-        "WARNING": logging.WARNING,
-        "INFO": logging.INFO,
-        "DEBUG": logging.DEBUG,
-    }
-    return level_map.get(normalized_level, logging.DEBUG)
+    """Resolve a log level name to a logging level using logging's level map."""
+    normalized_level = str(log_level or DEFAULT_LOG_LEVEL).strip().upper()
+    # Use getLevelName() for compatibility with Python 3.10 where
+    # getLevelNamesMapping() is not available.
+    level = logging.getLevelName(normalized_level)
+    if isinstance(level, int):
+        return level
+    return logging.DEBUG
 
 
 def _repo_root() -> pathlib.Path:
@@ -181,7 +185,7 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
         logger.error("No file to load")
         return None
     else:
-        logger.debug("Have a path - %d", path)
+        logger.debug("Have a path - %s", path)
 
     if not path.exists():
         logger.error("path doesn't exist")
@@ -333,6 +337,7 @@ def load_config_with_overrides(
     agent_config_path: str | None,
     agent_additional_params: list[str] | None,
     heartbeat_frequency: int | None,
+    log_level: str | None,
 ) -> ConsumerConfig:
     """Load config and apply CLI overrides for the consumer."""
     logger = logging.getLogger(__name__)
@@ -372,6 +377,13 @@ def load_config_with_overrides(
         override=heartbeat_frequency,
         default=30,
     )
+    resolved_log_level = _resolve_config_value(
+        mapping=consumer_raw,
+        key=CFG_LOG_LEVEL,
+        logger=logger,
+        override=log_level,
+        default=DEFAULT_LOG_LEVEL,
+    )
 
     if not resolved_agent_config_path:
         raise ValueError(f"{CFG_CONSUMER}.{CFG_AGENT_CONFIG_PATH} is required")
@@ -405,8 +417,7 @@ def load_config_with_overrides(
             consumer_raw.get(CFG_CLIENT_STATUS_PORT)
         ),
         chat_ops_port=_coerce_optional_int(consumer_raw.get(CFG_CHAT_OPS_PORT)),
-        log_level=consumer_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL)
-        or DEFAULT_LOG_LEVEL,
+        log_level=str(resolved_log_level or DEFAULT_LOG_LEVEL),
     )
 
 

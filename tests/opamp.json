@@ -22,6 +22,7 @@
     "delayed_comms_seconds": 60,
     "significant_comms_seconds": 300,
     "webui_port": 8080,
-    "client_event_history_size": 50
+    "client_event_history_size": 50,
+    "log_level": "INFO"
   }
 }

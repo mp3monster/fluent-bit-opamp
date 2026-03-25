@@ -32,14 +32,27 @@ def main() -> None:
         type=int,
         help="port for the OpAMP provider/web UI (defaults to config webui_port)",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        help="logging level name override (for example DEBUG, INFO, WARNING)",
+    )
     args = parser.parse_args()
 
     config = provider_config.load_config_with_overrides(
         config_path=pathlib.Path(args.config_path) if args.config_path else None,
+        log_level=args.log_level,
     )
     provider_config.set_config(config)
 
-    logging.basicConfig(level=logging.DEBUG)
+    resolved_log_level = provider_config.resolve_log_level(config.log_level)
+    root_logger = logging.getLogger()
+    # Do not force-reconfigure handlers here. In tests/tools, handlers may be
+    # preinstalled (for capture), and replacing them can break stream lifecycle.
+    if not root_logger.handlers:
+        logging.basicConfig(level=resolved_log_level)
+    else:
+        root_logger.setLevel(resolved_log_level)
     port = args.port if args.port is not None else config.webui_port
     app.run(host=args.host, port=port)
 

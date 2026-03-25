@@ -25,7 +25,7 @@ def test_server_main_invokes_app(monkeypatch) -> None:
         called["host"] = host
         called["port"] = port
 
-    def fake_load_config_with_overrides(*, config_path):
+    def fake_load_config_with_overrides(*, config_path, log_level):
         return ProviderConfig(
             delayed_comms_seconds=60,
             significant_comms_seconds=300,
@@ -33,6 +33,7 @@ def test_server_main_invokes_app(monkeypatch) -> None:
             minutes_keep_disconnected=30,
             retry_after_seconds=30,
             client_event_history_size=50,
+            log_level="INFO",
         )
 
     def fake_set_config(config):

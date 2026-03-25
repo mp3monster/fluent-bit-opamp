@@ -16,7 +16,9 @@ Example `opamp.json`:
     "significant_comms_seconds": 300,
     "webui_port": 8080,
     "minutes_keep_disconnected": 5,
-    "retryAfterSeconds": 30
+    "retryAfterSeconds": 30,
+    "client_event_history_size": 50,
+    "log_level": "INFO"
   }
 }
 ```
@@ -34,6 +36,19 @@ Example `opamp.json`:
   purged during UI refresh at half this interval.
 - `provider.retryAfterSeconds` (integer, optional, default `30`)
   Retry delay (in seconds) used when the server responds with an unavailable error.
+- `provider.client_event_history_size` (integer, optional, default `50`)
+  Maximum number of retained client history events.
+- `provider.log_level` (string, optional, default `INFO`)
+  Provider log level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+  Level names are resolved via Python `logging`.
+
+## CLI Overrides
+
+You can override selected config values at runtime:
+
+- `--config-path` overrides the config file location.
+- `--port` overrides `provider.webui_port`.
+- `--log-level` overrides `provider.log_level`.
 
 ## Run scripts
 

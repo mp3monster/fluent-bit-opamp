@@ -74,6 +74,7 @@ async def test_get_comms_settings() -> None:
         minutes_keep_disconnected=30,
         retry_after_seconds=30,
         client_event_history_size=2,
+        log_level="INFO",
     )
     provider_config.set_config(config)
 
@@ -98,6 +99,7 @@ async def test_put_comms_settings() -> None:
         minutes_keep_disconnected=30,
         retry_after_seconds=30,
         client_event_history_size=2,
+        log_level="INFO",
     )
     provider_config.set_config(config)
 
@@ -125,6 +127,7 @@ async def test_put_comms_settings_rejects_invalid() -> None:
         minutes_keep_disconnected=30,
         retry_after_seconds=30,
         client_event_history_size=2,
+        log_level="INFO",
     )
     provider_config.set_config(config)
 
@@ -192,6 +195,7 @@ async def test_event_history_is_capped_to_configured_size() -> None:
             minutes_keep_disconnected=30,
             retry_after_seconds=30,
             client_event_history_size=2,
+            log_level="INFO",
         )
     )
 

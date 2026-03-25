@@ -18,7 +18,7 @@ import threading
 import logging
 import re
 from enum import Enum
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from google.protobuf import text_format
@@ -27,28 +27,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.event_history import EventHistory
 from opamp_provider.proto import opamp_pb2
+from shared.opamp_config import anyvalue_to_string
 from shared.uuid_utils import generate_uuid7_bytes
 
 
 def _utc_now() -> datetime:
     """Return the current UTC timestamp."""
     return datetime.now(timezone.utc)
-
-
-def _anyvalue_to_string(value: opamp_pb2.AnyValue) -> Optional[str]:
-    """Convert a protobuf AnyValue into a string representation."""
-    kind = value.WhichOneof("value")
-    if kind == "string_value":
-        return value.string_value
-    if kind == "bytes_value":
-        return value.bytes_value.hex()
-    if kind == "int_value":
-        return str(value.int_value)
-    if kind == "bool_value":
-        return "true" if value.bool_value else "false"
-    if kind == "double_value":
-        return str(value.double_value)
-    return None
 
 
 def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
@@ -58,14 +43,14 @@ def _extract_agent_version(agent_msg: opamp_pb2.AgentToServer) -> Optional[str]:
         return None
     for item in agent_desc.identifying_attributes:
         if item.key == "service.version":
-            return _anyvalue_to_string(item.value)
+            return anyvalue_to_string(item.value)
     return None
 
 
 def _capabilities_from_mask(mask: int) -> list[str]:
     """Decode an agent capability bitmask into enum names."""
     capabilities: list[str] = []
-    logging.getLogger(__name__).debug(f"Decoding capability --> {mask}")
+    logging.getLogger(__name__).debug("Decoding capability --> %s", mask)
     for enum_value in opamp_pb2.AgentCapabilities.DESCRIPTOR.values:
         if enum_value.number == 0:
             continue
@@ -77,7 +62,8 @@ def _capabilities_from_mask(mask: int) -> list[str]:
             spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", spaced)
             capabilities.append(spaced)
             logging.getLogger(__name__).debug(
-                f"Capabilities include --> {capabilities[-1]}"
+                "Capabilities include --> %s",
+                capabilities[-1],
             )
     return capabilities
 

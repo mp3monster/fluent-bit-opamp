@@ -37,19 +37,32 @@ class ShutdownCommand(CustomMessageHandlerInterface):
     """Handle shutdown-agent custom command messages from the provider."""
 
     def __init__(self) -> None:
+        """Initialize runtime state used to execute shutdown custom commands."""
         super().__init__()
         self._data: OpAMPClientData | None = None
         self._last_message: str = ""
         self._last_message_type: str = ""
 
     def set_client_data(self, data: OpAMPClientData) -> None:
+        """Attach client runtime data so command execution can update heartbeat flags.
+
+        Args:
+            data: Client runtime state and configuration.
+        """
         self._data = data
         logging.getLogger(__name__).info("ShutdownCommand.set_client_data called")
 
     def get_fqdn(self) -> str:
+        """Return the capability FQDN that routes messages to this handler."""
         return SHUTDOWNCOMMAND_CAPABILITY
 
     def handle_message(self, message: str, message_type: str) -> None:
+        """Store incoming custom message payload details for diagnostics.
+
+        Args:
+            message: Raw custom-message body string.
+            message_type: Custom-message type value.
+        """
         self._last_message = message
         self._last_message_type = message_type
         logging.getLogger(__name__).info(
@@ -61,6 +74,15 @@ class ShutdownCommand(CustomMessageHandlerInterface):
     def execute_action(
         self, action: str, opamp_client: OpAMPClientInterface
     ) -> opamp_pb2.CustomMessage | None:
+        """Send disconnect, stop the agent, and terminate process for shutdown action.
+
+        Args:
+            action: Requested action name from the incoming custom command.
+            opamp_client: Active OpAMP client instance used to send disconnect.
+
+        Returns:
+            Always None. Raises when disconnect fails.
+        """
         logger = logging.getLogger(__name__)
         logger.info(
             "ShutdownCommand.execute_action called action=%s opamp_client=%s",
@@ -77,6 +99,7 @@ class ShutdownCommand(CustomMessageHandlerInterface):
         disconnect_error: list[Exception] = []
 
         def _send_disconnect() -> None:
+            """Run async disconnect send in a helper thread and capture raised errors."""
             try:
                 asyncio.run(opamp_client.send_disconnect())
             except Exception as err:  # pragma: no cover - depends on runtime transport

@@ -29,6 +29,14 @@ if TYPE_CHECKING:
 
 
 def _load_module_from_path(path: pathlib.Path) -> types.ModuleType | None:
+    """Dynamically import a handler module from disk and return it when load succeeds.
+
+    Args:
+        path: Filesystem path to a Python module file.
+
+    Returns:
+        Imported module object, or None when module loading fails.
+    """
     module_name = f"opamp_custom_{path.stem}_{uuid.uuid4().hex}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -42,6 +50,14 @@ def _load_module_from_path(path: pathlib.Path) -> types.ModuleType | None:
 
 
 def _discover_handler_classes(folder: pathlib.Path) -> list[type[CustomMessageHandlerInterface]]:
+    """Discover concrete custom-handler classes from Python modules in a folder.
+
+    Args:
+        folder: Directory containing candidate handler Python files.
+
+    Returns:
+        List of handler class types discovered under the folder.
+    """
     classes: list[type[CustomMessageHandlerInterface]] = []
     for path in folder.glob("*.py"):
         if path.name.startswith("__"):

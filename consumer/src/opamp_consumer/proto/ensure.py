@@ -8,18 +8,22 @@ import sys
 
 
 def _repo_root() -> pathlib.Path:
+    """Return the repository root directory resolved from this module location."""
     return pathlib.Path(__file__).resolve().parents[4]
 
 
 def _proto_dir() -> pathlib.Path:
+    """Return the shared proto source directory used for code generation."""
     return _repo_root() / "proto"
 
 
 def _out_dir() -> pathlib.Path:
+    """Return the consumer protobuf output directory."""
     return pathlib.Path(__file__).resolve().parent
 
 
 def generate() -> None:
+    """Run protoc to generate consumer Python modules from repository proto files."""
     out_dir = _out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     proto_dir = _proto_dir()

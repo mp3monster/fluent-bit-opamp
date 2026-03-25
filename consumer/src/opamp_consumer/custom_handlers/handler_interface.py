@@ -52,6 +52,7 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
     """Defines the contract for custom message handlers."""
 
     def __init__(self) -> None:
+        """Initialize storage for the latest custom message payload."""
         self._custom_message: opamp_pb2.CustomMessage | None = None
 
     @abstractmethod
