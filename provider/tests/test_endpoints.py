@@ -10,10 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import pathlib
+
 import pytest
 
 from opamp_provider.app import (
     ACTION_APPLY_CONFIG,
+    ACTION_CHANGE_CONNECTIONS,
     ACTION_PACKAGE_AVAILABLE,
     app,
 )
@@ -22,6 +26,18 @@ from opamp_provider.config import ProviderConfig
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE
 from opamp_provider.transport import decode_message, encode_message
+
+
+@pytest.fixture(autouse=True)
+def use_temp_opamp_config(tmp_path, monkeypatch) -> pathlib.Path:
+    """Run each endpoint test with an isolated writable opamp.json config path."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    source = root / "tests" / "opamp.json"
+    target = tmp_path / "opamp.json"
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv(provider_config.ENV_OPAMP_CONFIG_PATH, str(target))
+    provider_config.set_config(provider_config.load_config())
+    yield target
 
 
 @pytest.mark.asyncio
@@ -86,6 +102,7 @@ async def test_get_comms_settings() -> None:
     assert payload == {
         "delayed_comms_seconds": 60,
         "significant_comms_seconds": 300,
+        "client_event_history_size": 2,
     }
 
 
@@ -106,7 +123,11 @@ async def test_put_comms_settings() -> None:
     async with app.test_client() as client:
         resp = await client.put(
             "/api/settings/comms",
-            json={"delayed_comms_seconds": 120, "significant_comms_seconds": 600},
+            json={
+                "delayed_comms_seconds": 120,
+                "significant_comms_seconds": 600,
+                "client_event_history_size": 4,
+            },
         )
         assert resp.status_code == 200
         payload = await resp.get_json()
@@ -114,7 +135,34 @@ async def test_put_comms_settings() -> None:
     assert payload == {
         "delayed_comms_seconds": 120,
         "significant_comms_seconds": 600,
+        "client_event_history_size": 4,
     }
+    config_path = pathlib.Path(provider_config.get_effective_config_path())
+    stored = json.loads(config_path.read_text(encoding="utf-8"))
+    provider = stored.get("provider", {})
+    assert provider.get("delayed_comms_seconds") == 120
+    assert provider.get("significant_comms_seconds") == 600
+    assert provider.get("client_event_history_size") == 4
+
+
+@pytest.mark.asyncio
+async def test_put_comms_settings_creates_timestamped_backup_file() -> None:
+    """Verify config persistence creates opamp.json.<date time> backup before overwrite."""
+    config_path = pathlib.Path(provider_config.get_effective_config_path())
+    original_text = config_path.read_text(encoding="utf-8")
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={"delayed_comms_seconds": 121, "significant_comms_seconds": 601},
+        )
+        assert resp.status_code == 200
+
+    backups = sorted(config_path.parent.glob(f"{config_path.name}.*"))
+    assert backups
+    latest_backup = backups[-1]
+    assert latest_backup.read_text(encoding="utf-8") == original_text
+    assert latest_backup.name.startswith(f"{config_path.name}.")
 
 
 @pytest.mark.asyncio
@@ -137,6 +185,156 @@ async def test_put_comms_settings_rejects_invalid() -> None:
             json={"delayed_comms_seconds": 300, "significant_comms_seconds": 60},
         )
         assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_put_comms_settings_rejects_invalid_event_history_size() -> None:
+    """Verify PUT `/api/settings/comms` rejects non-positive client event history size values."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+    )
+    provider_config.set_config(config)
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={
+                "delayed_comms_seconds": 60,
+                "significant_comms_seconds": 300,
+                "client_event_history_size": 0,
+            },
+        )
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_client_settings() -> None:
+    """Verify GET `/api/settings/client` returns default heartbeat frequency."""
+    STORE.set_default_heartbeat_frequency(30, max_events=50)
+    async with app.test_client() as client:
+        resp = await client.get("/api/settings/client")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload == {"default_heartbeat_frequency": 30}
+
+
+@pytest.mark.asyncio
+async def test_get_global_settings_help() -> None:
+    """Verify global-settings help endpoint returns tooltip text map."""
+    async with app.test_client() as client:
+        resp = await client.get("/api/help/global-settings")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    tooltips = payload.get("tooltips", {})
+    fields = payload.get("fields", {})
+    assert isinstance(tooltips, dict)
+    assert isinstance(fields, dict)
+    assert "delayed_comms_seconds" in tooltips
+    assert "significant_comms_seconds" in tooltips
+    assert "client_event_history_size" in tooltips
+    assert "default_heartbeat_frequency" in tooltips
+    assert fields["delayed_comms_seconds"]["label"] == "Delayed Communications Threshold (seconds)"
+    assert fields["significant_comms_seconds"]["label"] == "Significant Communications Threshold (seconds)"
+    assert fields["client_event_history_size"]["label"] == "Client Event History Size"
+
+
+@pytest.mark.asyncio
+async def test_put_client_settings_updates_all_clients_heartbeat_and_events() -> None:
+    """Verify PUT `/api/settings/client` updates all clients heartbeat frequency and appends event history entries."""
+    STORE._clients.clear()
+    STORE.set_default_heartbeat_frequency(30, max_events=50)
+    first_client = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+    first_client.sequence_num = 1
+    second_client = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+    second_client.sequence_num = 1
+    record_a = STORE.upsert_from_agent_msg(first_client, channel="HTTP")
+    record_b = STORE.upsert_from_agent_msg(second_client, channel="HTTP")
+    if record_a.commands:
+        record_a.commands[-1].sent_at = record_a.commands[-1].received_at
+    if record_b.commands:
+        record_b.commands[-1].sent_at = record_b.commands[-1].received_at
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/client",
+            json={"default_heartbeat_frequency": 45},
+        )
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["default_heartbeat_frequency"] == 45
+    assert payload["updated_clients"] == 2
+    updated_a = STORE.get("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    updated_b = STORE.get("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    assert updated_a is not None
+    assert updated_b is not None
+    assert updated_a.heartbeat_frequency == 45
+    assert updated_b.heartbeat_frequency == 45
+    assert updated_a.events[-1].get_event_description() == "send heartbeatfrequency event"
+    assert updated_b.events[-1].get_event_description() == "send heartbeatfrequency event"
+    config_path = pathlib.Path(provider_config.get_effective_config_path())
+    stored = json.loads(config_path.read_text(encoding="utf-8"))
+    provider = stored.get("provider", {})
+    assert provider.get("default_heartbeat_frequency") == 45
+
+
+@pytest.mark.asyncio
+async def test_set_client_heartbeat_frequency_updates_only_target_client() -> None:
+    """Verify per-client heartbeat update only changes the targeted client and appends an event."""
+    STORE._clients.clear()
+    STORE.set_default_heartbeat_frequency(30, max_events=50)
+    first_client = opamp_pb2.AgentToServer(
+        instance_uid=bytes.fromhex("cccccccccccccccccccccccccccccccc")
+    )
+    first_client.sequence_num = 1
+    second_client = opamp_pb2.AgentToServer(
+        instance_uid=bytes.fromhex("dddddddddddddddddddddddddddddddd")
+    )
+    second_client.sequence_num = 1
+    STORE.upsert_from_agent_msg(first_client, channel="HTTP")
+    STORE.upsert_from_agent_msg(second_client, channel="HTTP")
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/clients/cccccccccccccccccccccccccccccccc/heartbeat-frequency",
+            json={"heartbeat_frequency": 75},
+        )
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["client_id"] == "cccccccccccccccccccccccccccccccc"
+    assert payload["heartbeat_frequency"] == 75
+    updated_a = STORE.get("cccccccccccccccccccccccccccccccc")
+    updated_b = STORE.get("dddddddddddddddddddddddddddddddd")
+    assert updated_a is not None
+    assert updated_b is not None
+    assert updated_a.heartbeat_frequency == 75
+    assert updated_b.heartbeat_frequency == 30
+    assert updated_a.events[-1].get_event_description() == "send heartbeatfrequency event"
+    assert all(
+        event.get_event_description() != "send heartbeatfrequency event"
+        for event in updated_b.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_client_heartbeat_frequency_unknown_client_returns_404() -> None:
+    """Verify per-client heartbeat update returns not found for unknown client IDs."""
+    STORE._clients.clear()
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/clients/unknown-client/heartbeat-frequency",
+            json={"heartbeat_frequency": 45},
+        )
+        assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -180,6 +378,46 @@ async def test_queue_restart_command_and_emit_restart_payload() -> None:
         server_msg.ParseFromString(await opamp_resp.get_data())
         assert server_msg.HasField("command")
         assert server_msg.command.type == opamp_pb2.CommandType.CommandType_Restart
+
+
+@pytest.mark.asyncio
+async def test_queue_force_resync_command_sets_report_full_state_flag() -> None:
+    """Verify force-resync queueing emits `ServerToAgent.flags` with `ReportFullState` and marks command sent."""
+    client_id = "000000000000000000000000000000ef"
+    STORE._clients.clear()
+
+    async with app.test_client() as client:
+        queue_resp = await client.post(
+            f"/api/clients/{client_id}/commands",
+            json=[
+                {"key": "classifier", "value": "command"},
+                {"key": "action", "value": "forceresync"},
+            ],
+        )
+        assert queue_resp.status_code == 201
+        record = STORE.get(client_id)
+        assert record is not None
+        assert len(record.events) == 1
+        assert record.events[0].get_event_description() == "Force Resync"
+
+        agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+        opamp_resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert opamp_resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await opamp_resp.get_data())
+        report_full_state = int(
+            opamp_pb2.ServerToAgentFlags.ServerToAgentFlags_ReportFullState
+        )
+        assert server_msg.flags & report_full_state
+
+    record = STORE.get(client_id)
+    assert record is not None
+    assert len(record.commands) == 1
+    assert record.commands[0].sent_at is not None
 
 
 @pytest.mark.asyncio
@@ -418,6 +656,44 @@ async def test_set_client_actions_and_http_consumes() -> None:
         record = STORE.get(client_id)
         assert record is not None
         assert record.next_actions is None
+
+
+@pytest.mark.asyncio
+async def test_change_connections_sets_opamp_heartbeat_interval_from_client_record() -> None:
+    """Verify change-connections action emits OpAMP connection settings heartbeat interval from the client record."""
+    client_id = "5678"
+    STORE._clients.clear()
+
+    initial_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+    initial_msg.sequence_num = 1
+    record = STORE.upsert_from_agent_msg(initial_msg, channel="HTTP")
+    if record.commands:
+        record.commands[-1].sent_at = record.commands[-1].received_at
+    record.heartbeat_frequency = 42
+
+    async with app.test_client() as client:
+        resp = await client.post(
+            f"/api/clients/{client_id}/actions",
+            json={"actions": [ACTION_CHANGE_CONNECTIONS]},
+        )
+        assert resp.status_code == 200
+
+        agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+        agent_msg.sequence_num = 2
+        resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await resp.get_data())
+        assert server_msg.HasField("connection_settings")
+        assert server_msg.connection_settings.opamp.heartbeat_interval_seconds == 42
+
+    record = STORE.get(client_id)
+    assert record is not None
+    assert record.next_actions is None
 
 
 @pytest.mark.asyncio

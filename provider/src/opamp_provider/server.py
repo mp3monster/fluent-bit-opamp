@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import pathlib
+import os
 
 from opamp_provider import config as provider_config
 from opamp_provider.app import app
+from opamp_provider.state import STORE
 
 
 def main() -> None:
@@ -43,12 +44,17 @@ def main() -> None:
         "using provider config path: %s",
         effective_config_path,
     )
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(effective_config_path)
 
     config = provider_config.load_config_with_overrides(
         config_path=effective_config_path,
         log_level=args.log_level,
     )
     provider_config.set_config(config)
+    STORE.set_default_heartbeat_frequency(
+        config.default_heartbeat_frequency,
+        max_events=config.client_event_history_size,
+    )
 
     resolved_log_level = provider_config.resolve_log_level(config.log_level)
     root_logger = logging.getLogger()

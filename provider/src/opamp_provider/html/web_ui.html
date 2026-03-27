@@ -56,6 +56,12 @@
       gap: 16px;
     }
 
+    .title-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     h1 {
       margin: 0;
       font-size: 2.2rem;
@@ -247,7 +253,8 @@
       flex: 0 0 auto;
     }
 
-    .tab-button {
+    .tab-button,
+    .settings-tab-button {
       border: 1px solid #cfd7ea;
       border-bottom: none;
       background: #e9eefb;
@@ -261,11 +268,44 @@
       margin-bottom: -1px;
     }
 
-    .tab-button.active {
+    .tab-button.active,
+    .settings-tab-button.active {
       background: var(--panel);
       color: var(--text);
       border-color: #cfd7ea;
       z-index: 2;
+    }
+
+    .settings-form {
+      max-width: 760px;
+      margin-top: 10px;
+    }
+
+    .settings-group {
+      background: #f7f9ff;
+      border: 1px solid #e1e7f5;
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+
+    .settings-group label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 0;
+    }
+
+    .settings-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(120px, 220px) auto;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 0;
+    }
+
+    .settings-row input {
+      width: 100%;
     }
 
     .modal-tab-body {
@@ -418,9 +458,25 @@
       color: #32457f;
       border: 1px solid #cfd7ea;
       font-weight: 700;
+      font-family: inherit;
+      font-size: 0.82rem;
       line-height: 1;
-      cursor: help;
+      cursor: pointer;
       user-select: none;
+    }
+
+    .help-popover {
+      position: fixed;
+      z-index: 120;
+      max-width: 320px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #1f2a44;
+      color: #ffffff;
+      border: 1px solid #465ea6;
+      box-shadow: 0 12px 28px rgba(19, 30, 62, 0.34);
+      font-size: 0.84rem;
+      line-height: 1.35;
     }
 
     .history-panel {
@@ -480,6 +536,8 @@
       padding: 10px 16px;
       border-radius: 10px;
       cursor: pointer;
+      font-family: inherit;
+      font-size: 0.95rem;
       font-weight: 600;
     }
 
@@ -605,7 +663,10 @@
         <h1>OpAMP Server Console</h1>
         <div style="color: var(--muted); font-size: 0.95rem;">Client fleet, command queueing, and staged config control.</div>
       </div>
-      <button id="helpBtn" class="pill" style="cursor: pointer;">Open Help</button>
+      <div class="title-actions">
+        <button id="globalSettingsBtn" class="pill" style="cursor: pointer;">Global Settings</button>
+        <button id="helpBtn" class="pill" style="cursor: pointer;">Help</button>
+      </div>
     </div>
     <div class="meta-bar">
       <div class="pill">Last Updated: <strong id="lastUpdated">--</strong></div>
@@ -699,6 +760,15 @@
           <div class="command-grid" id="commandButtons"></div>
           <div class="command-config-panel">
             <div class="command-config-header">
+              <label for="clientHeartbeatFrequencyInput" style="font-size: 0.85rem; color: var(--muted);">
+                Client Heartbeat Frequency (seconds)
+              </label>
+              <input id="clientHeartbeatFrequencyInput" type="number" min="1" step="1" />
+              <button id="setClientHeartbeatBtn" class="save" type="button">Set Heartbeat</button>
+            </div>
+          </div>
+          <div class="command-config-panel">
+            <div class="command-config-header">
               <label for="customCommandSelect" style="font-size: 0.85rem; color: var(--muted);">
                 Custom Command
               </label>
@@ -760,6 +830,102 @@
     </div>
   </div>
 
+  <div id="globalSettingsModal" class="modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Global Settings</h2>
+        <button id="closeGlobalSettingsBtn" class="cancel">Close</button>
+      </div>
+      <div class="modal-tabs">
+        <button class="settings-tab-button active" data-settings-tab="server">ServerSettings</button>
+        <button class="settings-tab-button" data-settings-tab="client">ClientSettings</button>
+      </div>
+      <div class="modal-tab-body">
+        <div id="settings-tab-server" class="tab-panel active">
+          <div class="settings-form">
+            <div class="settings-group">
+              <div class="settings-row">
+                <label id="delayedCommsSecondsLabel" for="delayedCommsSecondsInput">delayed_comms_seconds</label>
+                <input
+                  id="delayedCommsSecondsInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                />
+                <button
+                  type="button"
+                  class="schema-icon help-icon"
+                  data-help-key="delayed_comms_seconds"
+                  title="Seconds before a client is marked delayed (amber). This overrides the config file value."
+                >i</button>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-row">
+                <label id="significantCommsSecondsLabel" for="significantCommsSecondsInput">significant_comms_seconds</label>
+                <input
+                  id="significantCommsSecondsInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                />
+                <button
+                  type="button"
+                  class="schema-icon help-icon"
+                  data-help-key="significant_comms_seconds"
+                  title="Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value."
+                >i</button>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-row">
+                <label id="clientEventHistorySizeLabel" for="clientEventHistorySizeInput">client_event_history_size</label>
+                <input
+                  id="clientEventHistorySizeInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                />
+                <button
+                  type="button"
+                  class="schema-icon help-icon"
+                  data-help-key="client_event_history_size"
+                  title="Maximum number of recent per-client events retained by the provider. Older events are dropped when this limit is exceeded."
+                >i</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="settings-tab-client" class="tab-panel">
+          <div class="settings-form">
+            <div class="settings-group">
+              <div class="settings-row">
+                <label id="defaultHeartbeatFrequencyLabel" for="defaultHeartbeatFrequencyInput">Default Heartbeat Frequency (seconds)</label>
+                <input
+                  id="defaultHeartbeatFrequencyInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                />
+                <button
+                  type="button"
+                  class="schema-icon help-icon"
+                  data-help-key="default_heartbeat_frequency"
+                  title="Default heartbeat interval in seconds applied to clients when globally updated."
+                >i</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="cancelGlobalSettingsBtn" class="cancel" type="button">Cancel</button>
+        <button id="saveServerSettingsBtn" class="save" type="button">OK + Save</button>
+        <button id="saveGlobalSettingsBtn" class="save" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
   <button id="shutdownButton" class="shutdown-button" type="button">Shutdown Server</button>
   <div id="contextMenu" class="context-menu">
     <button id="removeClientBtn" type="button">Remove Client</button>
@@ -778,6 +944,8 @@
       refreshSeconds: 30,
       delayed: 60,
       significant: 300,
+      clientEventHistorySize: 50,
+      defaultHeartbeatFrequency: 30,
       timer: null,
     };
 
@@ -809,6 +977,10 @@
     const customCommandConfigPanel = document.getElementById("customCommandConfigPanel");
     const customCommandConfigBody = document.getElementById("customCommandConfigBody");
     const sendCustomCommandBtn = document.getElementById("sendCustomCommandBtn");
+    const clientHeartbeatFrequencyInput = document.getElementById(
+      "clientHeartbeatFrequencyInput"
+    );
+    const setClientHeartbeatBtn = document.getElementById("setClientHeartbeatBtn");
     const saveConfigBtn = document.getElementById("saveConfigBtn");
     const historyTabBtn = document.getElementById("historyTabBtn");
     const eventsHistoryList = document.getElementById("eventsHistoryList");
@@ -817,6 +989,43 @@
     const contextMenu = document.getElementById("contextMenu");
     const removeClientBtn = document.getElementById("removeClientBtn");
     const issueIdBtn = document.getElementById("issueIdBtn");
+    const globalSettingsBtn = document.getElementById("globalSettingsBtn");
+    const globalSettingsModal = document.getElementById("globalSettingsModal");
+    const closeGlobalSettingsBtn = document.getElementById("closeGlobalSettingsBtn");
+    const cancelGlobalSettingsBtn = document.getElementById("cancelGlobalSettingsBtn");
+    const saveGlobalSettingsBtn = document.getElementById("saveGlobalSettingsBtn");
+    const saveServerSettingsBtn = document.getElementById("saveServerSettingsBtn");
+    const defaultHeartbeatFrequencyInput = document.getElementById(
+      "defaultHeartbeatFrequencyInput"
+    );
+    const delayedCommsSecondsInput = document.getElementById(
+      "delayedCommsSecondsInput"
+    );
+    const significantCommsSecondsInput = document.getElementById(
+      "significantCommsSecondsInput"
+    );
+    const clientEventHistorySizeInput = document.getElementById(
+      "clientEventHistorySizeInput"
+    );
+    const delayedCommsSecondsLabel = document.getElementById(
+      "delayedCommsSecondsLabel"
+    );
+    const significantCommsSecondsLabel = document.getElementById(
+      "significantCommsSecondsLabel"
+    );
+    const clientEventHistorySizeLabel = document.getElementById(
+      "clientEventHistorySizeLabel"
+    );
+    const defaultHeartbeatFrequencyLabel = document.getElementById(
+      "defaultHeartbeatFrequencyLabel"
+    );
+    const settingsTabButtons = Array.from(
+      document.querySelectorAll(".settings-tab-button")
+    );
+    const settingsTabPanels = {
+      server: document.getElementById("settings-tab-server"),
+      client: document.getElementById("settings-tab-client"),
+    };
     const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
     const tabPanels = {
       summary: document.getElementById("tab-summary"),
@@ -827,10 +1036,35 @@
 
     const COMMAND_OPTIONS = [
       { value: "restart", label: "Restart Agent", description: "Request a graceful restart." },
+      {
+        value: "forceresync",
+        label: "Force Resync",
+        description: "Request full state re-reporting via ReportFullState flag.",
+      },
     ];
 
     let activeClient = null;
     let contextClient = null;
+    let activeHelpPopover = null;
+    let activeHelpIcon = null;
+    const DEFAULT_GLOBAL_SETTINGS_HELP = {
+      delayed_comms_seconds: {
+        label: "Delayed Communications Threshold (seconds)",
+        tooltip: "Seconds before a client is marked delayed (amber). This overrides the config file value.",
+      },
+      significant_comms_seconds: {
+        label: "Significant Communications Threshold (seconds)",
+        tooltip: "Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value.",
+      },
+      client_event_history_size: {
+        label: "Client Event History Size",
+        tooltip: "Maximum number of recent per-client events retained by the provider. Older events are dropped when this limit is exceeded.",
+      },
+      default_heartbeat_frequency: {
+        label: "Default Heartbeat Frequency (seconds)",
+        tooltip: "Default heartbeat interval in seconds applied to clients when globally updated.",
+      },
+    };
 
     document.querySelectorAll("th[data-sort]").forEach(th => {
       th.addEventListener("click", () => {
@@ -881,12 +1115,16 @@
     tabButtons.forEach(btn => {
       btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
     });
+    settingsTabButtons.forEach(btn => {
+      btn.addEventListener("click", () => setActiveSettingsTab(btn.dataset.settingsTab));
+    });
     saveConfigBtn.addEventListener("click", saveConfig);
     customCommandSelect.addEventListener("change", () => {
       renderCustomCommandConfiguration(customCommandSelect.value);
       updateCustomCommandSelectStyle();
     });
     sendCustomCommandBtn.addEventListener("click", queueCustomCommand);
+    setClientHeartbeatBtn.addEventListener("click", saveClientHeartbeat);
     eventsSortBtn.addEventListener("click", () => {
       state.eventsSortDir = state.eventsSortDir === "desc" ? "asc" : "desc";
       eventsSortBtn.textContent = state.eventsSortDir === "desc" ? "Desc" : "Asc";
@@ -907,13 +1145,30 @@
     document.getElementById("helpBtn").addEventListener("click", () => {
       window.open("/help", "_blank");
     });
+    globalSettingsBtn.addEventListener("click", openGlobalSettingsModal);
+    closeGlobalSettingsBtn.addEventListener("click", closeGlobalSettingsModal);
+    cancelGlobalSettingsBtn.addEventListener("click", closeGlobalSettingsModal);
+    saveGlobalSettingsBtn.addEventListener("click", saveGlobalSettings);
+    saveServerSettingsBtn.addEventListener("click", saveServerSettings);
 
     document.getElementById("closeModal").addEventListener("click", closeModal);
     document.getElementById("cancelBtn").addEventListener("click", closeModal);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        hideHelpPopover();
+        if (globalSettingsModal.classList.contains("open")) {
+          closeGlobalSettingsModal();
+          return;
+        }
         closeModal();
       }
+    });
+    document.addEventListener("click", event => {
+      if (!activeHelpPopover) return;
+      const target = event.target;
+      if (activeHelpPopover.contains(target)) return;
+      if (activeHelpIcon && activeHelpIcon.contains(target)) return;
+      hideHelpPopover();
     });
     document.addEventListener("keydown", (event) => {
       if (!modal.classList.contains("open")) return;
@@ -942,6 +1197,122 @@
       const data = await resp.json();
       state.delayed = data.delayed_comms_seconds ?? 60;
       state.significant = data.significant_comms_seconds ?? 300;
+      state.clientEventHistorySize = data.client_event_history_size ?? 50;
+    }
+
+    async function fetchClientSettings() {
+      const resp = await fetch("/api/settings/client");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const defaultHeartbeatFrequency = parseInt(
+        data.default_heartbeat_frequency,
+        10
+      );
+      if (!Number.isNaN(defaultHeartbeatFrequency) && defaultHeartbeatFrequency > 0) {
+        state.defaultHeartbeatFrequency = defaultHeartbeatFrequency;
+      }
+    }
+
+    async function fetchGlobalSettingsHelp() {
+      applyGlobalSettingsHelp(DEFAULT_GLOBAL_SETTINGS_HELP);
+      const resp = await fetch("/api/help/global-settings");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const fields = data && typeof data.fields === "object" ? data.fields : {};
+      applyGlobalSettingsHelp(fields);
+    }
+
+    function applyGlobalSettingsHelp(fields) {
+      const resolvedFields = {};
+      Object.keys(DEFAULT_GLOBAL_SETTINGS_HELP).forEach(key => {
+        const incoming = fields && typeof fields[key] === "object" ? fields[key] : {};
+        resolvedFields[key] = {
+          label: String(incoming.label || DEFAULT_GLOBAL_SETTINGS_HELP[key].label),
+          tooltip: String(incoming.tooltip || DEFAULT_GLOBAL_SETTINGS_HELP[key].tooltip),
+        };
+      });
+      const bindings = [
+        {
+          key: "delayed_comms_seconds",
+          label: delayedCommsSecondsLabel,
+          icon: document.querySelector('.help-icon[data-help-key="delayed_comms_seconds"]'),
+        },
+        {
+          key: "significant_comms_seconds",
+          label: significantCommsSecondsLabel,
+          icon: document.querySelector('.help-icon[data-help-key="significant_comms_seconds"]'),
+        },
+        {
+          key: "default_heartbeat_frequency",
+          label: defaultHeartbeatFrequencyLabel,
+          icon: document.querySelector('.help-icon[data-help-key="default_heartbeat_frequency"]'),
+        },
+        {
+          key: "client_event_history_size",
+          label: clientEventHistorySizeLabel,
+          icon: document.querySelector('.help-icon[data-help-key="client_event_history_size"]'),
+        },
+      ];
+      bindings.forEach(binding => {
+        const item = resolvedFields[binding.key];
+        if (!item) return;
+        if (binding.label) binding.label.textContent = item.label;
+        if (binding.icon) {
+          binding.icon.title = item.tooltip;
+          binding.icon.dataset.helpText = item.tooltip;
+          binding.icon.setAttribute("aria-label", `${item.label} help`);
+        }
+      });
+      bindHelpIcons();
+    }
+
+    function bindHelpIcons() {
+      document.querySelectorAll(".help-icon[data-help-key]").forEach(icon => {
+        if (icon.dataset.helpBound === "true") return;
+        icon.dataset.helpBound = "true";
+        icon.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          const target = event.currentTarget;
+          const tooltipText = String(target.dataset.helpText || target.title || "").trim();
+          if (!tooltipText) return;
+          if (activeHelpPopover && activeHelpIcon === target) {
+            hideHelpPopover();
+            return;
+          }
+          showHelpPopover(target, tooltipText);
+        });
+      });
+    }
+
+    function showHelpPopover(icon, tooltipText) {
+      hideHelpPopover();
+      const popover = document.createElement("div");
+      popover.className = "help-popover";
+      popover.setAttribute("role", "tooltip");
+      popover.textContent = tooltipText;
+      document.body.appendChild(popover);
+
+      const iconRect = icon.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      let left = iconRect.left + (iconRect.width / 2) - (popoverRect.width / 2);
+      left = Math.max(8, Math.min(left, window.innerWidth - popoverRect.width - 8));
+      let top = iconRect.bottom + 8;
+      if (top + popoverRect.height > window.innerHeight - 8) {
+        top = iconRect.top - popoverRect.height - 8;
+      }
+      if (top < 8) top = 8;
+      popover.style.left = `${left}px`;
+      popover.style.top = `${top}px`;
+      activeHelpPopover = popover;
+      activeHelpIcon = icon;
+    }
+
+    function hideHelpPopover() {
+      if (!activeHelpPopover) return;
+      activeHelpPopover.remove();
+      activeHelpPopover = null;
+      activeHelpIcon = null;
     }
 
     async function fetchCustomCommands() {
@@ -1315,6 +1686,157 @@
       });
     }
 
+    function setActiveSettingsTab(tabName) {
+      settingsTabButtons.forEach(btn => {
+        const isActive = btn.dataset.settingsTab === tabName;
+        btn.classList.toggle("active", isActive);
+      });
+      Object.entries(settingsTabPanels).forEach(([key, panel]) => {
+        panel.classList.toggle("active", key === tabName);
+      });
+      hideHelpPopover();
+      saveServerSettingsBtn.classList.toggle("hidden", tabName !== "server");
+    }
+
+    async function openGlobalSettingsModal() {
+      await fetchSettings();
+      await fetchClientSettings();
+      delayedCommsSecondsInput.value = String(state.delayed);
+      significantCommsSecondsInput.value = String(state.significant);
+      clientEventHistorySizeInput.value = String(state.clientEventHistorySize);
+      defaultHeartbeatFrequencyInput.value = String(state.defaultHeartbeatFrequency);
+      setActiveSettingsTab("server");
+      globalSettingsModal.classList.add("open");
+    }
+
+    function closeGlobalSettingsModal() {
+      hideHelpPopover();
+      globalSettingsModal.classList.remove("open");
+    }
+
+    async function saveGlobalSettings() {
+      const proposedDelayed = parseInt(delayedCommsSecondsInput.value, 10);
+      const proposedSignificant = parseInt(significantCommsSecondsInput.value, 10);
+      const proposedClientEventHistorySize = parseInt(
+        clientEventHistorySizeInput.value,
+        10
+      );
+      const proposedValue = parseInt(defaultHeartbeatFrequencyInput.value, 10);
+      if (Number.isNaN(proposedDelayed) || proposedDelayed <= 0) {
+        window.alert("delayed_comms_seconds must be a positive integer.");
+        return;
+      }
+      if (Number.isNaN(proposedSignificant) || proposedSignificant <= 0) {
+        window.alert("significant_comms_seconds must be a positive integer.");
+        return;
+      }
+      if (proposedDelayed >= proposedSignificant) {
+        window.alert("significant_comms_seconds must be greater than delayed_comms_seconds.");
+        return;
+      }
+      if (
+        Number.isNaN(proposedClientEventHistorySize)
+        || proposedClientEventHistorySize <= 0
+      ) {
+        window.alert("client_event_history_size must be a positive integer.");
+        return;
+      }
+      if (Number.isNaN(proposedValue) || proposedValue <= 0) {
+        window.alert("Default Heartbeat Frequency must be a positive integer.");
+        return;
+      }
+      if (
+        proposedDelayed !== state.delayed
+        || proposedSignificant !== state.significant
+        || proposedClientEventHistorySize !== state.clientEventHistorySize
+      ) {
+        const commsResp = await fetch("/api/settings/comms", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            delayed_comms_seconds: proposedDelayed,
+            significant_comms_seconds: proposedSignificant,
+            client_event_history_size: proposedClientEventHistorySize,
+          }),
+        });
+        if (!commsResp.ok) {
+          window.alert("Failed to update server communication settings.");
+          return;
+        }
+        const commsPayload = await commsResp.json();
+        state.delayed = parseInt(commsPayload.delayed_comms_seconds, 10);
+        state.significant = parseInt(commsPayload.significant_comms_seconds, 10);
+        state.clientEventHistorySize = parseInt(commsPayload.client_event_history_size, 10);
+      }
+      if (proposedValue !== state.defaultHeartbeatFrequency) {
+        const resp = await fetch("/api/settings/client", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ default_heartbeat_frequency: proposedValue }),
+        });
+        if (!resp.ok) {
+          window.alert("Failed to update global client settings.");
+          return;
+        }
+        const payload = await resp.json();
+        const updatedFrequency = parseInt(payload.default_heartbeat_frequency, 10);
+        if (!Number.isNaN(updatedFrequency) && updatedFrequency > 0) {
+          state.defaultHeartbeatFrequency = updatedFrequency;
+        }
+      }
+      closeGlobalSettingsModal();
+      await fetchClients();
+    }
+
+    async function saveServerSettings() {
+      const proposedDelayed = parseInt(delayedCommsSecondsInput.value, 10);
+      const proposedSignificant = parseInt(significantCommsSecondsInput.value, 10);
+      const proposedClientEventHistorySize = parseInt(
+        clientEventHistorySizeInput.value,
+        10
+      );
+      if (Number.isNaN(proposedDelayed) || proposedDelayed <= 0) {
+        window.alert("delayed_comms_seconds must be a positive integer.");
+        return;
+      }
+      if (Number.isNaN(proposedSignificant) || proposedSignificant <= 0) {
+        window.alert("significant_comms_seconds must be a positive integer.");
+        return;
+      }
+      if (proposedDelayed >= proposedSignificant) {
+        window.alert("significant_comms_seconds must be greater than delayed_comms_seconds.");
+        return;
+      }
+      if (
+        Number.isNaN(proposedClientEventHistorySize)
+        || proposedClientEventHistorySize <= 0
+      ) {
+        window.alert("client_event_history_size must be a positive integer.");
+        return;
+      }
+
+      const commsResp = await fetch("/api/settings/comms", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          delayed_comms_seconds: proposedDelayed,
+          significant_comms_seconds: proposedSignificant,
+          client_event_history_size: proposedClientEventHistorySize,
+        }),
+      });
+      if (!commsResp.ok) {
+        window.alert("Failed to update server communication settings.");
+        return;
+      }
+      const commsPayload = await commsResp.json();
+      state.delayed = parseInt(commsPayload.delayed_comms_seconds, 10);
+      state.significant = parseInt(commsPayload.significant_comms_seconds, 10);
+      state.clientEventHistorySize = parseInt(commsPayload.client_event_history_size, 10);
+
+      closeGlobalSettingsModal();
+      await fetchClients();
+    }
+
     function formatConfigValue(value) {
       if (value === null || value === undefined) return "";
       if (typeof value === "string") return value;
@@ -1338,6 +1860,7 @@
         btn.addEventListener("click", () => queueCommand(option.value, client));
         commandButtons.appendChild(btn);
       });
+      clientHeartbeatFrequencyInput.value = String(client.heartbeat_frequency ?? 30);
       renderCustomCommandSelect(customCommandState);
     }
 
@@ -1652,6 +2175,34 @@
       }
     }
 
+    async function saveClientHeartbeat() {
+      const target = activeClient;
+      if (!target) return;
+      const preservedCustomCommandState = captureCustomCommandState();
+      const proposedValue = parseInt(clientHeartbeatFrequencyInput.value, 10);
+      if (Number.isNaN(proposedValue) || proposedValue <= 0) {
+        window.alert("Client heartbeat frequency must be a positive integer.");
+        return;
+      }
+      const resp = await fetch(`/api/clients/${target.client_id}/heartbeat-frequency`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ heartbeat_frequency: proposedValue }),
+      });
+      if (!resp.ok) {
+        window.alert("Failed to update client heartbeat frequency.");
+        return;
+      }
+      await fetchClients();
+      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      if (refreshed) {
+        openModal(refreshed, {
+          preserveTab: true,
+          customCommandState: preservedCustomCommandState,
+        });
+      }
+    }
+
     async function saveConfig() {
       if (!activeClient) return;
       const configValue = configInput.value.trim();
@@ -1815,7 +2366,9 @@
     }
 
     async function init() {
+      await fetchGlobalSettingsHelp();
       await fetchSettings();
+      await fetchClientSettings();
       await fetchCustomCommands();
       await fetchClients();
       scheduleRefresh();

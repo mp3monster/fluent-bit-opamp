@@ -18,7 +18,9 @@ import json
 import logging
 import os
 import pathlib
+import shutil
 import sys
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +39,7 @@ CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"
 CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"
 CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"
 CFG_LOG_LEVEL = "log_level"
+CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
@@ -45,6 +48,7 @@ DEFAULT_MINUTES_KEEP_DISCONNECTED = 30
 DEFAULT_RETRY_AFTER_SECONDS = 30
 DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY = 30
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,7 @@ class ProviderConfig:
     retry_after_seconds: int
     client_event_history_size: int
     log_level: str
+    default_heartbeat_frequency: int = DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY
 
 
 def resolve_log_level(log_level: str | None) -> int:
@@ -128,6 +133,15 @@ def load_config() -> ProviderConfig:
             ),
         ),
         log_level=str(provider_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL)),
+        default_heartbeat_frequency=max(
+            1,
+            int(
+                provider_raw.get(
+                    CFG_DEFAULT_HEARTBEAT_FREQUENCY,
+                    DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY,
+                )
+            ),
+        ),
     )
 
 
@@ -164,6 +178,15 @@ def load_config_with_overrides(
         log_level=str(provider_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL))
         if log_level is None
         else str(log_level),
+        default_heartbeat_frequency=max(
+            1,
+            int(
+                provider_raw.get(
+                    CFG_DEFAULT_HEARTBEAT_FREQUENCY,
+                    DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY,
+                )
+            ),
+        ),
     )
 
 
@@ -173,19 +196,101 @@ def set_config(config: ProviderConfig) -> None:
     CONFIG = config
 
 
-def update_comms_thresholds(*, delayed: int, significant: int) -> ProviderConfig:
-    """Return a new config with updated comm thresholds and set it."""
+def update_comms_thresholds(
+    *,
+    delayed: int,
+    significant: int,
+    client_event_history_size: int | None = None,
+) -> ProviderConfig:
+    """Return a new config with updated server comm settings and set it."""
+    history_size = (
+        CONFIG.client_event_history_size
+        if client_event_history_size is None
+        else max(1, int(client_event_history_size))
+    )
     config = ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=CONFIG.webui_port,
         minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
         retry_after_seconds=CONFIG.retry_after_seconds,
-        client_event_history_size=CONFIG.client_event_history_size,
+        client_event_history_size=history_size,
         log_level=CONFIG.log_level,
+        default_heartbeat_frequency=CONFIG.default_heartbeat_frequency,
     )
     set_config(config)
     return config
+
+
+def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> ProviderConfig:
+    """Return a new config with updated default heartbeat frequency and set it."""
+    config = ProviderConfig(
+        delayed_comms_seconds=CONFIG.delayed_comms_seconds,
+        significant_comms_seconds=CONFIG.significant_comms_seconds,
+        webui_port=CONFIG.webui_port,
+        minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
+        retry_after_seconds=CONFIG.retry_after_seconds,
+        client_event_history_size=CONFIG.client_event_history_size,
+        log_level=CONFIG.log_level,
+        default_heartbeat_frequency=max(1, int(default_heartbeat_frequency)),
+    )
+    set_config(config)
+    return config
+
+
+def persist_provider_config(
+    config: ProviderConfig | None = None,
+    *,
+    config_path: str | pathlib.Path | None = None,
+) -> pathlib.Path:
+    """Write provider config values back to opamp.json."""
+    resolved_path = get_effective_config_path(config_path)
+    raw = _load_json(resolved_path)
+    provider_raw = raw.get(CFG_PROVIDER)
+    if not isinstance(provider_raw, dict):
+        provider_raw = {}
+        raw[CFG_PROVIDER] = provider_raw
+
+    effective = config or CONFIG
+    provider_raw[CFG_DELAYED_COMMS_SECONDS] = int(effective.delayed_comms_seconds)
+    provider_raw[CFG_SIGNIFICANT_COMMS_SECONDS] = int(
+        effective.significant_comms_seconds
+    )
+    provider_raw[CFG_WEBUI_PORT] = int(effective.webui_port)
+    provider_raw[CFG_MINUTES_KEEP_DISCONNECTED] = int(
+        effective.minutes_keep_disconnected
+    )
+    provider_raw[CFG_RETRY_AFTER_SECONDS] = int(effective.retry_after_seconds)
+    provider_raw[CFG_CLIENT_EVENT_HISTORY_SIZE] = int(effective.client_event_history_size)
+    provider_raw[CFG_LOG_LEVEL] = str(effective.log_level)
+    provider_raw[CFG_DEFAULT_HEARTBEAT_FREQUENCY] = int(
+        effective.default_heartbeat_frequency
+    )
+
+    backup_path = _build_backup_path(resolved_path)
+    logging.getLogger(__name__).info(
+        "persist_provider_config backing up %s to %s before write",
+        resolved_path,
+        backup_path,
+    )
+    shutil.copy2(resolved_path, backup_path)
+
+    resolved_path.write_text(
+        f"{json.dumps(raw, indent=2)}\n",
+        encoding=UTF8_ENCODING,
+    )
+    return resolved_path
+
+
+def _build_backup_path(config_path: pathlib.Path) -> pathlib.Path:
+    """Return a unique timestamped backup path like opamp.json.<date time>."""
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    backup_path = config_path.with_name(f"{config_path.name}.{timestamp}")
+    suffix = 1
+    while backup_path.exists():
+        backup_path = config_path.with_name(f"{config_path.name}.{timestamp}.{suffix}")
+        suffix += 1
+    return backup_path
 
 
 CONFIG = load_config()

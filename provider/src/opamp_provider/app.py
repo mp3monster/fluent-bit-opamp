@@ -67,8 +67,10 @@ OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header val
 SERVER_CAPABILITIES = int(
     ServerCapabilities.AcceptsStatus
 )  # Server advertises AcceptsStatus only.
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
 
 COMMAND_RESTART = "restart"
+COMMAND_FORCE_RESYNC = "forceresync"
 COMMAND_CHATOP = "chatopcommand"
 COMMAND_SHUTDOWN_AGENT = "shutdownagent"
 COMMAND_NULLCOMMAND = "nullcommand"
@@ -89,9 +91,45 @@ ACTION_OPTIONS = {
     ACTION_COMMAND_AGENT,
     ACTION_CUSTOM_AGENT_COMMAND,
 }
+GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
+    "delayed_comms_seconds": {
+        "label": "Delayed Communications Threshold (seconds)",
+        "tooltip": (
+            "Seconds before a client is marked delayed (amber). "
+            "This overrides the config file value."
+        ),
+    },
+    "significant_comms_seconds": {
+        "label": "Significant Communications Threshold (seconds)",
+        "tooltip": (
+            "Seconds before a client is marked late (red). "
+            "Must be greater than delayed_comms_seconds. "
+            "This overrides the config file value."
+        ),
+    },
+    "client_event_history_size": {
+        "label": "Client Event History Size",
+        "tooltip": (
+            "Maximum number of recent per-client events retained by the provider. "
+            "Older events are dropped when this limit is exceeded."
+        ),
+    },
+    "default_heartbeat_frequency": {
+        "label": "Default Heartbeat Frequency (seconds)",
+        "tooltip": (
+            "Default heartbeat interval in seconds applied to clients when globally updated."
+        ),
+    },
+}
 _SHUTDOWN_REQUESTED = False
 _LAST_DISCONNECT_PURGE: datetime | None = None
 _WEBSOCKET_CLIENTS: dict[object, str | None] = {}
+
+# Keep in-memory client heartbeat defaults aligned with loaded provider config.
+STORE.set_default_heartbeat_frequency(
+    provider_config.CONFIG.default_heartbeat_frequency,
+    max_events=provider_config.CONFIG.client_event_history_size,
+)
 
 
 def _request_process_shutdown() -> None:
@@ -126,12 +164,24 @@ def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerTo
 
 def _build_change_connections(
     response: opamp_pb2.ServerToAgent,
+    client: ClientRecord | None = None,
 ) -> opamp_pb2.ServerToAgent:
-    """Return a not-available error for change connections action."""
+    """Build connection settings update payload for the client heartbeat interval."""
     logger.info("building next action payload: %s", ACTION_CHANGE_CONNECTIONS)
-    # response.connection_settings.SetInParent()
-    response = _build_error(
-        msg=response, error_message="Change Connections feature not available"
+    raw_interval = (
+        getattr(client, "heartbeat_frequency", DEFAULT_HEARTBEAT_INTERVAL_SECONDS)
+        if client is not None
+        else DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    )
+    try:
+        interval_seconds = max(1, int(raw_interval))
+    except (TypeError, ValueError):
+        interval_seconds = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    response.connection_settings.opamp.heartbeat_interval_seconds = interval_seconds
+    logger.info(
+        "set connection_settings.opamp.heartbeat_interval_seconds=%s for client_id=%s",
+        interval_seconds,
+        client.client_id if client is not None else "unknown",
     )
     return response
 
@@ -199,6 +249,22 @@ def _build_restart_command(
     return response
 
 
+def _build_force_resync_command(
+    response: opamp_pb2.ServerToAgent, pending_command: CommandRecord
+) -> opamp_pb2.ServerToAgent:
+    """Build a report-full-state ServerToAgent flags payload."""
+    logger.info(
+        "building command payload classifier=%s action=%s",
+        pending_command.classifier,
+        pending_command.action,
+    )
+    response.flags = response.flags | int(
+        opamp_pb2.ServerToAgentFlags.ServerToAgentFlags_ReportFullState
+    )
+    logger.debug("created ServerToAgent.flags payload: %s", response.flags)
+    return response
+
+
 def _kv_lookup(pairs: list[dict[str, str]], key: str) -> str:
     """Fetch a string value from a list of key/value dictionaries."""
     for pair in pairs:
@@ -259,6 +325,7 @@ COMMAND_BUILDERS: dict[
     Callable[[opamp_pb2.ServerToAgent, CommandRecord], opamp_pb2.ServerToAgent],
 ] = {
     (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
+    (CLASSIFIER_COMMAND, COMMAND_FORCE_RESYNC): _build_force_resync_command,
     (CLASSIFIER_CUSTOM, COMMAND_CHATOP): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM, COMMAND_SHUTDOWN_AGENT): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM, COMMAND_NULLCOMMAND): _build_custom_command_payload,
@@ -300,12 +367,13 @@ def _apply_next_action(
     *,
     action: str,
     pending_command: CommandRecord | None,
+    client: ClientRecord | None = None,
 ) -> opamp_pb2.ServerToAgent:
     """Dispatch the next action string to the correct builder."""
     if action == ACTION_APPLY_CONFIG:
         return _build_apply_config(response)
     if action == ACTION_CHANGE_CONNECTIONS:
-        return _build_change_connections(response)
+        return _build_change_connections(response, client)
     if action == ACTION_PACKAGE_AVAILABLE:
         return _build_package_available(response)
     if action == ACTION_COMMAND_AGENT:
@@ -344,10 +412,22 @@ def _build_response(
         next_action = STORE.pop_next_action(client.client_id)
         if next_action:
             response = _apply_next_action(
-                response, action=next_action, pending_command=pending_command
+                response,
+                action=next_action,
+                pending_command=pending_command,
+                client=client,
             )
     response = _apply_command_intent(response, pending_command)
     return response
+
+
+def _has_dispatched_command_payload(response_msg: opamp_pb2.ServerToAgent) -> bool:
+    """Return whether a queued command was encoded in this response message."""
+    return (
+        response_msg.HasField(PB_FIELD_COMMAND)
+        or response_msg.HasField(PB_FIELD_CUSTOM_MESSAGE)
+        or bool(response_msg.flags)
+    )
 
 
 def _build_error(
@@ -426,10 +506,7 @@ async def opamp_http() -> Response:
             channel=CHANNEL_HTTP,
         )
         payload = response_msg.SerializeToString()
-        if pending_command is not None and (
-            response_msg.HasField(PB_FIELD_COMMAND)
-            or response_msg.HasField(PB_FIELD_CUSTOM_MESSAGE)
-        ):
+        if pending_command is not None and _has_dispatched_command_payload(response_msg):
             STORE.mark_command_sent(client.client_id, pending_command)
             logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
         return Response(payload, content_type=CONTENT_TYPE_PROTO)
@@ -498,8 +575,8 @@ async def opamp_ws() -> None:
 
             out_payload = response_msg.SerializeToString()
             await websocket.send(encode_message(out_payload))
-            if response_msg.HasField(PB_FIELD_COMMAND) or response_msg.HasField(
-                PB_FIELD_CUSTOM_MESSAGE
+            if pending_command is not None and _has_dispatched_command_payload(
+                response_msg
             ):
                 STORE.mark_command_sent(client.client_id, pending_command)
                 logger.info(
@@ -700,6 +777,8 @@ async def queue_command(client_id: str) -> Response:
     # Build a command object when a concrete class exists for the operation.
     key_value_dict = {pair["key"]: pair["value"] for pair in normalized_pairs}
     event_description = f"{classifier} {routing_action} command queued"
+    if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_FORCE_RESYNC:
+        event_description = "Force Resync"
     command_obj = None
     if (
         (classifier, routing_action) in COMMAND_BUILDERS
@@ -795,6 +874,34 @@ async def set_client_actions(client_id: str) -> Response:
     return jsonify(record.model_dump(mode="json"))
 
 
+@app.put("/api/clients/<client_id>/heartbeat-frequency")
+async def set_client_heartbeat_frequency(client_id: str) -> Response:
+    """Set heartbeat frequency for a single client and append an event."""
+    payload = await request.get_json(silent=True)
+    if not payload:
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
+    try:
+        heartbeat_frequency = int(payload.get("heartbeat_frequency"))
+    except (TypeError, ValueError):
+        return (
+            jsonify({"error": "heartbeat_frequency must be an integer"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+    if heartbeat_frequency <= 0:
+        return (
+            jsonify({"error": "heartbeat_frequency must be positive"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+    record = STORE.set_client_heartbeat_frequency(
+        client_id,
+        heartbeat_frequency,
+        max_events=provider_config.CONFIG.client_event_history_size,
+    )
+    if record is None:
+        return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
+    return jsonify(record.model_dump(mode="json"))
+
+
 @app.post("/api/clients/<client_id>/identify")
 async def issue_agent_identification(client_id: str) -> Response:
     """Issue a new instance UID for a client."""
@@ -814,6 +921,7 @@ async def get_comms_settings() -> Response:
         {
             "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
             "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
+            "client_event_history_size": provider_config.CONFIG.client_event_history_size,
         }
     )
 
@@ -836,9 +944,15 @@ async def update_comms_settings() -> Response:
                 provider_config.CONFIG.significant_comms_seconds,
             )
         )
+        client_event_history_size = int(
+            payload.get(
+                "client_event_history_size",
+                provider_config.CONFIG.client_event_history_size,
+            )
+        )
     except (TypeError, ValueError):
         return jsonify({"error": "thresholds must be integers"}), HTTPStatus.BAD_REQUEST
-    if delayed <= 0 or significant <= 0:
+    if delayed <= 0 or significant <= 0 or client_event_history_size <= 0:
         return jsonify({"error": "thresholds must be positive"}), HTTPStatus.BAD_REQUEST
     if delayed >= significant:
         return (
@@ -848,11 +962,77 @@ async def update_comms_settings() -> Response:
     config = provider_config.update_comms_thresholds(
         delayed=delayed,
         significant=significant,
+        client_event_history_size=client_event_history_size,
     )
+    try:
+        provider_config.persist_provider_config(config)
+    except Exception as exc:
+        logger.exception("failed to persist provider settings", exc_info=exc)
+        return (
+            jsonify({"error": "failed to persist provider settings to opamp.json"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
     return jsonify(
         {
             "delayed_comms_seconds": config.delayed_comms_seconds,
             "significant_comms_seconds": config.significant_comms_seconds,
+            "client_event_history_size": config.client_event_history_size,
+        }
+    )
+
+
+@app.get("/api/settings/client")
+async def get_client_settings() -> Response:
+    """Get client global settings."""
+    return jsonify(
+        {
+            "default_heartbeat_frequency": STORE.get_default_heartbeat_frequency(),
+        }
+    )
+
+
+@app.put("/api/settings/client")
+async def update_client_settings() -> Response:
+    """Update client global settings and apply to all known clients."""
+    payload = await request.get_json(silent=True)
+    if not payload:
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
+    try:
+        default_heartbeat_frequency = int(
+            payload.get(
+                "default_heartbeat_frequency",
+                STORE.get_default_heartbeat_frequency(),
+            )
+        )
+    except (TypeError, ValueError):
+        return (
+            jsonify({"error": "default_heartbeat_frequency must be an integer"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+    if default_heartbeat_frequency <= 0:
+        return (
+            jsonify({"error": "default_heartbeat_frequency must be positive"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+    config = provider_config.update_default_heartbeat_frequency(
+        default_heartbeat_frequency=default_heartbeat_frequency
+    )
+    try:
+        provider_config.persist_provider_config(config)
+    except Exception as exc:
+        logger.exception("failed to persist provider settings", exc_info=exc)
+        return (
+            jsonify({"error": "failed to persist provider settings to opamp.json"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    updated_clients = STORE.set_default_heartbeat_frequency(
+        default_heartbeat_frequency,
+        max_events=provider_config.CONFIG.client_event_history_size,
+    )
+    return jsonify(
+        {
+            "default_heartbeat_frequency": STORE.get_default_heartbeat_frequency(),
+            "updated_clients": updated_clients,
         }
     )
 
@@ -905,8 +1085,30 @@ async def help_page() -> Response:
         "__DELAYED_SECONDS__", str(provider_config.CONFIG.delayed_comms_seconds)
     ).replace(
         "__SIGNIFICANT_SECONDS__", str(provider_config.CONFIG.significant_comms_seconds)
+    ).replace(
+        "__HELP_DELAYED_COMMS_SECONDS__",
+        GLOBAL_SETTINGS_HELP["delayed_comms_seconds"]["tooltip"],
+    ).replace(
+        "__HELP_SIGNIFICANT_COMMS_SECONDS__",
+        GLOBAL_SETTINGS_HELP["significant_comms_seconds"]["tooltip"],
+    ).replace(
+        "__HELP_CLIENT_EVENT_HISTORY_SIZE__",
+        GLOBAL_SETTINGS_HELP["client_event_history_size"]["tooltip"],
+    ).replace(
+        "__HELP_DEFAULT_HEARTBEAT_FREQUENCY__",
+        GLOBAL_SETTINGS_HELP["default_heartbeat_frequency"]["tooltip"],
     )
     return Response(html, content_type="text/html; charset=utf-8")
+
+
+@app.get("/api/help/global-settings")
+async def global_settings_help() -> Response:
+    """Return shared help text used by global settings tooltips and help page."""
+    tooltips = {
+        key: value.get("tooltip", "")
+        for key, value in GLOBAL_SETTINGS_HELP.items()
+    }
+    return jsonify({"fields": GLOBAL_SETTINGS_HELP, "tooltips": tooltips})
 
 
 @app.get("/create.ico")

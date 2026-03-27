@@ -17,6 +17,7 @@ from __future__ import annotations
 import threading
 import logging
 import re
+import sys
 from enum import Enum
 from datetime import datetime, timezone
 from typing import Iterable, Optional
@@ -29,6 +30,14 @@ from opamp_provider.event_history import EventHistory
 from opamp_provider.proto import opamp_pb2
 from shared.opamp_config import anyvalue_to_string
 from shared.uuid_utils import generate_uuid7_bytes
+
+MIN_INTEGER = -sys.maxsize - 1
+FORCE_RESYNC_CLASSIFIER = "command"
+FORCE_RESYNC_ACTION = "forceresync"
+FORCE_RESYNC_EVENT_DESCRIPTION = "Force Resync"
+DEFAULT_HISTORY_MAX_EVENTS = 50
+DEFAULT_HEARTBEAT_FREQUENCY = 30
+HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION = "send heartbeatfrequency event"
 
 
 def _utc_now() -> datetime:
@@ -164,6 +173,10 @@ class ClientRecord(BaseModel):
         default=None,
         description="Predicted next communication timestamp based on heartbeat behavior.",
     )
+    heartbeat_frequency: int = Field(
+        default=DEFAULT_HEARTBEAT_FREQUENCY,
+        description="Expected heartbeat frequency in seconds for this client.",
+    )
     first_seen: datetime = Field(
         default_factory=_utc_now,
         description="Timestamp when this client record was first created in the store.",
@@ -190,6 +203,13 @@ class ClientRecord(BaseModel):
         default=None,
         description="Queued replacement instance UID to send in AgentIdentification.",
     )
+    message_id: int = Field(
+        default=MIN_INTEGER,
+        description=(
+            "Last received AgentToServer sequence number for this client. "
+            "Initialized to minimum integer sentinel."
+        ),
+    )
 
 
 class ClientStore:
@@ -197,6 +217,7 @@ class ClientStore:
         """Initialize the in-memory client store."""
         self._lock = threading.Lock()
         self._clients: dict[str, ClientRecord] = {}
+        self._default_heartbeat_frequency = DEFAULT_HEARTBEAT_FREQUENCY
 
     def get(self, client_id: str) -> Optional[ClientRecord]:
         """Return a client record by ID if it exists."""
@@ -216,11 +237,16 @@ class ClientStore:
             agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
         )
         now = _utc_now()
+        incoming_message_id = int(agent_msg.sequence_num)
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
-                record = ClientRecord(client_id=client_id)
+                record = ClientRecord(
+                    client_id=client_id,
+                    heartbeat_frequency=self._default_heartbeat_frequency,
+                )
                 self._clients[client_id] = record
+            self.check_sequence_num(record, incoming_message_id)
             self._apply_comm_metadata(record, now, channel)
             self._apply_capabilities(record, agent_msg)
             self._apply_custom_capabilities(record, agent_msg)
@@ -229,6 +255,75 @@ class ClientStore:
             self._apply_agent_description(record, agent_msg)
             self._apply_disconnect(record, agent_msg, now)
         return record
+
+    def _queue_force_resync_if_missing_locked(self, record: ClientRecord) -> bool:
+        """Queue one unsent force-resync command when none is pending."""
+        for command in record.commands:
+            if command.sent_at is not None:
+                continue
+            if (
+                command.classifier.strip().lower() == FORCE_RESYNC_CLASSIFIER
+                and command.action.strip().lower() == FORCE_RESYNC_ACTION
+            ):
+                return False
+        command = CommandRecord(
+            command=FORCE_RESYNC_ACTION,
+            classifier=FORCE_RESYNC_CLASSIFIER,
+            action=FORCE_RESYNC_ACTION,
+            key_value_pairs=[
+                {"key": "classifier", "value": FORCE_RESYNC_CLASSIFIER},
+                {"key": "action", "value": FORCE_RESYNC_ACTION},
+                {"key": "source", "value": "server-sequence-check"},
+            ],
+            event_description=FORCE_RESYNC_EVENT_DESCRIPTION,
+        )
+        record.commands.append(command)
+        self._append_history_event(
+            record,
+            command,
+            max_events=self._resolve_event_history_size(),
+        )
+        return True
+
+    def _resolve_event_history_size(self) -> int:
+        """Resolve configured event-history size with a safe default fallback."""
+        try:
+            from opamp_provider import config as provider_config
+
+            return int(provider_config.CONFIG.client_event_history_size)
+        except Exception:
+            return DEFAULT_HISTORY_MAX_EVENTS
+
+    def check_sequence_num(self, record: ClientRecord, message_id: int) -> None:
+        """Validate incoming sequence number continuity and queue force-resync when needed."""
+        logger = logging.getLogger(__name__)
+        current_message_id = int(record.message_id)
+        requires_full_report = (
+            current_message_id == MIN_INTEGER or message_id != (current_message_id + 1)
+        )
+        if requires_full_report:
+            queued = self._queue_force_resync_if_missing_locked(record)
+            logger.warning(
+                (
+                    "check_sequence_num outcome=force_resync_required client_id=%s "
+                    "previous_message_id=%s incoming_message_id=%s queued=%s"
+                ),
+                record.client_id,
+                current_message_id,
+                message_id,
+                queued,
+            )
+        else:
+            logger.info(
+                (
+                    "check_sequence_num outcome=sequential_ok client_id=%s "
+                    "previous_message_id=%s incoming_message_id=%s"
+                ),
+                record.client_id,
+                current_message_id,
+                message_id,
+            )
+        record.message_id = message_id
 
     def _apply_comm_metadata(
         self, record: ClientRecord, now: datetime, channel: Optional[str]
@@ -324,7 +419,10 @@ class ClientStore:
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
-                record = ClientRecord(client_id=client_id)
+                record = ClientRecord(
+                    client_id=client_id,
+                    heartbeat_frequency=self._default_heartbeat_frequency,
+                )
                 self._clients[client_id] = record
             cmd = CommandRecord(
                 command=action,
@@ -349,7 +447,10 @@ class ClientStore:
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
-                record = ClientRecord(client_id=client_id)
+                record = ClientRecord(
+                    client_id=client_id,
+                    heartbeat_frequency=self._default_heartbeat_frequency,
+                )
                 self._clients[client_id] = record
             record.requested_config = config_text
             record.requested_config_version = version
@@ -363,7 +464,10 @@ class ClientStore:
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
-                record = ClientRecord(client_id=client_id)
+                record = ClientRecord(
+                    client_id=client_id,
+                    heartbeat_frequency=self._default_heartbeat_frequency,
+                )
                 self._clients[client_id] = record
             record.next_actions = actions if actions else None
             return record
@@ -375,10 +479,66 @@ class ClientStore:
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
-                record = ClientRecord(client_id=client_id)
+                record = ClientRecord(
+                    client_id=client_id,
+                    heartbeat_frequency=self._default_heartbeat_frequency,
+                )
                 self._clients[client_id] = record
             event = EventHistory(event_description=description)
             self._append_history_event(record, event, max_events=max_events)
+            return record
+
+    def get_default_heartbeat_frequency(self) -> int:
+        """Return the default heartbeat frequency in seconds used for client records."""
+        with self._lock:
+            return int(self._default_heartbeat_frequency)
+
+    def set_default_heartbeat_frequency(
+        self, heartbeat_frequency: int, *, max_events: int
+    ) -> int:
+        """Set default heartbeat frequency and apply it to all known clients."""
+        with self._lock:
+            frequency = max(1, int(heartbeat_frequency))
+            self._default_heartbeat_frequency = frequency
+            for record in self._clients.values():
+                record.heartbeat_frequency = frequency
+                event = EventHistory(
+                    event_description=HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION
+                )
+                self._append_history_event(record, event, max_events=max_events)
+            logging.getLogger(__name__).info(
+                (
+                    "set_default_heartbeat_frequency updated_clients=%s "
+                    "heartbeat_frequency=%s"
+                ),
+                len(self._clients),
+                frequency,
+            )
+            return len(self._clients)
+
+    def set_client_heartbeat_frequency(
+        self,
+        client_id: str,
+        heartbeat_frequency: int,
+        *,
+        max_events: int,
+    ) -> Optional[ClientRecord]:
+        """Set heartbeat frequency for a single client and append an event."""
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                return None
+            frequency = max(1, int(heartbeat_frequency))
+            record.heartbeat_frequency = frequency
+            event = EventHistory(
+                event_description=HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION
+            )
+            self._append_history_event(record, event, max_events=max_events)
+            logging.getLogger(__name__).info(
+                "set_client_heartbeat_frequency client_id=%s heartbeat_frequency=%s",
+                client_id,
+                frequency,
+            )
             return record
 
     def _append_history_event(

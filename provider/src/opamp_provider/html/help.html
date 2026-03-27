@@ -33,6 +33,8 @@
     p { color: var(--muted); line-height: 1.5; }
     ul { padding-left: 18px; }
     .tag { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #e3e8ff; color: #2f3f8f; font-size: 0.85rem; }
+    .tag-editable { background: #e5f6ed; color: #1f6a4e; }
+    .tag-readonly { background: #eceff6; color: #4c5563; }
     footer.footer {
       text-align: center;
       color: var(--muted);
@@ -101,6 +103,42 @@
         <div>__SIGNIFICANT_SECONDS__ seconds</div>
       </div>
     </div>
+    <section class="custom-commands">
+      <h2>Global Settings Reference</h2>
+      <p>
+        The <strong>Global Settings</strong> panel lets you control server-side communication
+        thresholds and default client heartbeat behavior from the UI.
+      </p>
+      <ul class="command-list">
+        <li><strong>ServerSettings:</strong> Updates delayed/significant communication thresholds used by status highlighting and saves the values to <code>opamp.json</code>.</li>
+        <li><strong>ClientSettings:</strong> Updates the default heartbeat frequency value tracked by the provider for clients.</li>
+      </ul>
+      <ul class="command-list">
+        <li><strong>delayed_comms_seconds</strong><br>__HELP_DELAYED_COMMS_SECONDS__</li>
+        <li><strong>significant_comms_seconds</strong><br>__HELP_SIGNIFICANT_COMMS_SECONDS__</li>
+        <li><strong>client_event_history_size</strong><br>__HELP_CLIENT_EVENT_HISTORY_SIZE__</li>
+        <li><strong>default_heartbeat_frequency</strong><br>__HELP_DEFAULT_HEARTBEAT_FREQUENCY__</li>
+      </ul>
+      <p>
+        Note: Whether a client permanently stores heartbeat-related changes is client-specific behavior.
+        The server can request/track heartbeat settings, but client-side persistence across restarts
+        depends on the client implementation.
+      </p>
+    </section>
+    <section class="custom-commands">
+      <h2>Provider Config Editability</h2>
+      <p>The list below shows which provider configuration values are currently editable directly in the UI.</p>
+      <ul class="command-list">
+        <li><strong>delayed_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>significant_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>client_event_history_size</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>default_heartbeat_frequency</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>webui_port</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
+        <li><strong>minutes_keep_disconnected</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
+        <li><strong>retryAfterSeconds</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
+        <li><strong>log_level</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
+      </ul>
+    </section>
     <p>Use the main page to open an agent, paste config/commands, and save. Changes are queued until the next agent check-in.</p>
     <section class="custom-commands">
       <h2>Known Custom Commands</h2>
