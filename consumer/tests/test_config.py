@@ -106,3 +106,49 @@ def test_agent_capabilities_are_hardwired_and_ignore_config_value(
         | AgentCapabilities.ReportsHealth
     )
     assert loaded.agent_capabilities == expected_mask
+
+
+def test_full_update_controller_loads_from_config_object(tmp_path, monkeypatch) -> None:
+    """Load full_update_controller object from config file."""
+    raw = _base_consumer_config()
+    raw["consumer"]["full_update_controller"] = {"fullResendAfter": 3}
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.full_update_controller == {"fullResendAfter": 3}
+
+
+def test_full_update_controller_cli_override_uses_string(tmp_path) -> None:
+    """Apply full_update_controller CLI override as a JSON string."""
+    raw = _base_consumer_config()
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    loaded = consumer_config.load_config_with_overrides(
+        config_path=config_path,
+        server_url=None,
+        server_port=None,
+        agent_config_path=None,
+        agent_additional_params=None,
+        heartbeat_frequency=None,
+        log_level=None,
+        full_update_controller='{"fullResendAfter":2}',
+    )
+
+    assert loaded.full_update_controller == '{"fullResendAfter":2}'
+
+
+def test_full_update_controller_type_loads_from_config(tmp_path, monkeypatch) -> None:
+    """Load full_update_controller_type from config file."""
+    raw = _base_consumer_config()
+    raw["consumer"]["full_update_controller_type"] = "TimeSend"
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.full_update_controller_type == "TimeSend"

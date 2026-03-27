@@ -52,12 +52,16 @@ CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"
 CFG_ALLOW_CUSTOM_CAPABILITIES = "allow_custom_capabilities"
 CFG_CLIENT_STATUS_PORT = "client_status_port"
 CFG_CHAT_OPS_PORT = "chat_ops_port"
+CFG_FULL_UPDATE_CONTROLLER = "full_update_controller"
+CFG_FULL_UPDATE_CONTROLLER_TYPE = "full_update_controller_type"
 HARDWIRED_AGENT_CAPABILITY_NAMES = (
     "ReportsStatus",
     "AcceptsRestartCommand",
     "ReportsHealth",
 )
 DEFAULT_LOG_LEVEL = "debug"
+DEFAULT_FULL_UPDATE_CONTROLLER: dict[str, int] = {"fullResendAfter": 1}
+DEFAULT_FULL_UPDATE_CONTROLLER_TYPE = "SentCount"
 
 
 @dataclass
@@ -112,6 +116,13 @@ class ConsumerConfig:
     agent_http_port: int | None = None  # Parsed agent internal HTTP endpoint port.
     agent_http_listen: str | None = None  # Parsed agent internal HTTP listen address.
     agent_http_server: str | None = None  # Parsed agent internal HTTP server setting.
+    full_update_controller: dict[str, Any] | str | None = (
+        None  # Controller config object from file or CLI JSON string.
+    )
+    full_update_controller_type: str = (
+        DEFAULT_FULL_UPDATE_CONTROLLER_TYPE
+        # Concrete full update controller implementation name.
+    )
 
     def __setitem__(self, key, value):
         """Support dict-style assignment by forwarding writes to dataclass attributes.
@@ -167,14 +178,35 @@ def _ensure_shared_on_path() -> None:
 
 
 def _config_path() -> pathlib.Path:
-    """Resolve the consumer config path from environment or working directory."""
-    path = os.environ.get(ENV_OPAMP_CONFIG_PATH)
+    """Resolve the consumer config path from env var or known repo defaults."""
+    env_path = os.environ.get(ENV_OPAMP_CONFIG_PATH)
     logger = logging.getLogger(__name__)
-    if path:
-        logger.warning("config path is %s", pathlib.Path.cwd())
-        return pathlib.Path(path)
-    logger.warning("defaulting path to %s/%s", pathlib.Path.cwd(), DEFAULT_CONFIG_FILENAME)
-    return pathlib.Path.cwd() / DEFAULT_CONFIG_FILENAME
+    if env_path:
+        resolved = pathlib.Path(env_path)
+        logger.info("using %s from environment: %s", ENV_OPAMP_CONFIG_PATH, resolved)
+        return resolved
+
+    candidates = (
+        pathlib.Path.cwd() / DEFAULT_CONFIG_FILENAME,
+        _repo_root() / "consumer" / DEFAULT_CONFIG_FILENAME,
+        _repo_root() / "config" / DEFAULT_CONFIG_FILENAME,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            logger.info("using discovered config path: %s", candidate)
+            return candidate
+
+    logger.warning("defaulting config path to %s", candidates[0])
+    return candidates[0]
+
+
+def get_effective_config_path(
+    config_path: str | pathlib.Path | None = None,
+) -> pathlib.Path:
+    """Return the effective config path used for loading consumer configuration."""
+    if config_path is not None:
+        return pathlib.Path(config_path)
+    return _config_path()
 
 
 def _load_json(path: pathlib.Path) -> dict[str, Any]:
@@ -255,6 +287,8 @@ def load_config() -> ConsumerConfig:
     )
     mask: None
 
+    log_level = consumer_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL) or DEFAULT_LOG_LEVEL
+
     if not server_url:
         logger.warning("%s.%s is required", CFG_CONSUMER, CFG_SERVER_URL)
     agent_config_path = consumer_raw.get(CFG_AGENT_CONFIG_PATH)
@@ -283,9 +317,18 @@ def load_config() -> ConsumerConfig:
         )
 
     mask = parse_capabilities(HARDWIRED_AGENT_CAPABILITY_NAMES, AgentCapabilities)
-    log_level = consumer_raw.get(CFG_LOG_LEVEL, DEFAULT_LOG_LEVEL) or DEFAULT_LOG_LEVEL
     client_status_port = consumer_raw.get(CFG_CLIENT_STATUS_PORT)
     chat_ops_port = consumer_raw.get(CFG_CHAT_OPS_PORT)
+    full_update_controller = consumer_raw.get(
+        CFG_FULL_UPDATE_CONTROLLER, DEFAULT_FULL_UPDATE_CONTROLLER
+    )
+    full_update_controller_type = (
+        consumer_raw.get(
+            CFG_FULL_UPDATE_CONTROLLER_TYPE,
+            DEFAULT_FULL_UPDATE_CONTROLLER_TYPE,
+        )
+        or DEFAULT_FULL_UPDATE_CONTROLLER_TYPE
+    )
 
     logger.info("loaded consumer server_url: %s", server_url)
     logger.info("loaded consumer server_port: %s", server_port)
@@ -310,6 +353,11 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer log_level: %s", log_level)
     logger.info("loaded consumer client_status_port: %s", client_status_port)
     logger.info("loaded consumer chat_ops_port: %s", chat_ops_port)
+    logger.info("loaded consumer full_update_controller: %s", full_update_controller)
+    logger.info(
+        "loaded consumer full_update_controller_type: %s",
+        full_update_controller_type,
+    )
     return ConsumerConfig(
         server_url=server_url,
         server_port=server_port,
@@ -326,6 +374,8 @@ def load_config() -> ConsumerConfig:
             int(client_status_port) if client_status_port is not None else None
         ),
         chat_ops_port=int(chat_ops_port) if chat_ops_port is not None else None,
+        full_update_controller=full_update_controller,
+        full_update_controller_type=str(full_update_controller_type),
     )
 
 
@@ -338,6 +388,7 @@ def load_config_with_overrides(
     agent_additional_params: list[str] | None,
     heartbeat_frequency: int | None,
     log_level: str | None,
+    full_update_controller: str | None,
 ) -> ConsumerConfig:
     """Load config and apply CLI overrides for the consumer."""
     logger = logging.getLogger(__name__)
@@ -384,6 +435,19 @@ def load_config_with_overrides(
         override=log_level,
         default=DEFAULT_LOG_LEVEL,
     )
+    resolved_full_update_controller = _resolve_config_value(
+        mapping=consumer_raw,
+        key=CFG_FULL_UPDATE_CONTROLLER,
+        logger=logger,
+        override=full_update_controller,
+        default=DEFAULT_FULL_UPDATE_CONTROLLER,
+    )
+    resolved_full_update_controller_type = _resolve_config_value(
+        mapping=consumer_raw,
+        key=CFG_FULL_UPDATE_CONTROLLER_TYPE,
+        logger=logger,
+        default=DEFAULT_FULL_UPDATE_CONTROLLER_TYPE,
+    )
 
     if not resolved_agent_config_path:
         raise ValueError(f"{CFG_CONSUMER}.{CFG_AGENT_CONFIG_PATH} is required")
@@ -418,6 +482,10 @@ def load_config_with_overrides(
         ),
         chat_ops_port=_coerce_optional_int(consumer_raw.get(CFG_CHAT_OPS_PORT)),
         log_level=str(resolved_log_level or DEFAULT_LOG_LEVEL),
+        full_update_controller=resolved_full_update_controller,
+        full_update_controller_type=str(
+            resolved_full_update_controller_type or DEFAULT_FULL_UPDATE_CONTROLLER_TYPE
+        ),
     )
 
 

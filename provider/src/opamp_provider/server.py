@@ -38,9 +38,14 @@ def main() -> None:
         help="logging level name override (for example DEBUG, INFO, WARNING)",
     )
     args = parser.parse_args()
+    effective_config_path = provider_config.get_effective_config_path(args.config_path)
+    logging.getLogger(__name__).info(
+        "using provider config path: %s",
+        effective_config_path,
+    )
 
     config = provider_config.load_config_with_overrides(
-        config_path=pathlib.Path(args.config_path) if args.config_path else None,
+        config_path=effective_config_path,
         log_level=args.log_level,
     )
     provider_config.set_config(config)

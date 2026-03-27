@@ -8,6 +8,10 @@
     "agent_config_path": "d://dev//opamp//consumer//fluent-bit.yaml",
     "agent_additional_params": [],
     "heartbeat_frequency": 30,
+    "full_update_controller": {
+      "fullResendAfter": 2
+    },
+    "full_update_controller_type": "SentCount",
     "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",

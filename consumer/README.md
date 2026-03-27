@@ -36,7 +36,11 @@ Use this minimal config for a fast local startup:
     "server_url": "http://localhost",
     "agent_config_path": "./fluent-bit.conf",
     "agent_additional_params": [],
-    "heartbeat_frequency": 30
+    "heartbeat_frequency": 30,
+    "full_update_controller": {
+      "fullResendAfter": 1
+    },
+    "full_update_controller_type": "SentCount"
   }
 }
 ```
@@ -55,6 +59,10 @@ Use this minimal config for a fast local startup:
     "agent_config_path": "./fluent-bit.conf",
     "agent_additional_params": ["-R"],
     "heartbeat_frequency": 30,
+    "full_update_controller": {
+      "fullResendAfter": 1
+    },
+    "full_update_controller_type": "SentCount",
     "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",
@@ -74,6 +82,8 @@ Use this minimal config for a fast local startup:
 | `consumer.agent_config_path` | string | Yes (`--agent-config-path`) | Path to agent config file loaded by consumer. | `"./fluent-bit.conf"` |
 | `consumer.agent_additional_params` | array[string] | Yes (`--agent-additional-params`) | Extra args passed to the launched agent process. | `["-R"]` |
 | `consumer.heartbeat_frequency` | integer | Yes (`--heartbeat-frequency`) | Heartbeat interval in seconds. | `30` |
+| `consumer.full_update_controller` | object | Yes (`--full-update-controller`, JSON string) | Full update controller settings. `fullResendAfter` controls when all reporting flags are reset to `true`. | `{"fullResendAfter":1}` |
+| `consumer.full_update_controller_type` | string | No | Full update controller implementation name (`SentCount`, `AlwaysSend`, `TimeSend`). | `"SentCount"` |
 | `consumer.log_level` | string | Yes (`--log-level`) | Consumer log level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Resolved via Python `logging` names. | `"debug"` |
 | `consumer.transport` | string | No | OpAMP transport mode (`http` or `websocket`). | `"http"` |
 | `consumer.log_agent_api_responses` | boolean | No | Enables verbose logging of local API responses. | `false` |
@@ -125,7 +135,8 @@ python -m opamp_consumer.client \
   --agent-config-path ./fluent-bit.conf \
   --agent-additional-params -R \
   --heartbeat-frequency 15 \
-  --log-level INFO
+  --log-level INFO \
+  --full-update-controller '{"fullResendAfter":1}'
 ```
 
 ## Run Scripts

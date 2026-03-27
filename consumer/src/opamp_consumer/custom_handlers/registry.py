@@ -22,7 +22,9 @@ import types
 import uuid
 from typing import TYPE_CHECKING
 
-from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
+from opamp_consumer.custom_handlers.handler_interface import (
+    CustomMessageHandlerInterface,
+)
 
 if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
@@ -49,7 +51,9 @@ def _load_module_from_path(path: pathlib.Path) -> types.ModuleType | None:
     return module
 
 
-def _discover_handler_classes(folder: pathlib.Path) -> list[type[CustomMessageHandlerInterface]]:
+def _discover_handler_classes(
+    folder: pathlib.Path,
+) -> list[type[CustomMessageHandlerInterface]]:
     """Discover concrete custom-handler classes from Python modules in a folder.
 
     Args:
@@ -145,6 +149,9 @@ def create_handler(
         if client_data is not None:
             instance.set_client_data(client_data)
         return instance
-    except Exception:
+    except Exception as err:
+        logging.getLogger(__name__).error(
+            "Error with custom handlers - create handler - %s", err
+        )
         return None
     return None

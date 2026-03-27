@@ -8,6 +8,10 @@
     "fluentbit_config_path": "./fluent-bit.conf",
     "additional_fluent_bit_params": [],
     "heartbeat_frequency": 30,
+    "full_update_controller": {
+      "fullResendAfter": 1
+    },
+    "full_update_controller_type": "SentCount",
     "allow_custom_capabilities": true,
     "log_level": "debug",
     "service_name": "Fluentbit",

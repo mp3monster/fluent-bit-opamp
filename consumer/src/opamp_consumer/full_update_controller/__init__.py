@@ -10,8 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpAMP consumer package."""
+"""Full update controller package."""
 
-from opamp_consumer.exceptions import AgentException
+from opamp_consumer.full_update_controller.update_interface import (
+    FullUpdateControllerInterface,
+)
+from opamp_consumer.full_update_controller.always_send import AlwaysSend
+from opamp_consumer.full_update_controller.sent_count import SentCount
+from opamp_consumer.full_update_controller.time_send import TimeSend
 
-__all__ = ["AgentException"]
+__all__ = ["FullUpdateControllerInterface", "AlwaysSend", "SentCount", "TimeSend"]

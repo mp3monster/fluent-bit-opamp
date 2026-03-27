@@ -87,6 +87,13 @@ def _config_path() -> pathlib.Path:
     return _repo_root() / "config" / "opamp.json"
 
 
+def get_effective_config_path(config_path: str | pathlib.Path | None = None) -> pathlib.Path:
+    """Return the effective provider config path used for loading configuration."""
+    if config_path is not None:
+        return pathlib.Path(config_path)
+    return _config_path()
+
+
 def _load_json(path: pathlib.Path) -> dict[str, Any]:
     """Load JSON from a path, raising when missing."""
     if not path.exists():

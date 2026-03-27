@@ -26,6 +26,7 @@ from opamp_consumer.client import (
 )
 from opamp_consumer.config import ConsumerConfig
 from opamp_consumer.exceptions import AgentException
+from opamp_consumer.full_update_controller import AlwaysSend, TimeSend
 from opamp_consumer.proto import opamp_pb2, anyvalue_pb2
 
 
@@ -95,7 +96,7 @@ def test_reporting_flags_default_to_true() -> None:
 
     assert instance.data.reporting_flags
     assert set(instance.data.reporting_flags.keys()) == set(
-        client.OpAMPClientData.ReportingFlag
+        client.ReportingFlag
     )
     assert all(instance.data.reporting_flags.values())
 
@@ -116,11 +117,100 @@ def test_reportingflag_setall_updates_all_values() -> None:
     """ReportingFlag.set_all_reporting_flags should update every flag entry in-place."""
     flags = {
         flag: True
-        for flag in client.OpAMPClientData.ReportingFlag
+        for flag in client.ReportingFlag
     }
 
-    client.OpAMPClientData.ReportingFlag.set_all_reporting_flags(flags, False)
+    client.ReportingFlag.set_all_reporting_flags(flags, False)
     assert all(value is False for value in flags.values())
+
+
+def test_sent_count_full_update_controller_sets_all_reporting_flags(monkeypatch) -> None:
+    """SentCount should set all reporting flags after reaching fullResendAfter."""
+    _set_config(["ReportsStatus"])
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.full_update_controller = {"fullResendAfter": 1}
+    instance.data.full_update_controller = client.SentCount(
+        set_all_reporting_flags=instance.data.set_all_reporting_flags,
+    )
+    instance.data.full_update_controller.configure(instance.config.full_update_controller)
+    instance.data.set_all_reporting_flags(False)
+
+    async def _fake_send_http(_msg):
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(instance, "send_http", _fake_send_http)
+
+    import asyncio
+
+    asyncio.run(instance.send(opamp_pb2.AgentToServer(), send_as_is=False))
+    assert all(instance.data.reporting_flags.values())
+
+
+def test_always_send_full_update_controller_sets_all_reporting_flags() -> None:
+    """AlwaysSend should set all reporting flags on every update_sent call."""
+    _set_config(["ReportsStatus"])
+    instance = client.OpAMPClient("http://localhost")
+    instance.data.full_update_controller = AlwaysSend(
+        set_all_reporting_flags=instance.data.set_all_reporting_flags,
+    )
+    instance.data.set_all_reporting_flags(False)
+
+    instance.data.full_update_controller.update_sent()
+
+    assert all(instance.data.reporting_flags.values())
+
+
+def test_time_send_full_update_controller_respects_time_window() -> None:
+    """TimeSend should set all flags only after configured seconds have elapsed."""
+    _set_config(["ReportsStatus"])
+    instance = client.OpAMPClient("http://localhost")
+    instance.data.full_update_controller = TimeSend(
+        set_all_reporting_flags=instance.data.set_all_reporting_flags,
+    )
+    instance.data.full_update_controller.configure({"fullUpdateAfterSeconds": 2})
+    instance.data.set_all_reporting_flags(False)
+
+    # First call at 1000ms should not trigger (0 + 2000 < 1000 is false).
+    instance.data.full_update_controller.update_sent(1000)
+    assert not any(instance.data.reporting_flags.values())
+    assert instance.data.full_update_controller.last_full_update_ms == 0
+
+    # Second call at 3001ms should trigger (0 + 2000 < 3001 is true).
+    instance.data.full_update_controller.update_sent(3001)
+    assert all(instance.data.reporting_flags.values())
+    assert instance.data.full_update_controller.last_full_update_ms == 3001
+
+
+def test_client_uses_always_send_when_type_configured() -> None:
+    """Instantiate AlwaysSend when full_update_controller_type is AlwaysSend."""
+    _set_config(["ReportsStatus"])
+    config = client.CONFIG
+    config.full_update_controller_type = "AlwaysSend"
+    instance = client.OpAMPClient("http://localhost", config)
+    assert isinstance(instance.data.full_update_controller, AlwaysSend)
+
+
+def test_client_uses_time_send_when_type_configured() -> None:
+    """Instantiate TimeSend when full_update_controller_type is TimeSend."""
+    _set_config(["ReportsStatus"])
+    config = client.CONFIG
+    config.full_update_controller_type = "TimeSend"
+    config.full_update_controller = {"fullUpdateAfterSeconds": 2}
+    instance = client.OpAMPClient("http://localhost", config)
+    assert isinstance(instance.data.full_update_controller, TimeSend)
+
+
+def test_client_defaults_to_sent_count_for_unknown_type(caplog) -> None:
+    """Fallback to SentCount and warn for unknown controller types."""
+    _set_config(["ReportsStatus"])
+    config = client.CONFIG
+    config.full_update_controller_type = "UnknownController"
+    caplog.set_level(logging.WARNING)
+    instance = client.OpAMPClient("http://localhost", config)
+    assert isinstance(instance.data.full_update_controller, client.SentCount)
+    assert "Unknown full_update_controller_type" in caplog.text
 
 
 def test_handle_flags_logs_names_and_sets_all_for_report_full_state(caplog) -> None:

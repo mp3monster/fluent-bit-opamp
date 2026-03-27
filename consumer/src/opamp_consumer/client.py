@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import argparse
+from codecs import decode as byte_value
 import json
 from dataclasses import asdict, dataclass, field
-from enum import Enum
 import sys
 import logging
 import os
@@ -42,8 +42,15 @@ from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.exceptions import AgentException
+from opamp_consumer.full_update_controller import (
+    AlwaysSend,
+    FullUpdateControllerInterface,
+    SentCount,
+    TimeSend,
+)
 from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
+from opamp_consumer.reporting_flag import ReportingFlag
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
     AGENT_CAPABILITIES_MAP,
@@ -65,13 +72,6 @@ from shared.opamp_config import (
     parse_capabilities,
 )
 from shared.uuid_utils import generate_uuid7_bytes
-
-try:
-    from enum import StrEnum
-except ImportError:  # pragma: no cover - Python <3.11 fallback
-
-    class StrEnum(str, Enum):
-        """Compatibility fallback for Python versions without enum.StrEnum."""
 
 
 HTTP_TIMEOUT_SECONDS = 5.0  # Timeout for local HTTP calls.
@@ -157,29 +157,6 @@ def _config_parameters_payload(config: ConsumerConfig) -> dict[str, object]:
 class OpAMPClientData:
     """Container for OpAMP client instance data."""
 
-    class ReportingFlag(StrEnum):
-        """Enumeration of provider-directed reporting controls."""
-
-        REPORT_FULL_STATE = "reportFullState"
-        REPORT_HEALTH = "reportHealth"
-        REPORT_CAPABILITIES = "reportCapabilities"
-        REPORT_CUSTOM_CAPABILITIES = "reportCustomCapabilities"
-
-        @classmethod
-        def set_all_reporting_flags(
-            cls,
-            reporting_flags: dict["OpAMPClientData.ReportingFlag", bool],
-            value: bool = True,
-        ) -> None:
-            """Set all reporting-flag dictionary values to the provided boolean.
-
-            Args:
-                reporting_flags: Mapping keyed by ReportingFlag values.
-                value: Boolean value assigned to all reporting flags.
-            """
-            for flag in cls:
-                reporting_flags[flag] = value
-
     config: ConsumerConfig
     base_url: str
     uid_instance: bytes | None = field(default_factory=generate_uuid7_bytes)
@@ -195,8 +172,9 @@ class OpAMPClientData:
     agent_type_name: str = "Fluent Bit"
     agent_version: str = ""
     reporting_flags: dict[ReportingFlag, bool] = field(
-        default_factory=lambda: {flag: True for flag in OpAMPClientData.ReportingFlag}
+        default_factory=lambda: {flag: True for flag in ReportingFlag}
     )
+    full_update_controller: FullUpdateControllerInterface | None = None
 
     def set_all_reporting_flags(self, value: bool = True) -> None:
         """Set every reporting flag value to the provided boolean.
@@ -204,15 +182,21 @@ class OpAMPClientData:
         Args:
             value: Boolean value assigned to all reporting flags.
         """
-        self.ReportingFlag.set_all_reporting_flags(self.reporting_flags, value)
+        ReportingFlag.set_all_reporting_flags(self.reporting_flags, value)
 
     def set_all_flags(self, value: bool = True) -> None:
-        """Backward-compatible alias to set all reporting flags.
-
-        Args:
-            value: Boolean value assigned to all reporting flags.
-        """
+        """Backward-compatible alias to set all reporting flags."""
         self.set_all_reporting_flags(value)
+
+    @property
+    def FullUpdateController(self) -> FullUpdateControllerInterface | None:
+        """Backward-compatible alias for full update controller object."""
+        return self.full_update_controller
+
+    @FullUpdateController.setter
+    def FullUpdateController(self, value: FullUpdateControllerInterface | None) -> None:
+        """Backward-compatible alias setter for full update controller object."""
+        self.full_update_controller = value
 
 
 class OpAMPClient(OpAMPClientInterface):
@@ -230,6 +214,7 @@ class OpAMPClient(OpAMPClientInterface):
             config=config,
             base_url=base_url.rstrip("/"),
         )
+        self.data.FullUpdateController = self._create_full_update_controller()
         self._custom_handler_folder = (
             pathlib.Path(__file__).resolve().parent / "custom_handlers"
         )
@@ -238,6 +223,32 @@ class OpAMPClient(OpAMPClientInterface):
             client_data=self.data,
             allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
         )
+
+    def _create_full_update_controller(self) -> FullUpdateControllerInterface:
+        """Build a configured full update controller instance for this client."""
+        controller_type = str(
+            self.config.full_update_controller_type or "SentCount"
+        ).strip()
+        normalized_type = controller_type.lower()
+        if normalized_type == "alwayssend":
+            controller = AlwaysSend(
+                set_all_reporting_flags=self.data.set_all_reporting_flags,
+            )
+        elif normalized_type == "timesend":
+            controller = TimeSend(
+                set_all_reporting_flags=self.data.set_all_reporting_flags,
+            )
+        else:
+            if normalized_type != "sentcount":
+                logging.getLogger(__name__).warning(
+                    "Unknown full_update_controller_type=%s; defaulting to SentCount",
+                    controller_type,
+                )
+            controller = SentCount(
+                set_all_reporting_flags=self.data.set_all_reporting_flags,
+            )
+        controller.configure(self.config.full_update_controller)
+        return controller
 
     @property
     def config(self) -> ConsumerConfig:
@@ -393,16 +404,27 @@ class OpAMPClient(OpAMPClientInterface):
         Returns:
             Populated AgentToServer message ready to send.
         """
-        msg.agent_description.CopyFrom(self.get_agent_description())
-        msg.capabilities = self.get_agent_capabilities()
-        custom_capabilities = self.get_custom_capabilities_payload()
-        if custom_capabilities.capabilities:
-            msg.custom_capabilities.CopyFrom(custom_capabilities)
         msg.sequence_num = self.data.msg_sequence_number
         self.data.msg_sequence_number = self.data.msg_sequence_number + 1
         msg.instance_uid = self.data.uid_instance
 
-        msg = self._populate_agent_to_server_health(msg)
+        if self.data.reporting_flags[ReportingFlag.REPORT_DESCRIPTION]:
+            msg.agent_description.CopyFrom(self.get_agent_description())
+            self.data.reporting_flags[ReportingFlag.REPORT_DESCRIPTION] = False
+
+        if self.data.reporting_flags[ReportingFlag.REPORT_CAPABILITIES]:
+            msg.capabilities = self.get_agent_capabilities()
+            self.data.reporting_flags[ReportingFlag.REPORT_CAPABILITIES] = False
+
+        if self.data.reporting_flags[ReportingFlag.REPORT_CUSTOM_CAPABILITIES]:
+            custom_capabilities = self.get_custom_capabilities_payload()
+            if custom_capabilities.capabilities:
+                msg.custom_capabilities.CopyFrom(custom_capabilities)
+            self.data.reporting_flags[ReportingFlag.REPORT_CUSTOM_CAPABILITIES] = False
+
+        if self.data.reporting_flags[ReportingFlag.REPORT_HEALTH]:
+            msg = self._populate_agent_to_server_health(msg)
+            self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = False
         return msg
 
     def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
@@ -432,7 +454,7 @@ class OpAMPClient(OpAMPClientInterface):
 
         try:
             if reply.HasField(PB_FIELD_ERROR_RESPONSE):
-                self.data.set_all_flags()
+                self.data.set_all_reporting_flags()
                 self.handle_error_response(error_response=reply.error_response)
             if reply.HasField(PB_FIELD_REMOTE_CONFIG):
                 self.handle_remote_config(reply.remote_config)
@@ -469,18 +491,21 @@ class OpAMPClient(OpAMPClientInterface):
         """
         logger = logging.getLogger(__name__)
         if reply.HasField(PB_FIELD_INSTANCE_UID):
-            logger.debug("reply target is %s", reply.instance_uid)
+            logger.debug(
+                "reply target is %s",
+                byte_value(reply.instance_uid, errors="replace"),
+            )
             if reply.instance_uid == self.data.uid_instance:
                 return True
             logger.error(
                 "Message doesn't have an instance uid or doesn't match our "
                 "service instance id %s",
-                self.data.uid_instance,
+                byte_value(reply.instance_uid, errors="replace"),
             )
             return False
         logger.error(
             "Server didn't share instance_uid, my instance uid is %s",
-            self.data.uid_instance,
+            byte_value(self.instance_uid, errors="replace"),
         )
         return False
 
@@ -505,17 +530,25 @@ class OpAMPClient(OpAMPClientInterface):
             if msg is None:
                 msg = opamp_pb2.AgentToServer()
             msg = self._populate_agent_to_server(msg)
+        response: opamp_pb2.ServerToAgent | None = None
         transport = (self.config.transport or TRANSPORT_HTTP).strip().lower()
         if transport == TRANSPORT_WEBSOCKET:
             try:
-                return await self.send_websocket(msg)
+                response = await self.send_websocket(msg)
             except:
                 logging.getLogger(__name__).warning(
                     "Error sending websocket client-to-server message"
                 )
+        if response is not None:
+            if not send_as_is and self.data.full_update_controller is not None:
+                self.data.full_update_controller.update_sent()
+            return response
 
         try:
-            return await self.send_http(msg)
+            response = await self.send_http(msg)
+            if not send_as_is and self.data.full_update_controller is not None:
+                self.data.full_update_controller.update_sent()
+            return response
         except Exception as err:
             logging.getLogger(__name__).warning(
                 "Error sending HTTP client-to-server message\n %s",
@@ -553,8 +586,10 @@ class OpAMPClient(OpAMPClientInterface):
         try:
             await self.send(msg, send_as_is=True)
             self.allow_heartbeat = False
-        except Exception:
-            logging.getLogger(__name__).warning("Failed to send disconnect message")
+        except Exception as err:
+            logging.getLogger(__name__).warning(
+                "Failed to send disconnect message - %s", err
+            )
 
     async def _send_disconnect_with_timeout(self, timeout_seconds: float = 1.0) -> None:
         """Best-effort disconnect send with a short timeout.
@@ -565,8 +600,9 @@ class OpAMPClient(OpAMPClientInterface):
         try:
             logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
             await asyncio.wait_for(self.send_disconnect(), timeout=timeout_seconds)
-        except Exception:
-            logging.getLogger(__name__).warning("Disconnect send timed out")
+        except Exception as err:
+            logging.getLogger(__name__).error("Disconnect send timed out-- %s", err)
+
         logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
 
     def finalize(self) -> None:
@@ -729,9 +765,23 @@ class OpAMPClient(OpAMPClientInterface):
                 results[key] = resp.text
                 codes[key] = str(resp.status_code)
                 resp.raise_for_status()
+                if (resp.status_code < 200) or (resp.status_code > 299):
+                    # force the health to be reported
+                    self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = True
+                    results[key] = f"{path}={resp.status_code}"
+                    logging.getLogger(__name__).warning(
+                        "Err checking status using %s got code %s",
+                        path,
+                        resp.status_code,
+                    )
+
             except Exception as exc:  # pragma: no cover - error path varies by env
                 results[key] = f"{ERR_PREFIX}{exc}"
                 codes[key] = ERR_STATUS
+                self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = True
+                logging.getLogger(__name__).warning(
+                    "Err checking status using %s got error %s", path, exc
+                )
         return results, codes
 
     def add_agent_version(self, port: int) -> None:
@@ -1001,7 +1051,7 @@ class OpAMPClient(OpAMPClientInterface):
                 flag_names.append(name)
 
         if PB_FLAG_REPORT_FULL_STATE in flag_names:
-            self.data.set_all_flags(True)
+            self.data.set_all_reporting_flags(True)
             logger.info(
                 "server flags include ReportFullState; set all reporting flags true"
             )
@@ -1017,7 +1067,7 @@ class OpAMPClient(OpAMPClientInterface):
         Args:
             capabilities: Integer bitmask from `ServerToAgent.capabilities`.
         """
-        logging.getLogger(__name__).info("server capabilities: %s", capabilities)
+        logging.getLogger(__name__).debug("server capabilities: %s", capabilities)
 
     def handle_command(self, command: opamp_pb2.ServerToAgentCommand) -> None:
         """Handle ServerToAgent command payloads.
@@ -1059,7 +1109,7 @@ class OpAMPClient(OpAMPClientInterface):
             custom_capabilities: Custom capability list reported by the provider.
         """
         logging.getLogger(__name__).info(
-            "server custom_capabilities:\n%s",
+            "notified of server custom_capabilities: %s",
             text_format.MessageToString(custom_capabilities),
         )
 
@@ -1073,7 +1123,7 @@ class OpAMPClient(OpAMPClientInterface):
         """
         logger = logging.getLogger(__name__)
         logger.info(
-            "server custom_message:\n%s", text_format.MessageToString(custom_message)
+            "server custom_message: %s", text_format.MessageToString(custom_message)
         )
         if custom_message is None:
             return
@@ -1164,17 +1214,17 @@ class OpAMPClient(OpAMPClientInterface):
                     self.data.allow_heartbeat = False
                     await self._send_disconnect_with_timeout()
                     break
-                except Exception as err:
+                except Exception as err:  # pylint: disable=broad-exception-caught
                     logger.error("Something stumbled - we catch and carry on\n %s", err)
                     self.data.last_heartbeat_results = None
                     self.data.last_heartbeat_http_codes = None
 
                 self._handle_server_to_agent(await self.send())
-        except BaseException as err:
+        except BaseException as base_err:  # pylint: disable=broad-exception-caught
             await self._send_disconnect_with_timeout()
             logger.error(
                 "heartbeat outer error trap triggered by:\n%s\n %s",
-                err,
+                base_err,
                 traceback.format_exc(),
             )
             print("...ouch, bye")
@@ -1186,6 +1236,52 @@ def check_semaphore() -> bool:
         logging.getLogger(__name__).warning("Spotted Semaphore file")
         return True
     return False
+
+
+_COMMENT_KV = re.compile(
+    rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
+    r"[:=]\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_AGENT_CONFIG_KV = re.compile(
+    r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
+    re.IGNORECASE,
+)
+
+
+def _apply_agent_comment(
+    config: consumer_config.ConsumerConfig,
+    logger: logging.Logger,
+    match: re.Match[str],
+) -> None:
+    """Apply supported metadata comment values to the consumer config."""
+    key = match.group("key").lower()
+    value = match.group("value")
+    if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
+        value = resolve_service_instance_id_template(value)
+    config[key] = value
+    logger.info("located >%s< with value >%s<", key, value)
+
+
+def _apply_agent_setting(
+    config: consumer_config.ConsumerConfig,
+    logger: logging.Logger,
+    match: re.Match[str],
+) -> None:
+    """Apply supported Fluent Bit HTTP settings to the consumer config."""
+    key = match.group("key").lower()
+    value = match.group("value").strip()
+    if key == KEY_HTTP_PORT:
+        port_value = int(value)
+        config.client_status_port = port_value
+        config.agent_http_port = port_value
+    elif key == KEY_HTTP_LISTEN:
+        config.agent_http_listen = value
+    elif key == KEY_HTTP_SERVER:
+        config.agent_http_server = value
+    else:
+        config[key] = value
+    logger.info("located >%s< with value >%s<", key, value)
 
 
 def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
@@ -1203,57 +1299,18 @@ def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
     if not path:
         raise ValueError(f"{CFG_AGENT_CONFIG_PATH} is not set")
 
-    comment_pattern = (
-        rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
-        r"[:=]\s*(?P<value>.+?)\s*$"
-    )
-    comment_kv = re.compile(comment_pattern, re.IGNORECASE)
-    config_kv = re.compile(
-        r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
-        re.IGNORECASE,
-    )
     with open(path, encoding=UTF8_ENCODING) as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line:
                 continue
-            comment_match = comment_kv.match(raw_line)
-            if comment_match:
-                key = comment_match.group("key").lower()
-                value = comment_match.group("value")
-                try:
-                    if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
-                        value = resolve_service_instance_id_template(value)
-                    config[key] = value
-                    logger.info("located >%s< with value >%s<", key, value)
-                    continue
-                except KeyError:
-                    logger.error("barfed with comment match %s --> %s", key, value)
-                    continue
-
-            config_match = config_kv.match(raw_line)
-            if config_match:
-                key = config_match.group("key").lower()
-                value = config_match.group("value").strip()
-                try:
-                    if key == KEY_HTTP_PORT:
-                        port_value = int(value)
-                        config.client_status_port = port_value
-                        config.agent_http_port = port_value
-                        logger.info("located >%s< with value >%s<", key, value)
-                    elif key == KEY_HTTP_LISTEN:
-                        config.agent_http_listen = value
-                        logger.info("located >%s< with value >%s<", key, value)
-                    elif key == KEY_HTTP_SERVER:
-                        config.agent_http_server = value
-                        logger.info("located >%s< with value >%s<", key, value)
-                    else:
-                        config[key] = value
-                        logger.info("located >%s< with value >%s<", key, value)
-                    continue
-                except KeyError:
-                    logger.error("barfed with config match %s --> %s", key, value)
-                    continue
+            comment_match = _COMMENT_KV.match(raw_line)
+            if comment_match is not None:
+                _apply_agent_comment(config, logger, comment_match)
+                continue
+            config_match = _AGENT_CONFIG_KV.match(raw_line)
+            if config_match is not None:
+                _apply_agent_setting(config, logger, config_match)
 
     return config
 
@@ -1361,16 +1418,29 @@ def main() -> None:
             type=str,
             help="logging level name override (for example DEBUG, INFO, WARNING)",
         )
+        parser.add_argument(
+            "--full-update-controller",
+            type=str,
+            help='JSON string for full update controller (for example {"fullResendAfter":1})',
+        )
         args = parser.parse_args()
+        effective_config_path = consumer_config.get_effective_config_path(
+            args.config_path
+        )
+        logging.getLogger(__name__).info(
+            "using consumer config path: %s",
+            effective_config_path,
+        )
 
         config = consumer_config.load_config_with_overrides(
-            config_path=pathlib.Path(args.config_path) if args.config_path else None,
+            config_path=effective_config_path,
             server_url=args.server_url,
             server_port=args.server_port,
             agent_config_path=args.agent_config_path,
             agent_additional_params=args.agent_additional_params,
             heartbeat_frequency=args.heartbeat_frequency,
             log_level=args.log_level,
+            full_update_controller=args.full_update_controller,
         )
         resolved_log_level = consumer_config.resolve_log_level(config.log_level)
         root_logger = logging.getLogger()
@@ -1392,7 +1462,7 @@ def main() -> None:
             )
             return
 
-        logger.warning("about to process FLB config")
+        logger.info("about to process FLB config")
         config = load_agent_config(config)
 
         if config.client_status_port is None:
@@ -1420,8 +1490,8 @@ def main() -> None:
     except SystemExit as sys_exit:
         print(f"... bzzzz brutal exit\n %s", sys_exit)
 
-    except:
-        print(f"... bzzzzzzzzzzz")
+    except:  # pylint: disable=bare-except
+        print("... bzzzzzzzzzzz")
 
 
 if __name__ == "__main__":
