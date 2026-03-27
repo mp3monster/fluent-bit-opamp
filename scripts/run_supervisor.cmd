@@ -17,6 +17,7 @@ if not exist "%FLUENTBIT_PATH%" set FLUENTBIT_PATH=%REPO_ROOT%\consumer\fluent-b
 
 set PYTHONPATH=%REPO_ROOT%\consumer\src
 set OPAMP_CONFIG_PATH=%CONFIG_PATH%
+echo Using consumer config file: %CONFIG_PATH%
 python -m pip show httpx >nul 2>&1 || python -m pip install -r "%REPO_ROOT%\consumer\requirements.txt"
 if exist "%cd%\OpAMPSupervisor.signal" del /f /q "%cd%\OpAMPSupervisor.signal"
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"

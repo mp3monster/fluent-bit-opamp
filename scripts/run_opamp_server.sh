@@ -15,6 +15,8 @@ if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
   source "${REPO_ROOT}/.venv/bin/activate"
 fi
 
+PROVIDER_CONFIG_PATH="${OPAMP_CONFIG_PATH:-${REPO_ROOT}/config/opamp.json}"
+echo "Using provider config file: ${PROVIDER_CONFIG_PATH}"
 export PYTHONPATH="${REPO_ROOT}/provider/src"
 python3 -m pip show protobuf >/dev/null 2>&1 || python3 -m pip install -r "${REPO_ROOT}/provider/requirements.txt"
 mkdir -p "${LOG_DIR}"

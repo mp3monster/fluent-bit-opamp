@@ -26,6 +26,7 @@ fi
 
 export PYTHONPATH="${REPO_ROOT}/consumer/src"
 export OPAMP_CONFIG_PATH="${CONFIG_PATH}"
+echo "Using consumer config file: ${CONFIG_PATH}"
 python3 -m pip show httpx >/dev/null 2>&1 || python3 -m pip install -r "${REPO_ROOT}/consumer/requirements.txt"
 rm -f "${PWD}/OpAMPSupervisor.signal"
 mkdir -p "${LOG_DIR}"
