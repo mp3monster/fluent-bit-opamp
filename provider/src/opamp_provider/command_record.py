@@ -32,7 +32,6 @@ class CommandRecord(EventHistory):
 
     model_config = ConfigDict(frozen=False)
 
-    command: str = Field(description="Command operation identifier retained for compatibility.")
     classifier: str = Field(
         description="Command classifier used to route payload construction."
     )

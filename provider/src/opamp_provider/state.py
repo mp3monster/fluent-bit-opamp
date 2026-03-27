@@ -267,7 +267,6 @@ class ClientStore:
             ):
                 return False
         command = CommandRecord(
-            command=FORCE_RESYNC_ACTION,
             classifier=FORCE_RESYNC_CLASSIFIER,
             action=FORCE_RESYNC_ACTION,
             key_value_pairs=[
@@ -429,7 +428,6 @@ class ClientStore:
                 )
                 self._clients[client_id] = record
             cmd = CommandRecord(
-                command=action,
                 classifier=classifier,
                 action=action,
                 key_value_pairs=key_value_pairs,

@@ -26,15 +26,15 @@ from opamp_provider.commands import (
     get_registered_command_fqdns,
     get_registered_command_keys,
 )
-from opamp_provider.chatop_command import (
+from opamp_provider.command_implementations.command_chatops import (
     CHATOPCOMMAND_CAPABILITY,
     CHATOPCOMMAND_TYPE,
 )
-from opamp_provider.command_shutdown_agent import (
+from opamp_provider.command_implementations.command_shutdown_agent import (
     SHUTDOWN_AGENT_CAPABILITY,
     SHUTDOWN_AGENT_TYPE,
 )
-from opamp_provider.command_nullcommand import (
+from opamp_provider.command_implementations.command_nullcommand import (
     NULLCOMMAND_CAPABILITY,
     NULLCOMMAND_TYPE,
 )

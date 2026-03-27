@@ -68,6 +68,7 @@ SERVER_CAPABILITIES = int(
     ServerCapabilities.AcceptsStatus
 )  # Server advertises AcceptsStatus only.
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
+MODEL_DUMP_MODE = "json"
 
 COMMAND_RESTART = "restart"
 COMMAND_FORCE_RESYNC = "forceresync"
@@ -202,7 +203,7 @@ def _build_agent_remote_config(
     response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
 ) -> opamp_pb2.ServerToAgent:
     """Placeholder builder for AgentRemoteConfig server offers."""
-    logger.info("%s: TBD", _build_agent_remote_config.__name__)
+    logger.info("remote config TBD")
     return response
 
 
@@ -210,7 +211,7 @@ def _build_connection_settings_offers(
     response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
 ) -> opamp_pb2.ServerToAgent:
     """Placeholder builder for ConnectionSettingsOffers server offers."""
-    logger.info("%s: TBD", _build_connection_settings_offers.__name__)
+    logger.info("connection settings TBD")
     return response
 
 
@@ -218,7 +219,7 @@ def _build_packages_available(
     response: opamp_pb2.ServerToAgent, request_msg: opamp_pb2.AgentToServer
 ) -> opamp_pb2.ServerToAgent:
     """Placeholder builder for PackagesAvailable server offers."""
-    logger.info("%s: TBD", _build_packages_available.__name__)
+    logger.info("packages available: TBD")
     return response
 
 
@@ -288,7 +289,10 @@ def _build_custom_command_payload(
         try:
             command_obj = command_object_factory(
                 classifier=classifier,
-                key_values={pair["key"]: pair["value"] for pair in pending_command.key_value_pairs},
+                key_values={
+                    pair["key"]: pair["value"]
+                    for pair in pending_command.key_value_pairs
+                },
             )
             if hasattr(command_obj, "to_custom_message"):
                 response.custom_message.CopyFrom(command_obj.to_custom_message())
@@ -506,12 +510,14 @@ async def opamp_http() -> Response:
             channel=CHANNEL_HTTP,
         )
         payload = response_msg.SerializeToString()
-        if pending_command is not None and _has_dispatched_command_payload(response_msg):
+        if pending_command is not None and _has_dispatched_command_payload(
+            response_msg
+        ):
             STORE.mark_command_sent(client.client_id, pending_command)
             logger.info(LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc))
         return Response(payload, content_type=CONTENT_TYPE_PROTO)
     except Exception as exc:
-        logger.exception("Unhandled HTTP error", exc_info=exc)
+        logger.exception("Unhandled HTTP error - %s", exc_info=exc)
         response_msg = _build_error(
             opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
             "internal server error",
@@ -525,7 +531,7 @@ async def opamp_http() -> Response:
 
 
 @app.websocket(OPAMP_HTTP_PATH)
-async def opamp_ws() -> None:
+async def opamp_websocket() -> None:
     """Handle OpAMP WebSocket connections."""
     _WEBSOCKET_CLIENTS[websocket] = None
     try:
@@ -591,21 +597,23 @@ async def _close_websockets() -> None:
     if not _WEBSOCKET_CLIENTS:
         return
 
-    async def _close_one(ws: object, client_id: str | None) -> None:
+    async def _close_one(web_socket: object, client_id: str | None) -> None:
         try:
-            await ws.close(code=1001)
+            await web_socket.close(code=1001)
             if client_id:
                 logger.info("closed websocket for client %s", client_id)
             else:
                 logger.info("closed websocket for unknown client")
-        except Exception:
-            logger.warning("failed to close websocket for client %s", client_id)
+        except Exception as err:
+            logger.warning(
+                "failed to close websocket for client %s - %s", client_id, err
+            )
 
     await asyncio.gather(
         *[
-            _close_one(ws, client_id)
-            for ws, client_id in list(_WEBSOCKET_CLIENTS.items())
-            if ws is not None
+            _close_one(web_socket, client_id)
+            for web_socket, client_id in list(_WEBSOCKET_CLIENTS.items())
+            if web_socket is not None
         ],
         return_exceptions=True,
     )
@@ -630,7 +638,7 @@ async def list_clients() -> Response:
         if removed:
             logger.info("purged %s disconnected clients", len(removed))
         _LAST_DISCONNECT_PURGE = now
-    clients = [client.model_dump(mode="json") for client in STORE.list()]
+    clients = [client.model_dump(mode=MODEL_DUMP_MODE) for client in STORE.list()]
     return jsonify({"clients": clients, "total": len(clients)})
 
 
@@ -654,11 +662,7 @@ async def list_custom_commands() -> Response:
     for command in commands:
         fqdn = str(command.get("fqdn", "") or "").strip()
         command["reported_by_client"] = bool(fqdn and fqdn in reported_capabilities)
-    return jsonify(
-        {
-            "commands": commands
-        }
-    )
+    return jsonify({"commands": commands})
 
 
 @app.get("/api/clients/<client_id>")
@@ -667,7 +671,7 @@ async def get_client(client_id: str) -> Response:
     record = STORE.get(client_id)
     if record is None:
         return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
-    return jsonify(record.model_dump(mode="json"))
+    return jsonify(record.model_dump(mode=MODEL_DUMP_MODE))
 
 
 @app.delete("/api/clients/<client_id>")
@@ -679,7 +683,7 @@ async def delete_client(client_id: str) -> Response:
     logger.warning(
         "client removed from store client_id=%s last_state=%s",
         client_id,
-        record.model_dump(mode="json"),
+        record.model_dump(mode=MODEL_DUMP_MODE),
     )
     return jsonify({"status": "removed"})
 
@@ -719,7 +723,10 @@ async def queue_command(client_id: str) -> Response:
         key = str(pair["key"]).strip()
         value = str(pair["value"]).strip()
         if not key:
-            return jsonify({"error": "pair key cannot be empty"}), HTTPStatus.BAD_REQUEST
+            return (
+                jsonify({"error": "pair key cannot be empty"}),
+                HTTPStatus.BAD_REQUEST,
+            )
         normalized_pairs.append({"key": key, "value": value})
         values[key.lower()] = value
 
@@ -752,10 +759,10 @@ async def queue_command(client_id: str) -> Response:
     if not routing_action:
         return jsonify({"error": "operation is required"}), HTTPStatus.BAD_REQUEST
 
-    if (
-        (classifier, routing_action) not in COMMAND_BUILDERS
-        and (classifier, "*") not in COMMAND_BUILDERS
-    ):
+    if (classifier, routing_action) not in COMMAND_BUILDERS and (
+        classifier,
+        "*",
+    ) not in COMMAND_BUILDERS:
         logger.debug(
             "queue_command unsupported mapping client_id=%s classifier=%s routing_action=%s builders=%s",
             client_id,
@@ -780,15 +787,12 @@ async def queue_command(client_id: str) -> Response:
     if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_FORCE_RESYNC:
         event_description = "Force Resync"
     command_obj = None
-    if (
-        (classifier, routing_action) in COMMAND_BUILDERS
-        and (
-            (classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART)
-            or (
-                classifier == CLASSIFIER_CUSTOM
-                and routing_action
-                in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT, COMMAND_NULLCOMMAND}
-            )
+    if (classifier, routing_action) in COMMAND_BUILDERS and (
+        (classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART)
+        or (
+            classifier == CLASSIFIER_CUSTOM
+            and routing_action
+            in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT, COMMAND_NULLCOMMAND}
         )
     ):
         logger.debug(
@@ -819,7 +823,10 @@ async def queue_command(client_id: str) -> Response:
         classifier=classifier,
         action=routing_action,
         key_value_pairs=(
-            [{"key": k, "value": v} for k, v in command_obj.get_key_value_dictionary().items()]
+            [
+                {"key": key_name, "value": key_value}
+                for key_name, key_value in command_obj.get_key_value_dictionary().items()
+            ]
             if command_obj is not None
             else normalized_pairs
         ),
@@ -833,7 +840,7 @@ async def queue_command(client_id: str) -> Response:
         cmd.action,
         cmd.received_at,
     )
-    return jsonify(cmd.model_dump(mode="json")), HTTPStatus.CREATED
+    return jsonify(cmd.model_dump(mode=MODEL_DUMP_MODE)), HTTPStatus.CREATED
 
 
 @app.post("/api/clients/<client_id>/actions")
@@ -857,7 +864,7 @@ async def set_client_actions(client_id: str) -> Response:
     actions = [str(action).strip() for action in actions if str(action).strip()]
     if not actions:
         record = STORE.set_next_actions(client_id, None)
-        return jsonify(record.model_dump(mode="json"))
+        return jsonify(record.model_dump(mode=MODEL_DUMP_MODE))
     invalid = [action for action in actions if action not in ACTION_OPTIONS]
     if invalid:
         return (
@@ -871,7 +878,7 @@ async def set_client_actions(client_id: str) -> Response:
             HTTPStatus.BAD_REQUEST,
         )
     record = STORE.set_next_actions(client_id, actions)
-    return jsonify(record.model_dump(mode="json"))
+    return jsonify(record.model_dump(mode=MODEL_DUMP_MODE))
 
 
 @app.put("/api/clients/<client_id>/heartbeat-frequency")
@@ -899,7 +906,7 @@ async def set_client_heartbeat_frequency(client_id: str) -> Response:
     )
     if record is None:
         return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
-    return jsonify(record.model_dump(mode="json"))
+    return jsonify(record.model_dump(mode=MODEL_DUMP_MODE))
 
 
 @app.post("/api/clients/<client_id>/identify")
@@ -1063,7 +1070,7 @@ async def set_requested_config(client_id: str) -> Response:
         version=str(version) if version else None,
         apply_at=apply_at,
     )
-    return jsonify(record.model_dump(mode="json"))
+    return jsonify(record.model_dump(mode=MODEL_DUMP_MODE))
 
 
 @app.get("/")
@@ -1081,22 +1088,30 @@ async def web_ui() -> Response:
 @app.get("/help")
 async def help_page() -> Response:
     """Serve a simple help page."""
-    html = _HELP_HTML.replace(
-        "__DELAYED_SECONDS__", str(provider_config.CONFIG.delayed_comms_seconds)
-    ).replace(
-        "__SIGNIFICANT_SECONDS__", str(provider_config.CONFIG.significant_comms_seconds)
-    ).replace(
-        "__HELP_DELAYED_COMMS_SECONDS__",
-        GLOBAL_SETTINGS_HELP["delayed_comms_seconds"]["tooltip"],
-    ).replace(
-        "__HELP_SIGNIFICANT_COMMS_SECONDS__",
-        GLOBAL_SETTINGS_HELP["significant_comms_seconds"]["tooltip"],
-    ).replace(
-        "__HELP_CLIENT_EVENT_HISTORY_SIZE__",
-        GLOBAL_SETTINGS_HELP["client_event_history_size"]["tooltip"],
-    ).replace(
-        "__HELP_DEFAULT_HEARTBEAT_FREQUENCY__",
-        GLOBAL_SETTINGS_HELP["default_heartbeat_frequency"]["tooltip"],
+    html = (
+        _HELP_HTML.replace(
+            "__DELAYED_SECONDS__", str(provider_config.CONFIG.delayed_comms_seconds)
+        )
+        .replace(
+            "__SIGNIFICANT_SECONDS__",
+            str(provider_config.CONFIG.significant_comms_seconds),
+        )
+        .replace(
+            "__HELP_DELAYED_COMMS_SECONDS__",
+            GLOBAL_SETTINGS_HELP["delayed_comms_seconds"]["tooltip"],
+        )
+        .replace(
+            "__HELP_SIGNIFICANT_COMMS_SECONDS__",
+            GLOBAL_SETTINGS_HELP["significant_comms_seconds"]["tooltip"],
+        )
+        .replace(
+            "__HELP_CLIENT_EVENT_HISTORY_SIZE__",
+            GLOBAL_SETTINGS_HELP["client_event_history_size"]["tooltip"],
+        )
+        .replace(
+            "__HELP_DEFAULT_HEARTBEAT_FREQUENCY__",
+            GLOBAL_SETTINGS_HELP["default_heartbeat_frequency"]["tooltip"],
+        )
     )
     return Response(html, content_type="text/html; charset=utf-8")
 
@@ -1105,8 +1120,7 @@ async def help_page() -> Response:
 async def global_settings_help() -> Response:
     """Return shared help text used by global settings tooltips and help page."""
     tooltips = {
-        key: value.get("tooltip", "")
-        for key, value in GLOBAL_SETTINGS_HELP.items()
+        key: value.get("tooltip", "") for key, value in GLOBAL_SETTINGS_HELP.items()
     }
     return jsonify({"fields": GLOBAL_SETTINGS_HELP, "tooltips": tooltips})
 

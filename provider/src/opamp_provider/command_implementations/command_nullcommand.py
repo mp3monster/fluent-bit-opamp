@@ -43,6 +43,10 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
 
     Purpose: provide a no-op style custom command used for integration testing
     of custom command plumbing.
+
+    Attributes:
+        _command_time: UTC timestamp captured when the command object is created.
+        _key_values: Mutable command payload dictionary used for CustomMessage output.
     """
 
     def __init__(
@@ -51,6 +55,12 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         command_time: datetime | None = None,
         key_values: dict[str, str] | None = None,
     ) -> None:
+        """Initialize null-command metadata and payload values.
+
+        Args:
+            command_time: Optional explicit timestamp used in tests.
+            key_values: Optional payload values merged over required defaults.
+        """
         self._command_time = command_time or _utc_now()
         merged = self._default_key_values()
         if key_values:
@@ -58,38 +68,87 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         self._key_values = merged
 
     def _default_key_values(self) -> dict[str, str]:
+        """Return default classifier/action values for null-command routing."""
         return {
             "classifier": NULLCOMMAND_CLASSIFIER,
             "action": NULLCOMMAND_ACTION,
         }
 
     def get_command_classifier(self) -> str:
+        """Return command classifier used for routing.
+
+        Implements:
+            CommandObjectInterface.get_command_classifier.
+        """
         return NULLCOMMAND_CLASSIFIER
 
     def get_command_time(self) -> datetime:
+        """Return command creation timestamp.
+
+        Implements:
+            CommandObjectInterface.get_command_time.
+        """
         return self._command_time
 
     def get_command_description(self) -> str:
+        """Return event/queue description text.
+
+        Implements:
+            CommandObjectInterface.get_command_description.
+        """
         return "custom nullcommand queued"
 
     def getdisplayname(self) -> str:
+        """Return display label used in UI/API metadata.
+
+        Implements:
+            CommandObjectInterface.getdisplayname.
+        """
         return "Null Command"
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
+        """Replace payload values while preserving command defaults.
+
+        Implements:
+            CommandObjectInterface.set_key_value_dictionary.
+
+        Args:
+            key_values: User/operator-provided payload values.
+        """
         merged = self._default_key_values()
         merged.update(key_values)
         self._key_values = merged
 
     def get_key_value_dictionary(self) -> dict[str, str]:
+        """Return a copy of current payload values.
+
+        Implements:
+            CommandObjectInterface.get_key_value_dictionary.
+        """
         return dict(self._key_values)
 
     def get_capability_fqdn(self) -> str | None:
+        """Return reverse-FQDN used by outbound custom messages.
+
+        Implements:
+            CommandObjectInterface.get_capability_fqdn.
+        """
         return NULLCOMMAND_CAPABILITY
 
     def isOpAMPStandard(self) -> bool:
+        """Return whether this command is OpAMP-standard (it is not).
+
+        Implements:
+            CommandObjectInterface.isOpAMPStandard.
+        """
         return False
 
     def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
+        """Return user-editable parameter schema rows.
+
+        Implements:
+            CommandParameterSchemaInterface.get_user_parameter_schema.
+        """
         return []
 
     def to_custom_message(self) -> opamp_pb2.CustomMessage:

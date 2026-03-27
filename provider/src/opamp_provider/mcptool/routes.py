@@ -41,12 +41,13 @@ except ModuleNotFoundError:  # pragma: no cover - dependency may be optional in 
 
 mcptool_blueprint = Blueprint("mcptool", __name__)
 mcpserver = FastMCP("OpAMP Server")
+MODEL_DUMP_MODE = "json"
 
 
 def _list_connected_otel_agents_payload() -> dict[str, Any]:
     """Build the connected otel agents payload shared by HTTP and MCP tools."""
     agents = [
-        client.model_dump(mode="json")
+        client.model_dump(mode=MODEL_DUMP_MODE)
         for client in STORE.list()
         if not client.disconnected
     ]

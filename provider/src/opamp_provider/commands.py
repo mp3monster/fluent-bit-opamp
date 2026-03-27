@@ -18,52 +18,87 @@ import importlib
 import inspect
 import logging
 import pkgutil
-from pathlib import Path
 
-from opamp_provider.chatop_command import ChatOpCommand
 from opamp_provider.command_interface import CommandObjectInterface
-from opamp_provider.command_nullcommand import CommandNullCommand
-from opamp_provider.command_restart_agent import RestartAgent
-from opamp_provider.command_shutdown_agent import CommandShutdownAgent
+from opamp_provider.command_implementations.command_chatops import ChatOpCommand
+from opamp_provider.command_implementations.command_nullcommand import (
+    CommandNullCommand,
+)
+from opamp_provider.command_implementations.command_restart_agent import RestartAgent
+from opamp_provider.command_implementations.command_shutdown_agent import (
+    CommandShutdownAgent,
+)
 
-_MODULE_EXCLUSIONS = {
-    "__init__",
-    "app",
-    "command_interface",
-    "command_record",
-    "commands",
-    "config",
-    "exceptions",
-    "server",
-    "state",
-    "transport",
-}
+_IMPLEMENTATIONS_PACKAGE = "opamp_provider.command_implementations"
+# Module discovery filter for command implementation files.
+_COMMAND_MODULE_SUBSTRING = "command"
+# Canonical dictionary keys used for command payload normalization and metadata.
+_KEY_ACTION = "action"
+_KEY_OPERATION = "operation"
+_KEY_CAPABILITY = "capability"
+_KEY_FQDN = "fqdn"
+_KEY_PARAMETER_NAME = "parametername"
+_KEY_DISPLAY_NAME = "displayname"
+_KEY_DESCRIPTION = "description"
+_KEY_CLASSIFIER = "classifier"
+_KEY_SCHEMA = "schema"
+# Supported classifier values accepted by command routing/factory logic.
+_CLASSIFIER_COMMAND = "command"
+_CLASSIFIER_CUSTOM = "custom"
+_CLASSIFIER_CUSTOM_COMMAND = "custom_command"
+# Known custom operation identifiers used in factory dispatch.
+_OPERATION_CHATOPS = "chatopcommand"
+_OPERATION_SHUTDOWN_AGENT = "shutdownagent"
+_OPERATION_NULLCOMMAND = "nullcommand"
+# Reverse-FQDN capability identifiers emitted/recognized for custom commands.
+_CAPABILITY_CHATOPS = "org.mp3monster.opamp_provider.chatopcommand"
+_CAPABILITY_SHUTDOWN_AGENT = "org.mp3monster.opamp_provider.command_shutdown_agent"
+_CAPABILITY_NULLCOMMAND = "org.mp3monster.opamp_provider.nullcommand"
 
 CommandKey = tuple[str, str]
 CommandType = type[CommandObjectInterface]
-_INTERNAL_SCHEMA_PARAMETERS = {"classifier", "type", "data"}
+_INTERNAL_SCHEMA_PARAMETERS = {_KEY_CLASSIFIER, "type", "data"}
 _LOGGER = logging.getLogger(__name__)
 
 
-def _module_name_to_import(module_name: str) -> str:
-    package_name = __package__ or "opamp_provider"
-    return f"{package_name}.{module_name}"
-
-
 def _load_command_modules() -> list[object]:
-    package_path = Path(__file__).resolve().parent
+    """Import command implementation modules from the implementations package.
+
+    Returns:
+        A list of imported module objects containing command classes. Modules
+        are filtered to names containing the configured command substring.
+    """
+    implementations_pkg = importlib.import_module(_IMPLEMENTATIONS_PACKAGE)
+    package_paths = getattr(implementations_pkg, "__path__", None)
+    if package_paths is None:
+        return []
     imported_modules: list[object] = []
-    for module_info in pkgutil.iter_modules([str(package_path)]):
+    for module_info in pkgutil.iter_modules(package_paths):
         module_name = module_info.name
-        if module_name in _MODULE_EXCLUSIONS or module_name.startswith("_"):
+        if module_name.startswith("_"):
             continue
-        if "command" not in module_name:
+        if _COMMAND_MODULE_SUBSTRING not in module_name:
             continue
-        imported_modules.append(importlib.import_module(_module_name_to_import(module_name)))
+        _LOGGER.debug(
+            "loading command module package=%s module=%s",
+            _IMPLEMENTATIONS_PACKAGE,
+            module_name,
+        )
+        imported_modules.append(
+            importlib.import_module(f"{_IMPLEMENTATIONS_PACKAGE}.{module_name}")
+        )
     return imported_modules
 
 
 def _discover_command_classes() -> dict[CommandKey, CommandType]:
+    """Discover concrete command classes that implement `CommandObjectInterface`.
+
+    Returns:
+        Mapping keyed by `(classifier, operation)` to concrete command class.
+
+    Raises:
+        ValueError: If duplicate `(classifier, operation)` registrations are found.
+    """
     discovered: dict[CommandKey, CommandType] = {}
     for module in _load_command_modules():
         for _, class_obj in inspect.getmembers(module, inspect.isclass):
@@ -73,7 +108,7 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
                 continue
             command_instance = class_obj()
             key_values = command_instance.get_key_value_dictionary()
-            operation = str(key_values.get("action", "")).strip().lower()
+            operation = str(key_values.get(_KEY_ACTION, "")).strip().lower()
             if not operation:
                 continue
             key = (
@@ -81,10 +116,25 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
                 operation,
             )
             if key in discovered:
+                _LOGGER.error(
+                    "duplicate command registration classifier=%s operation=%s existing=%s duplicate=%s",
+                    key[0],
+                    key[1],
+                    discovered[key].__name__,
+                    class_obj.__name__,
+                )
                 raise ValueError(
-                    f"Duplicate command registration for classifier={key[0]} operation={key[1]}"
+                    "Duplicate command registration for classifier=%s operation=%s"
+                    % (key[0], key[1])
                 )
             discovered[key] = class_obj
+            _LOGGER.debug(
+                "registered command class=%s classifier=%s operation=%s module=%s",
+                class_obj.__name__,
+                key[0],
+                key[1],
+                class_obj.__module__,
+            )
     return discovered
 
 
@@ -95,6 +145,15 @@ def _get_command_registry_by_standard_filter(
     *,
     parameter_exclude_opamp_standard: bool,
 ) -> dict[CommandKey, CommandType]:
+    """Filter command registry by OpAMP-standard classification.
+
+    Args:
+        parameter_exclude_opamp_standard: When True, include only non-standard
+            custom commands; when False, include only OpAMP-standard commands.
+
+    Returns:
+        Filtered `(classifier, operation) -> command class` mapping.
+    """
     filtered: dict[CommandKey, CommandType] = {}
     for key, command_class in _COMMAND_REGISTRY.items():
         if parameter_exclude_opamp_standard != command_class().isOpAMPStandard():
@@ -108,7 +167,7 @@ def _sanitize_parameter_schema(
     """Remove internal OpAMP transport fields from command schema rows."""
     sanitized: list[dict[str, object]] = []
     for row in schema_rows:
-        param_name = str(row.get("parametername", "")).strip().lower()
+        param_name = str(row.get(_KEY_PARAMETER_NAME, "")).strip().lower()
         if not param_name:
             continue
         if param_name in _INTERNAL_SCHEMA_PARAMETERS:
@@ -133,7 +192,16 @@ def get_registered_command_keys(
     parameter_exclude_opamp_standard: bool = True,
     includedisplayname: bool = True,
 ) -> tuple[CommandKey, ...] | dict[str, str]:
-    """Return command keys or fqdn->displayname map filtered by OpAMP-standard rule."""
+    """Return command registration results in key or display-map form.
+
+    Args:
+        parameter_exclude_opamp_standard: Filter mode for OpAMP-standard commands.
+        includedisplayname: When True, return `fqdn -> displayname`; otherwise
+            return sorted `(classifier, operation)` tuples.
+
+    Returns:
+        Either a tuple of command keys or a display map for custom capabilities.
+    """
     filtered_registry = _get_command_registry_by_standard_filter(
         parameter_exclude_opamp_standard=parameter_exclude_opamp_standard
     )
@@ -156,7 +224,14 @@ def get_registered_command_keys(
 def get_available_command_keys(
     includedisplayname: bool = True,
 ) -> tuple[CommandKey, ...] | dict[str, str]:
-    """Return discovered non-OpAMP-standard command keys."""
+    """Return discovered non-OpAMP-standard command keys or display map.
+
+    Args:
+        includedisplayname: Whether to return display map rather than key tuples.
+
+    Returns:
+        Non-standard command registrations in requested output shape.
+    """
     return get_registered_command_keys(
         parameter_exclude_opamp_standard=True,
         includedisplayname=includedisplayname,
@@ -164,17 +239,33 @@ def get_available_command_keys(
 
 
 def get_registered_command_fqdns() -> dict[CommandKey, str]:
-    """Return discovered command reverse-FQDN capability mappings."""
+    """Return discovered command reverse-FQDN capability mappings.
+
+    Returns:
+        Mapping from `(classifier, operation)` to capability reverse-FQDN.
+    """
     return dict(_COMMAND_FQDN_MAP)
 
 
 def get_custom_capabilities_list() -> tuple[str, ...]:
-    """Return unique custom capability FQDNs discovered at startup."""
+    """Return unique custom capability FQDNs discovered at startup.
+
+    Returns:
+        Sorted tuple of unique custom command capability names.
+    """
     return tuple(sorted(set(_COMMAND_FQDN_MAP.values())))
 
 
 def get_command_fqdn(*, classifier: str, operation: str) -> str:
-    """Return a command capability reverse-FQDN, or an empty string."""
+    """Return reverse-FQDN for a classifier/operation pair.
+
+    Args:
+        classifier: Command classifier (for example `custom`).
+        operation: Command operation/action key.
+
+    Returns:
+        Capability reverse-FQDN if known, else an empty string.
+    """
     key = (classifier.strip().lower(), operation.strip().lower())
     return _COMMAND_FQDN_MAP.get(key, "")
 
@@ -184,12 +275,24 @@ def command_object_factory(
     classifier: str,
     key_values: dict[str, str] | None = None,
 ) -> CommandObjectInterface:
-    """Create a command object from classifier and internal routing fields."""
+    """Create a concrete command object from classifier and routing fields.
+
+    Args:
+        classifier: Requested classifier (for example `command` or `custom`).
+        key_values: Raw key/value command payload, including operation and
+            optional capability metadata.
+
+    Returns:
+        Concrete command object implementing `CommandObjectInterface`.
+
+    Raises:
+        ValueError: If the classifier/operation/capability mapping is unsupported.
+    """
     normalized_classifier = classifier.strip().lower()
     values = dict(key_values or {})
-    operation = str(values.get("operation", "")).strip().lower()
-    action = str(values.get("action", "")).strip().lower()
-    capability = str(values.get("capability", "") or values.get("fqdn", "")).strip()
+    operation = str(values.get(_KEY_OPERATION, "")).strip().lower()
+    action = str(values.get(_KEY_ACTION, "")).strip().lower()
+    capability = str(values.get(_KEY_CAPABILITY, "") or values.get(_KEY_FQDN, "")).strip()
     _LOGGER.debug(
         "command_object_factory input classifier=%s operation=%s action=%s capability=%s",
         normalized_classifier,
@@ -198,43 +301,59 @@ def command_object_factory(
         capability,
     )
 
-    if normalized_classifier == "command":
+    if normalized_classifier == _CLASSIFIER_COMMAND:
         _LOGGER.debug("command_object_factory selected class=%s", RestartAgent.__name__)
         return RestartAgent(key_values=values)
 
-    if normalized_classifier in {"custom", "custom_command"}:
-        if capability == "org.mp3monster.opamp_provider.chatopcommand":
+    if normalized_classifier in {_CLASSIFIER_CUSTOM, _CLASSIFIER_CUSTOM_COMMAND}:
+        if capability == _CAPABILITY_CHATOPS:
             _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
             return ChatOpCommand(key_values=values)
-        if capability == "org.mp3monster.opamp_provider.command_shutdown_agent":
+        if capability == _CAPABILITY_SHUTDOWN_AGENT:
             _LOGGER.debug(
-                "command_object_factory selected class=%s", CommandShutdownAgent.__name__
+                "command_object_factory selected class=%s",
+                CommandShutdownAgent.__name__,
             )
             return CommandShutdownAgent(key_values=values)
-        if capability == "org.mp3monster.opamp_provider.nullcommand":
+        if capability == _CAPABILITY_NULLCOMMAND:
             _LOGGER.debug(
-                "command_object_factory selected class=%s", CommandNullCommand.__name__
+                "command_object_factory selected class=%s",
+                CommandNullCommand.__name__,
             )
             return CommandNullCommand(key_values=values)
-        if operation == "chatopcommand":
+        if operation == _OPERATION_CHATOPS:
             _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
             return ChatOpCommand(key_values=values)
-        if operation == "shutdownagent":
+        if operation == _OPERATION_SHUTDOWN_AGENT:
             _LOGGER.debug(
-                "command_object_factory selected class=%s", CommandShutdownAgent.__name__
+                "command_object_factory selected class=%s",
+                CommandShutdownAgent.__name__,
             )
             return CommandShutdownAgent(key_values=values)
-        if operation == "nullcommand":
+        if operation == _OPERATION_NULLCOMMAND:
             _LOGGER.debug(
-                "command_object_factory selected class=%s", CommandNullCommand.__name__
+                "command_object_factory selected class=%s",
+                CommandNullCommand.__name__,
             )
             return CommandNullCommand(key_values=values)
+        _LOGGER.error(
+            "unsupported command object mapping classifier=%s operation=%s capability=%s action=%s",
+            normalized_classifier,
+            operation,
+            capability,
+            action,
+        )
         raise ValueError(
-            "Unsupported command object classifier="
-            f"{normalized_classifier} operation={operation} capability={capability} action={action}"
+            "Unsupported command object classifier=%s operation=%s capability=%s action=%s"
+            % (normalized_classifier, operation, capability, action)
         )
 
-    raise ValueError(f"Unsupported command object classifier={normalized_classifier}")
+    _LOGGER.error(
+        "unsupported command object classifier=%s", normalized_classifier
+    )
+    raise ValueError(
+        "Unsupported command object classifier=%s" % normalized_classifier
+    )
 
 
 def get_command_metadata(
@@ -242,7 +361,16 @@ def get_command_metadata(
     parameter_exclude_opamp_standard: bool = True,
     custom_only: bool = False,
 ) -> list[dict[str, object]]:
-    """Return command metadata records for registry/API consumers."""
+    """Return command metadata records for registry/API consumers.
+
+    Args:
+        parameter_exclude_opamp_standard: Filter mode for OpAMP-standard commands.
+        custom_only: When True, include only custom command entries.
+
+    Returns:
+        Sorted metadata records containing fqdn, display name, description,
+        classifier, operation, and user schema.
+    """
     metadata: list[dict[str, object]] = []
     filtered_registry = _get_command_registry_by_standard_filter(
         parameter_exclude_opamp_standard=parameter_exclude_opamp_standard
@@ -250,7 +378,7 @@ def get_command_metadata(
     for (classifier_key, operation_key), command_class in filtered_registry.items():
         instance = command_class()
         classifier = classifier_key
-        if custom_only and classifier != "custom":
+        if custom_only and classifier != _CLASSIFIER_CUSTOM:
             continue
         capability_fqdn = (instance.get_capability_fqdn() or "").strip()
         if custom_only and not capability_fqdn:
@@ -262,15 +390,15 @@ def get_command_metadata(
             )
         metadata.append(
             {
-                "fqdn": capability_fqdn,
-                "displayname": instance.getdisplayname(),
-                "description": instance.get_command_description(),
-                "classifier": classifier,
-                "operation": operation_key,
-                "schema": schema,
+                _KEY_FQDN: capability_fqdn,
+                _KEY_DISPLAY_NAME: instance.getdisplayname(),
+                _KEY_DESCRIPTION: instance.get_command_description(),
+                _KEY_CLASSIFIER: classifier,
+                _KEY_OPERATION: operation_key,
+                _KEY_SCHEMA: schema,
             }
         )
-    metadata.sort(key=lambda item: str(item.get("displayname", "")).lower())
+    metadata.sort(key=lambda item: str(item.get(_KEY_DISPLAY_NAME, "")).lower())
     return metadata
 
 

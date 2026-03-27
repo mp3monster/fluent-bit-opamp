@@ -55,3 +55,8 @@ ignore-patterns = [
   ".*_pb2\\.py$",
   ".*_pb2\\.pyi$",
 ]
+
+[tool.pylint.messages_control]
+disable = [
+  "broad-exception-caught",
+]

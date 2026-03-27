@@ -12,7 +12,7 @@ This note describes how command intents are accepted by the Provider API, queued
 - Command object contract: `provider/src/opamp_provider/command_interface.py`
 - Built-in command objects:
   - `provider/src/opamp_provider/command_restart_agent.py`
-  - `provider/src/opamp_provider/chatop_command.py`
+  - `provider/src/opamp_provider/command_implementations/command_chatops.py`
   - `provider/src/opamp_provider/command_shutdown_agent.py`
   - `provider/src/opamp_provider/command_nullcommand.py`
 - UI trigger/selection (restart + custom command panel): `provider/src/opamp_provider/html/web_ui.html`

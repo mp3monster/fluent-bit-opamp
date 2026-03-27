@@ -69,9 +69,9 @@ async def test_websocket_endpoint() -> None:
     agent_msg.capabilities = opamp_pb2.AgentCapabilities.AgentCapabilities_ReportsStatus
 
     async with app.test_client() as client:
-        async with client.websocket("/v1/opamp") as ws:
-            await ws.send(encode_message(agent_msg.SerializeToString()))
-            data = await ws.receive()
+        async with client.websocket("/v1/opamp") as websocket_client:
+            await websocket_client.send(encode_message(agent_msg.SerializeToString()))
+            data = await websocket_client.receive()
 
     header, payload = decode_message(data)
     assert header == 0

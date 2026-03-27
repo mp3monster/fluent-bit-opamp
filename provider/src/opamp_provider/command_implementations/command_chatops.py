@@ -41,7 +41,12 @@ def _utc_now() -> datetime:
 
 
 class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
-    """Concrete custom command object for chatopcommand operations."""
+    """Concrete custom command object for chatopcommand operations.
+
+    Attributes:
+        _command_time: UTC timestamp captured when the command object is created.
+        _key_values: Mutable command payload dictionary used to build wire messages.
+    """
 
     def __init__(
         self,
@@ -49,6 +54,12 @@ class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
         command_time: datetime | None = None,
         key_values: dict[str, str] | None = None,
     ) -> None:
+        """Initialize the command object and normalized key/value payload.
+
+        Args:
+            command_time: Optional explicit timestamp used for deterministic tests.
+            key_values: Optional payload values merged on top of command defaults.
+        """
         self._command_time = command_time or _utc_now()
         merged = self._default_key_values()
         if key_values:
@@ -56,38 +67,87 @@ class ChatOpCommand(CommandObjectInterface, CommandParameterSchemaInterface):
         self._key_values = merged
 
     def _default_key_values(self) -> dict[str, str]:
+        """Return default routing keys required by provider command dispatch."""
         return {
             "classifier": COMMAND_CLASSIFIER,
             "action": COMMAND_ACTION,
         }
 
     def get_command_classifier(self) -> str:
+        """Return classifier string for routing.
+
+        Implements:
+            CommandObjectInterface.get_command_classifier.
+        """
         return COMMAND_CLASSIFIER
 
     def get_command_time(self) -> datetime:
+        """Return command creation timestamp.
+
+        Implements:
+            CommandObjectInterface.get_command_time.
+        """
         return self._command_time
 
     def get_command_description(self) -> str:
+        """Return a human-readable queue/event description.
+
+        Implements:
+            CommandObjectInterface.get_command_description.
+        """
         return COMMAND_DESCRIPTION
 
     def getdisplayname(self) -> str:
+        """Return UI-friendly display name.
+
+        Implements:
+            CommandObjectInterface.getdisplayname.
+        """
         return COMMAND_DISPLAY_NAME
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
+        """Replace payload values while preserving required defaults.
+
+        Implements:
+            CommandObjectInterface.set_key_value_dictionary.
+
+        Args:
+            key_values: User/operator-provided values to merge into payload.
+        """
         merged = self._default_key_values()
         merged.update(key_values)
         self._key_values = merged
 
     def get_key_value_dictionary(self) -> dict[str, str]:
+        """Return a copy of current payload key/value pairs.
+
+        Implements:
+            CommandObjectInterface.get_key_value_dictionary.
+        """
         return dict(self._key_values)
 
     def get_capability_fqdn(self) -> str | None:
+        """Return reverse-FQDN used in `CustomMessage.capability`.
+
+        Implements:
+            CommandObjectInterface.get_capability_fqdn.
+        """
         return CHATOPCOMMAND_CAPABILITY
 
     def isOpAMPStandard(self) -> bool:
+        """Return whether this command is OpAMP-standard (it is not).
+
+        Implements:
+            CommandObjectInterface.isOpAMPStandard.
+        """
         return False
 
     def get_user_parameter_schema(self) -> list[dict[str, str | bool]]:
+        """Return user-editable parameter schema rows for UI/API consumers.
+
+        Implements:
+            CommandParameterSchemaInterface.get_user_parameter_schema.
+        """
         return [
             {
                 "parametername": PARAMETER_ACTION_NAME,
