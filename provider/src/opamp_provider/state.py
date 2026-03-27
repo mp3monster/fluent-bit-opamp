@@ -358,7 +358,11 @@ class ClientStore:
         self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer
     ) -> None:
         """Apply the client version extracted from the agent description."""
-        record.client_version = _extract_agent_version(agent_msg)
+        if not agent_msg.HasField("agent_description"):
+            return
+        version = _extract_agent_version(agent_msg)
+        if version is not None:
+            record.client_version = version
 
     def _apply_health(
         self, record: ClientRecord, agent_msg: opamp_pb2.AgentToServer

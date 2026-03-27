@@ -73,6 +73,25 @@ def test_custom_capabilities_strip_request_status_prefix() -> None:
     ]
 
 
+def test_client_version_persists_when_later_message_omits_description() -> None:
+    """Verify client version is retained when a subsequent message omits `agent_description`."""
+    store = ClientStore()
+    first = opamp_pb2.AgentToServer(instance_uid=b"\x0e\x0f")
+    first.sequence_num = 1
+    version = first.agent_description.identifying_attributes.add()
+    version.key = "service.version"
+    version.value.string_value = "2.3.4"
+
+    record = store.upsert_from_agent_msg(first)
+    assert record.client_version == "2.3.4"
+
+    second = opamp_pb2.AgentToServer(instance_uid=b"\x0e\x0f")
+    second.sequence_num = 2
+    record = store.upsert_from_agent_msg(second)
+
+    assert record.client_version == "2.3.4"
+
+
 def test_check_sequence_num_initial_message_queues_force_resync() -> None:
     """Verify first-seen message ID queues force-resync and stores the received sequence number."""
     store = ClientStore()
