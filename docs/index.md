@@ -10,8 +10,8 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
 - [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](../provider/README.md) — provider configuration and web UI notes.
-- [shared/scripts/notes.md](../shared/scripts/notes.md) — shared script notes.
-- [future_features.md](../future_features.md) — backlog and ideas for future work.
+- [docs/scripts.md](scripts.md) — script reference table by platform.
+- [docs/features.md](features.md) — backlog and ideas for future work.
 
 ## Project layout (quick view)
 

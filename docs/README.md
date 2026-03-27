@@ -16,7 +16,7 @@ cd D:\dev\opamp
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r provider\requirements.txt
-scripts\run_provider.cmd
+scripts\run_opamp_server.cmd
 ```
 
 ### Bash (Linux/macOS)
@@ -26,7 +26,7 @@ cd /path/to/opamp
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r provider/requirements.txt
-./scripts/run_provider.sh
+./scripts/run_opamp_server.sh
 ```
 
 The provider will start on the configured `webui_port` (default `8080`) unless you pass `--port`.
@@ -63,7 +63,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r provider\requirements.txt
 python -m pip install -r consumer\requirements.txt
-scripts\run_provider.cmd
+scripts\run_opamp_server.cmd
 ```
 
 In a new PowerShell window:
@@ -82,7 +82,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r provider/requirements.txt
 python3 -m pip install -r consumer/requirements.txt
-./scripts/run_provider.sh
+./scripts/run_opamp_server.sh
 ```
 
 In a new shell:
