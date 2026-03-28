@@ -917,6 +917,11 @@ async def issue_agent_identification(client_id: str) -> Response:
         return jsonify({"error": "client not found"}), HTTPStatus.NOT_FOUND
     new_uid = STORE.generate_unique_instance_uid()
     STORE.set_agent_identification(client_id, new_uid)
+    STORE.add_event(
+        client_id,
+        description="Issue New Unique ID",
+        max_events=provider_config.CONFIG.client_event_history_size,
+    )
     logger.info("issued new instance uid for client %s", client_id)
     return jsonify({"status": "queued", "new_instance_uid": new_uid.hex()})
 

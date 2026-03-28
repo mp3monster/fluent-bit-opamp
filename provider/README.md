@@ -79,6 +79,12 @@ Run the server:
 quart --app opamp_provider.app:app run --port 4320
 ```
 
+Installed CLI command:
+
+```bash
+opamp-provider --config-path ./config/opamp.json --port 4320
+```
+
 ## Web UI
 
 - Console: `http://localhost:8080/ui`

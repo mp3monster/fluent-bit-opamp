@@ -18,6 +18,7 @@ import argparse
 from codecs import decode as byte_value
 import json
 from dataclasses import asdict, dataclass, field
+from abc import ABC, abstractmethod
 import sys
 import logging
 import os
@@ -199,8 +200,12 @@ class OpAMPClientData:
         self.full_update_controller = value
 
 
-class OpAMPClient(OpAMPClientInterface):
-    """Minimal OpAMP client supporting HTTP and WebSocket transports."""
+class AbstractOpAMPClient(OpAMPClientInterface, ABC):
+    """Abstract OpAMP client base for HTTP/WebSocket-capable implementations.
+
+    This class provides the full `OpAMPClientInterface` behavior and leaves
+    environment-specific custom-handler discovery to concrete subclasses.
+    """
 
     def __init__(self, base_url: str, config: ConsumerConfig | None = None) -> None:
         """Create a client bound to a base URL."""
@@ -215,14 +220,16 @@ class OpAMPClient(OpAMPClientInterface):
             base_url=base_url.rstrip("/"),
         )
         self.data.FullUpdateController = self._create_full_update_controller()
-        self._custom_handler_folder = (
-            pathlib.Path(__file__).resolve().parent / "custom_handlers"
-        )
+        self._custom_handler_folder = self.get_custom_handler_folder()
         self._custom_handler_lookup = build_factory_lookup(
             self._custom_handler_folder,
             client_data=self.data,
             allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
         )
+
+    @abstractmethod
+    def get_custom_handler_folder(self) -> pathlib.Path:
+        """Return the folder path containing custom handler implementations."""
 
     def _create_full_update_controller(self) -> FullUpdateControllerInterface:
         """Build a configured full update controller instance for this client."""
@@ -1228,6 +1235,14 @@ class OpAMPClient(OpAMPClientInterface):
                 traceback.format_exc(),
             )
             print("...ouch, bye")
+
+
+class OpAMPClient(AbstractOpAMPClient):
+    """Default concrete OpAMP client implementation."""
+
+    def get_custom_handler_folder(self) -> pathlib.Path:
+        """Return the default custom-handler folder bundled with the consumer."""
+        return pathlib.Path(__file__).resolve().parent / "custom_handlers"
 
 
 def check_semaphore() -> bool:

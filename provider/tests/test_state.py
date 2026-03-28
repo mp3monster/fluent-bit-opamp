@@ -12,7 +12,7 @@
 
 from datetime import timedelta, timezone, datetime
 
-from opamp_provider.state import ClientStore
+from opamp_provider.state import ClientRecord, ClientStore
 from opamp_provider.proto import opamp_pb2
 
 
@@ -164,3 +164,45 @@ def test_set_client_heartbeat_frequency_updates_single_record_and_adds_event() -
     assert updated.heartbeat_frequency == 90
     assert second_record.heartbeat_frequency == 30
     assert updated.events[-1].get_event_description() == "send heartbeatfrequency event"
+
+
+def test_client_record_json_dump_serializes_pending_identification_as_hex() -> None:
+    """Verify JSON model dumping serializes pending agent-identification bytes as a hex string."""
+    record = ClientRecord(
+        client_id="client-hex",
+        pending_agent_identification=b"\x01\x9d",
+    )
+
+    dumped = record.model_dump(mode="json")
+
+    assert dumped["pending_agent_identification"] == "019d"
+
+
+def test_identification_rekeys_existing_client_record() -> None:
+    """Verify server-issued identification rekeys the existing client record instead of duplicating it."""
+    store = ClientStore()
+    old_uid = bytes.fromhex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    new_uid = bytes.fromhex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+    first = opamp_pb2.AgentToServer(instance_uid=old_uid)
+    first.sequence_num = 1
+    version = first.agent_description.identifying_attributes.add()
+    version.key = "service.version"
+    version.value.string_value = "9.9.9"
+    record = store.upsert_from_agent_msg(first)
+    old_client_id = record.client_id
+    assert old_client_id == old_uid.hex()
+
+    updated = store.set_agent_identification(old_client_id, new_uid)
+    assert updated is not None
+    assert store.pop_agent_identification(old_client_id) == new_uid
+
+    second = opamp_pb2.AgentToServer(instance_uid=new_uid)
+    second.sequence_num = 2
+    rekeyed = store.upsert_from_agent_msg(second)
+
+    assert rekeyed.client_id == new_uid.hex()
+    assert rekeyed.message_id == 2
+    assert rekeyed.client_version == "9.9.9"
+    assert store.get(old_client_id) is None
+    assert store.get(new_uid.hex()) is rekeyed

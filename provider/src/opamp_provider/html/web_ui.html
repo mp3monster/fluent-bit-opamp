@@ -1041,6 +1041,11 @@
         label: "Force Resync",
         description: "Request full state re-reporting via ReportFullState flag.",
       },
+      {
+        value: "issue_unique_id",
+        label: "Issue New Unique ID",
+        description: "Request a replacement OpAMP instance UID for this client.",
+      },
     ];
 
     let activeClient = null;
@@ -2082,6 +2087,16 @@
     async function queueCommand(command, client) {
       const target = client || activeClient;
       if (!target) return;
+      if (command === "issue_unique_id") {
+        const preservedCustomCommandState = captureCustomCommandState();
+        await requestNewUniqueId(target, {
+          preserveTab: true,
+          customCommandState: preservedCustomCommandState,
+          reopenModal: true,
+          closeContextMenu: false,
+        });
+        return;
+      }
       const ok = window.confirm(`Queue command "${command}" for client ${target.client_id}?`);
       if (!ok) return;
       const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
@@ -2321,21 +2336,47 @@
       await fetchClients();
     }
 
-    async function issueNewId() {
-      if (!contextClient) return;
+    async function requestNewUniqueId(target, options = {}) {
+      if (!target) return;
       const ok = window.confirm(
-        `Issue a new unique ID for client ${contextClient.client_id}?`
+        `Issue a new unique ID for client ${target.client_id}?`
       );
       if (!ok) return;
-      const resp = await fetch(`/api/clients/${contextClient.client_id}/identify`, {
+      const resp = await fetch(`/api/clients/${target.client_id}/identify`, {
         method: "POST",
       });
-      hideContextMenu();
+      if (options.closeContextMenu !== false) {
+        hideContextMenu();
+      }
       if (!resp.ok) {
         window.alert("Failed to issue new unique ID.");
         return;
       }
       await fetchClients();
+      if (options.reopenModal !== true) return;
+      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      if (!refreshed) return;
+      if (options.preserveTab === true) {
+        openModal(refreshed, {
+          preserveTab: true,
+          customCommandState: options.customCommandState || null,
+        });
+        return;
+      }
+      openModal(refreshed);
+    }
+
+    async function issueNewId(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if (!contextClient) return;
+      const target = contextClient;
+      await requestNewUniqueId(target, {
+        closeContextMenu: true,
+        reopenModal: false,
+      });
     }
 
     async function requestShutdown() {

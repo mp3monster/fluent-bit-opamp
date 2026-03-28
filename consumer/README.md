@@ -144,7 +144,33 @@ python -m opamp_consumer.client \
 Helper scripts in repo root:
 - `scripts/run_supervisor.cmd`
 - `scripts/run_supervisor.sh`
+- `scripts/run_supervisor_fluentd.cmd`
+- `scripts/run_supervisor_fluentd.sh`
 
 Both write logs to `logs/supervisor.log` and rotate on startup.
 
 Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directory.
+
+## Installed CLI Commands
+
+When installed as a package, console scripts are available:
+
+- `opamp-consumer` -> `opamp_consumer.client:main`
+- `opamp-consumer-fluentd` -> `opamp_consumer.fluentd_client:main`
+
+## Fluentd Consumer
+
+An alternate concrete consumer implementation is available for Fluentd use cases.
+
+- Module entrypoint: `python -m opamp_consumer.fluentd_client`
+- Fluentd config alias: `--fluentd-config-path` (maps to `agent_config_path`)
+- Fluentd additional args alias: `--additional-fluentd-params` (maps to `agent_additional_params`)
+
+Example:
+
+```bash
+python -m opamp_consumer.fluentd_client \
+  --config-path ./opamp.json \
+  --fluentd-config-path ./fluentd.conf \
+  --server-url http://localhost:4320
+```

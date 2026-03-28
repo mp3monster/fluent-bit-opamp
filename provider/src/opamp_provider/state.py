@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from google.protobuf import text_format
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.event_history import EventHistory
@@ -211,12 +211,22 @@ class ClientRecord(BaseModel):
         ),
     )
 
+    @field_serializer("pending_agent_identification", when_used="json")
+    def serialize_pending_agent_identification(
+        self, pending_agent_identification: Optional[bytes]
+    ) -> Optional[str]:
+        """Serialize pending instance UID bytes as hex for JSON responses."""
+        if pending_agent_identification is None:
+            return None
+        return pending_agent_identification.hex()
+
 
 class ClientStore:
     def __init__(self) -> None:
         """Initialize the in-memory client store."""
         self._lock = threading.Lock()
         self._clients: dict[str, ClientRecord] = {}
+        self._pending_instance_uid_replacements: dict[str, str] = {}
         self._default_heartbeat_frequency = DEFAULT_HEARTBEAT_FREQUENCY
 
     def get(self, client_id: str) -> Optional[ClientRecord]:
@@ -241,6 +251,8 @@ class ClientStore:
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
+                record = self._rekey_client_record_for_reissued_uid_locked(client_id)
+            if record is None:
                 record = ClientRecord(
                     client_id=client_id,
                     heartbeat_frequency=self._default_heartbeat_frequency,
@@ -254,6 +266,33 @@ class ClientStore:
             self._apply_health(record, agent_msg)
             self._apply_agent_description(record, agent_msg)
             self._apply_disconnect(record, agent_msg, now)
+        return record
+
+    def _rekey_client_record_for_reissued_uid_locked(
+        self, new_client_id: str
+    ) -> Optional[ClientRecord]:
+        """Move an existing client record to a server-issued replacement instance UID."""
+        previous_client_id = self._pending_instance_uid_replacements.pop(
+            new_client_id, None
+        )
+        if not previous_client_id:
+            return None
+        record = self._clients.pop(previous_client_id, None)
+        if record is None:
+            logging.getLogger(__name__).warning(
+                "pending identification source client missing previous_client_id=%s new_client_id=%s",
+                previous_client_id,
+                new_client_id,
+            )
+            return None
+        record.client_id = new_client_id
+        record.pending_agent_identification = None
+        self._clients[new_client_id] = record
+        logging.getLogger(__name__).info(
+            "rekeyed client record after identification previous_client_id=%s new_client_id=%s",
+            previous_client_id,
+            new_client_id,
+        )
         return record
 
     def _queue_force_resync_if_missing_locked(self, record: ClientRecord) -> bool:
@@ -592,7 +631,15 @@ class ClientStore:
     def remove_client(self, client_id: str) -> Optional[ClientRecord]:
         """Remove and return a client record by ID if it exists."""
         with self._lock:
-            return self._clients.pop(client_id, None)
+            record = self._clients.pop(client_id, None)
+            pending_targets = [
+                target_id
+                for target_id, source_id in self._pending_instance_uid_replacements.items()
+                if source_id == client_id or target_id == client_id
+            ]
+            for target_id in pending_targets:
+                self._pending_instance_uid_replacements.pop(target_id, None)
+            return record
 
     def set_agent_identification(
         self, client_id: str, new_instance_uid: bytes
@@ -602,7 +649,12 @@ class ClientStore:
             record = self._clients.get(client_id)
             if record is None:
                 return None
+            if record.pending_agent_identification:
+                self._pending_instance_uid_replacements.pop(
+                    record.pending_agent_identification.hex(), None
+                )
             record.pending_agent_identification = new_instance_uid
+            self._pending_instance_uid_replacements[new_instance_uid.hex()] = client_id
             return record
 
     def pop_agent_identification(self, client_id: str) -> Optional[bytes]:
@@ -619,6 +671,7 @@ class ClientStore:
         """Generate a UUIDv7 that does not collide with existing client IDs."""
         with self._lock:
             existing_ids = set(self._clients.keys())
+            existing_ids.update(self._pending_instance_uid_replacements.keys())
             while True:
                 candidate = generate_uuid7_bytes()
                 if candidate.hex() not in existing_ids:

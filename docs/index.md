@@ -8,6 +8,7 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/features.md](features.md) — feature notes and design direction.
 - [OpAMP posts on blog.mp3monster.org](https://blog.mp3monster.org/category/technology/fluent-observability/opamp/) — external blog posts and updates.
 - [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
+- [docs/consumer_client_diagram.md](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
 - [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](../provider/README.md) — provider configuration and web UI notes.
 - [docs/scripts.md](scripts.md) — script reference table by platform.

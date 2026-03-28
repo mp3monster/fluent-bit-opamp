@@ -610,6 +610,83 @@ async def test_get_client_missing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_issue_identification_rekeys_client_to_new_instance_uid() -> None:
+    """Verify issuing a new unique ID migrates provider state to the replacement client ID."""
+    STORE._clients.clear()
+    old_client_id = "11111111111111111111111111111111"
+
+    async with app.test_client() as client:
+        first = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(old_client_id))
+        first.sequence_num = 1
+        version = first.agent_description.identifying_attributes.add()
+        version.key = "service.version"
+        version.value.string_value = "4.2.0"
+        resp = await client.post(
+            "/v1/opamp",
+            data=first.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+
+        identify_resp = await client.post(f"/api/clients/{old_client_id}/identify")
+        assert identify_resp.status_code == 200
+        identify_payload = await identify_resp.get_json()
+        new_client_id = identify_payload["new_instance_uid"]
+        identify_record = STORE.get(old_client_id)
+        assert identify_record is not None
+        assert identify_record.events[-1].get_event_description() == "Issue New Unique ID"
+
+        second = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(old_client_id))
+        second.sequence_num = 2
+        resp = await client.post(
+            "/v1/opamp",
+            data=second.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await resp.get_data())
+        assert server_msg.agent_identification.new_instance_uid.hex() == new_client_id
+
+        third = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(new_client_id))
+        third.sequence_num = 3
+        resp = await client.post(
+            "/v1/opamp",
+            data=third.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+
+        list_resp = await client.get("/api/clients")
+        assert list_resp.status_code == 200
+        listed = await list_resp.get_json()
+
+    assert listed["total"] == 1
+    assert listed["clients"][0]["client_id"] == new_client_id
+    assert listed["clients"][0]["client_version"] == "4.2.0"
+    assert listed["clients"][0]["events"][-1]["event_description"] == "Issue New Unique ID"
+
+
+@pytest.mark.asyncio
+async def test_list_clients_serializes_pending_identification_bytes() -> None:
+    """Verify GET `/api/clients` handles non-UTF8 pending instance UID bytes by returning hex."""
+    STORE._clients.clear()
+    client_id = "11111111111111111111111111111111"
+    agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+    record = STORE.upsert_from_agent_msg(agent_msg, channel="HTTP")
+    record.pending_agent_identification = b"\x01\x9d"
+
+    async with app.test_client() as client:
+        resp = await client.get("/api/clients")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["total"] == 1
+    assert payload["clients"][0]["client_id"] == client_id
+    assert payload["clients"][0]["pending_agent_identification"] == "019d"
+
+
+@pytest.mark.asyncio
 async def test_set_client_actions_and_http_consumes() -> None:
     """Verify queued next-actions are consumed in order across successive HTTP OpAMP polls."""
     client_id = "1234"
