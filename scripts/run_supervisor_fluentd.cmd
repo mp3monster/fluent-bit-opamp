@@ -10,8 +10,9 @@ title OpAMP Supervisor (Fluentd)
 
 if exist "%REPO_ROOT%\.venv\Scripts\activate.bat" call "%REPO_ROOT%\.venv\Scripts\activate.bat"
 
-set CONFIG_PATH=%REPO_ROOT%\tests\opamp.json
+set CONFIG_PATH=%REPO_ROOT%\consumer\tests\opamp_fluentd.json
 set FLUENTD_PATH=%REPO_ROOT%\consumer\fluentd.conf
+if not exist "%CONFIG_PATH%" set CONFIG_PATH=%REPO_ROOT%\tests\opamp.json
 if not exist "%CONFIG_PATH%" set CONFIG_PATH=%REPO_ROOT%\consumer\opamp.json
 if not exist "%FLUENTD_PATH%" set FLUENTD_PATH=%REPO_ROOT%\tests\fluentd.conf
 

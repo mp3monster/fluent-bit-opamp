@@ -11,6 +11,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 
 from opamp_consumer import config as consumer_config
 from shared.opamp_config import AgentCapabilities
@@ -152,3 +153,23 @@ def test_full_update_controller_type_loads_from_config(tmp_path, monkeypatch) ->
     loaded = consumer_config.load_config()
 
     assert loaded.full_update_controller_type == "TimeSend"
+
+
+def test_fluentd_test_config_loads_successfully() -> None:
+    """Ensure the Fluentd test config file is valid for consumer config loading."""
+    repo_root = Path(__file__).resolve().parents[2]
+    config_path = repo_root / "consumer" / "tests" / "opamp_fluentd.json"
+
+    loaded = consumer_config.load_config_with_overrides(
+        config_path=config_path,
+        server_url=None,
+        server_port=None,
+        agent_config_path=None,
+        agent_additional_params=None,
+        heartbeat_frequency=None,
+        log_level=None,
+        full_update_controller=None,
+    )
+
+    assert loaded.service_name == "Fluentd"
+    assert loaded.agent_config_path == "./consumer/tests/fluentd.conf"

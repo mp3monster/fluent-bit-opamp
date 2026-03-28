@@ -15,8 +15,11 @@ if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
   source "${REPO_ROOT}/.venv/bin/activate"
 fi
 
-CONFIG_PATH="${REPO_ROOT}/tests/opamp.json"
+CONFIG_PATH="${REPO_ROOT}/consumer/tests/opamp_fluentd.json"
 FLUENTD_PATH="${REPO_ROOT}/consumer/fluentd.conf"
+if [ ! -f "${CONFIG_PATH}" ]; then
+  CONFIG_PATH="${REPO_ROOT}/tests/opamp.json"
+fi
 if [ ! -f "${CONFIG_PATH}" ]; then
   CONFIG_PATH="${REPO_ROOT}/consumer/opamp.json"
 fi
