@@ -15,6 +15,7 @@ from __future__ import annotations
 from quart import Quart
 import pytest
 
+from opamp_provider import auth as provider_auth
 from opamp_provider import mcptool
 
 
@@ -151,6 +152,64 @@ async def test_register_mcp_transport_wraps_both_sse_and_streamable_http() -> No
         mcptool.mcpserver = original_server  # type: ignore[assignment]
 
     assert calls == ["sse:/sse", "sse:/messages", "streamable:/mcp"]
+
+
+@pytest.mark.asyncio
+async def test_register_mcp_transport_rejects_unauthorized_streamable_request(
+    monkeypatch,
+) -> None:
+    """Verify streamable MCP requests are denied with HTTP 401 when static bearer auth is enabled."""
+    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
+    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "mcp-token")
+    provider_auth.reload_auth_settings()
+
+    app = Quart(__name__)
+    calls: list[str] = []
+    asgi_messages: list[dict] = []
+
+    async def fake_streamable_app(scope, _receive, _send):  # noqa: ANN001
+        calls.append(f"streamable:{scope.get('path', '')}")
+
+    class FakeMcpServer:
+        def http_app(self, *, path: str, transport: str):  # noqa: ANN201
+            assert path == "/mcp"
+            assert transport == "streamable-http"
+            return fake_streamable_app
+
+    original_server = mcptool.mcpserver
+    try:
+        mcptool.mcpserver = FakeMcpServer()  # type: ignore[assignment]
+        enabled = mcptool.register_mcp_transport(
+            app,
+            streamable_http_path="/mcp",
+            transport="streamable-http",
+        )
+        assert enabled is True
+
+        async def _noop_receive() -> dict:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def _capture_send(message: dict) -> None:
+            asgi_messages.append(message)
+
+        await app.asgi_app(
+            {
+                "type": "http",
+                "path": "/mcp",
+                "method": "GET",
+                "headers": [],
+                "client": ("127.0.0.1", 51820),
+            },
+            _noop_receive,
+            _capture_send,
+        )
+    finally:
+        mcptool.mcpserver = original_server  # type: ignore[assignment]
+
+    assert calls == []
+    assert asgi_messages
+    assert asgi_messages[0]["type"] == "http.response.start"
+    assert asgi_messages[0]["status"] == 401
 
 
 def test_register_mcp_transport_rejects_invalid_transport_mode() -> None:

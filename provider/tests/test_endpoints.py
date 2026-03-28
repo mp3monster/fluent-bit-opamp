@@ -21,6 +21,7 @@ from opamp_provider.app import (
     ACTION_PACKAGE_AVAILABLE,
     app,
 )
+from opamp_provider import auth as provider_auth
 from opamp_provider import config as provider_config
 from opamp_provider.config import ProviderConfig
 from opamp_provider.proto import opamp_pb2
@@ -510,6 +511,58 @@ async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
     assert "/tool/commands" in paths
     assert "get" in paths["/tool/commands"]
     assert "responses" in paths["/tool/commands"]["get"]
+
+
+@pytest.mark.asyncio
+async def test_tool_auth_static_mode_rejects_missing_bearer_token(monkeypatch) -> None:
+    """Verify static auth mode rejects unauthenticated `/tool` requests with HTTP 401."""
+    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
+    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_auth.reload_auth_settings()
+
+    async with app.test_client() as client:
+        resp = await client.get("/tool")
+        assert resp.status_code == 401
+        payload = await resp.get_json()
+
+    assert payload == {"error": "missing bearer token"}
+    assert (
+        resp.headers.get("WWW-Authenticate") == provider_auth.WWW_AUTHENTICATE_BEARER
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_auth_static_mode_accepts_valid_bearer_token(monkeypatch) -> None:
+    """Verify static auth mode accepts `/tool` requests when the bearer token matches."""
+    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
+    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_auth.reload_auth_settings()
+
+    async with app.test_client() as client:
+        resp = await client.get(
+            "/tool",
+            headers={"Authorization": "Bearer local-dev-token"},
+        )
+        assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_tool_auth_static_mode_logs_rejection_details(monkeypatch, caplog) -> None:
+    """Verify token mismatches are rejected and written to logs for operator visibility."""
+    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
+    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_auth.reload_auth_settings()
+    caplog.set_level("WARNING")
+
+    async with app.test_client() as client:
+        resp = await client.get(
+            "/tool/commands",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert resp.status_code == 401
+
+    assert "authorization rejected" in caplog.text
+    assert "static token mismatch" in caplog.text
 
 
 @pytest.mark.asyncio

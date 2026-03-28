@@ -36,10 +36,18 @@ import traceback
 
 
 import httpx
-import websockets
 from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
+from opamp_consumer.client_message_builder import (
+    parse_fluentbit_metrics_health,
+    populate_agent_to_server,
+    populate_agent_to_server_health,
+)
+from opamp_consumer.client_transport import (
+    send_http_message,
+    send_websocket_message,
+)
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.exceptions import AgentException
@@ -52,12 +60,10 @@ from opamp_consumer.full_update_controller import (
 from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.reporting_flag import ReportingFlag
-from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import (
     AGENT_CAPABILITIES_MAP,
     AgentCapabilities,
     OPAMP_HTTP_PATH,
-    OPAMP_TRANSPORT_HEADER_NONE,
     PB_FIELD_AGENT_IDENTIFICATION,
     PB_FIELD_COMMAND,
     PB_FIELD_CONNECTION_SETTINGS,
@@ -80,9 +86,6 @@ TRANSPORT_HTTP = "http"
 TRANSPORT_WEBSOCKET = "websocket"
 HEARTBEAT_SKEW_SECONDS = 1  # Sleep interval is heartbeat_frequency minus this value.
 LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
-CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf payloads.
-HEADER_CONTENT_TYPE = "Content-Type"  # HTTP header key for protobuf content type.
-ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header error text.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
 ERR_STATUS = "error"  # Status marker for failed local heartbeat HTTP calls.
 FLUENTBIT_CMD = "fluent-bit"  # Fluent Bit executable name.
@@ -128,7 +131,6 @@ LOG_INVALID_HTTP_PORT = "invalid http_port value: %s"  # Log format for bad port
 LOG_HTTP_SERVER_DISABLED = (
     "http_server is not enabled: %s"  # Log format for disabled HTTP.
 )
-OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
 CONFIG_DOCS_URL = (
     "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
 )
@@ -312,20 +314,12 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
         Returns:
             Parsed ServerToAgent reply from the provider.
         """
-        url = f"{self.data.base_url}{OPAMP_HTTP_PATH}"
-        logging.getLogger(__name__).debug("Calling REST endpoint at %s", url)
-        payload = msg.SerializeToString()
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url,
-                content=payload,
-                headers={HEADER_CONTENT_TYPE: CONTENT_TYPE_PROTO},
-            )
-            resp.raise_for_status()
-            reply = opamp_pb2.ServerToAgent()
-            reply.ParseFromString(resp.content)
-            self._handle_server_to_agent(reply)
-            return reply
+        return await send_http_message(
+            msg=msg,
+            base_url=self.data.base_url,
+            opamp_http_path=OPAMP_HTTP_PATH,
+            handle_reply=self._handle_server_to_agent,
+        )
 
     def _populate_agent_to_server_health(
         self, msg: opamp_pb2.AgentToServer
@@ -338,34 +332,15 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
         Returns:
             The same message instance with health fields updated.
         """
-        healthy = True
-        if self.data.last_heartbeat_results:
-            healthy = (
-                self.data.last_heartbeat_http_codes is not None
-                and self.data.last_heartbeat_http_codes[KEY_HEALTH]
-            )
-            last_error = ""
-            for value in self.data.last_heartbeat_results.values():
-                text = str(value)
-                # logging.getLogger(__name__).debug(f"Evaluating for health>>{text}")
-                if text.startswith(ERR_PREFIX):
-                    healthy = False
-                    last_error = text
-
-                msg = self._health_from_metrics(msg, text)
-
-            msg.health.status = VALUE_HEARTBEAT_STATUS
-            if not healthy and last_error:
-                msg.health.last_error = last_error
-        else:
-            healthy = False
-            msg.health.last_error = VALUE_SUPERVISOR_NO_STATE
-
-        msg.health.start_time_unix_nano = time.time_ns() - self.data.launched_at
-        msg.health.status_time_unix_nano = time.time_ns()
-        msg.health.healthy = int(healthy)
-        logging.getLogger(__name__).debug("Health info sending is >%s<", msg.health)
-        return msg
+        return populate_agent_to_server_health(
+            data=self.data,
+            msg=msg,
+            health_from_metrics=self._health_from_metrics,
+            health_key=KEY_HEALTH,
+            err_prefix=ERR_PREFIX,
+            value_heartbeat_status=VALUE_HEARTBEAT_STATUS,
+            value_supervisor_no_state=VALUE_SUPERVISOR_NO_STATE,
+        )
 
     def _health_from_metrics(self, msg, text) -> opamp_pb2.AgentToServer:
         """Parse Fluent Bit metrics text and update component health entries in-place.
@@ -377,28 +352,7 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
         Returns:
             The same message instance with component health updates applied.
         """
-        lines = text.splitlines()
-        METRIC_STR: str = 'errors_total{name="'
-        for line in lines:
-            line_idx = line.find(METRIC_STR)
-            if line_idx >= 0:
-                # fluentbit_output_errors_total{name="file.0"} 0
-                name_start: int = line_idx + len(METRIC_STR)
-                name_end: int = line.index('"', name_start)
-                component_name: str = line[name_start:name_end]
-                last_num_text = re.findall(r"\d+(?:\.\d+)?", line[name_end:])[-1]
-                last_num = int(last_num_text)
-                msg.health.component_health_map[component_name].CopyFrom(
-                    opamp_pb2.ComponentHealth(
-                        healthy=(last_num == 0),
-                        status=f"error count={last_num_text}",
-                    )
-                )
-                logging.getLogger(__name__).debug(
-                    "Component metric %s",
-                    msg.health.component_health_map[component_name],
-                )
-        return msg
+        return parse_fluentbit_metrics_health(msg, text)
 
     def _populate_agent_to_server(
         self, msg: opamp_pb2.AgentToServer
@@ -411,28 +365,14 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
         Returns:
             Populated AgentToServer message ready to send.
         """
-        msg.sequence_num = self.data.msg_sequence_number
-        self.data.msg_sequence_number = self.data.msg_sequence_number + 1
-        msg.instance_uid = self.data.uid_instance
-
-        if self.data.reporting_flags[ReportingFlag.REPORT_DESCRIPTION]:
-            msg.agent_description.CopyFrom(self.get_agent_description())
-            self.data.reporting_flags[ReportingFlag.REPORT_DESCRIPTION] = False
-
-        if self.data.reporting_flags[ReportingFlag.REPORT_CAPABILITIES]:
-            msg.capabilities = self.get_agent_capabilities()
-            self.data.reporting_flags[ReportingFlag.REPORT_CAPABILITIES] = False
-
-        if self.data.reporting_flags[ReportingFlag.REPORT_CUSTOM_CAPABILITIES]:
-            custom_capabilities = self.get_custom_capabilities_payload()
-            if custom_capabilities.capabilities:
-                msg.custom_capabilities.CopyFrom(custom_capabilities)
-            self.data.reporting_flags[ReportingFlag.REPORT_CUSTOM_CAPABILITIES] = False
-
-        if self.data.reporting_flags[ReportingFlag.REPORT_HEALTH]:
-            msg = self._populate_agent_to_server_health(msg)
-            self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = False
-        return msg
+        return populate_agent_to_server(
+            data=self.data,
+            msg=msg,
+            get_agent_description=self.get_agent_description,
+            get_agent_capabilities=self.get_agent_capabilities,
+            get_custom_capabilities_payload=self.get_custom_capabilities_payload,
+            populate_agent_to_server_health=self._populate_agent_to_server_health,
+        )
 
     def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
         """Process ServerToAgent fields and dispatch each populated payload section.
@@ -656,24 +596,12 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
         Returns:
             Parsed ServerToAgent reply from the provider.
         """
-        url = f"{self.data.base_url}{OPAMP_HTTP_PATH}"
-        logging.getLogger(__name__).debug("Calling web socket at %s", url)
-
-        async with websockets.connect(url) as web_socket:
-            await web_socket.send(encode_message(msg.SerializeToString()))
-            data = await web_socket.recv()
-            await web_socket.close(code=1000)
-            await web_socket.wait_closed()
-        if isinstance(data, str):
-            data = data.encode(UTF8_ENCODING)
-        header, payload = decode_message(data)
-        if header != OPAMP_HEADER_NONE:
-            raise ValueError(ERR_UNSUPPORTED_HEADER)
-        reply = opamp_pb2.ServerToAgent()
-        reply.ParseFromString(payload)
-
-        self._handle_server_to_agent(reply)
-        return reply
+        return await send_websocket_message(
+            msg=msg,
+            base_url=self.data.base_url,
+            opamp_http_path=OPAMP_HTTP_PATH,
+            handle_reply=self._handle_server_to_agent,
+        )
 
     def launch_agent_process(self) -> bool:
         """Implements `OpAMPClientInterface.launch_agent_process`.
