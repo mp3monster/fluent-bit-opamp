@@ -1,6 +1,8 @@
 # Consumer Client Architecture Diagram
 
-This diagram shows how the consumer-side classes and modules relate after introducing the Fluentd concrete implementation.
+This diagram shows the current consumer structure after splitting large `client.py` responsibilities into mixins and bootstrap helpers.
+
+## Class and Module Relationships
 
 ```mermaid
 classDiagram
@@ -25,6 +27,30 @@ classDiagram
       +finalize()
     }
 
+    class ClientRuntimeMixin {
+      +launch_agent_process()
+      +terminate_agent_process()
+      +restart_agent_process()
+      +poll_local_status_with_codes()
+      +add_agent_version()
+      +_heartbeat_loop()
+    }
+
+    class ServerMessageHandlingMixin {
+      +_handle_server_to_agent()
+      +_validate_reply_instance_uid()
+      +handle_error_response()
+      +handle_remote_config()
+      +handle_connection_settings()
+      +handle_packages_available()
+      +handle_flags()
+      +handle_capabilities()
+      +handle_command()
+      +handle_agent_identification()
+      +handle_custom_capabilities()
+      +handle_custom_message()
+    }
+
     class AbstractOpAMPClient {
       <<abstract>>
       +data: OpAMPClientData
@@ -32,9 +58,7 @@ classDiagram
       +send()
       +send_http()
       +send_websocket()
-      +_handle_server_to_agent()
-      +_heartbeat_loop()
-      +handle_custom_message()
+      +_populate_agent_to_server()
       +get_custom_handler_folder()*
     }
 
@@ -58,31 +82,30 @@ classDiagram
       +update_sent(ms_from_epoch)
     }
     class AlwaysSend
-    class SentCount {
-      +full_resend_after: int
-      +sent_count: int
+    class SentCount
+    class TimeSend
+
+    class client_message_builder {
+      <<module>>
+      +populate_agent_to_server()
+      +populate_agent_to_server_health()
     }
-    class TimeSend {
-      +full_update_after_seconds: int
-      +last_full_update_ms: int
+    class client_transport {
+      <<module>>
+      +send_http_message()
+      +send_websocket_message()
     }
-    class CommandHandlerInterface {
-      <<interface>>
-    }
-    class CustomMessageHandlerInterface {
-      <<interface>>
-    }
-    class Registry {
-      +build_factory_lookup()
-      +create_handler()
-    }
-    class ProtoMessages {
-      AgentToServer
-      ServerToAgent
-      CustomMessage
+    class client_bootstrap {
+      <<module>>
+      +load_agent_config()
+      +build_minimal_agent()
+      +run_client()
+      +run_default_client_main()
     }
 
     OpAMPClientInterface <|.. AbstractOpAMPClient
+    ClientRuntimeMixin <|-- AbstractOpAMPClient
+    ServerMessageHandlingMixin <|-- AbstractOpAMPClient
     AbstractOpAMPClient <|-- OpAMPClient
     AbstractOpAMPClient <|-- FluentdOpAMPClient
 
@@ -93,11 +116,9 @@ classDiagram
     FullUpdateControllerInterface <|.. SentCount
     FullUpdateControllerInterface <|.. TimeSend
 
-    AbstractOpAMPClient --> Registry
-    Registry --> CustomMessageHandlerInterface
-    CustomMessageHandlerInterface --|> CommandHandlerInterface
-
-    AbstractOpAMPClient --> ProtoMessages
+    AbstractOpAMPClient --> client_message_builder
+    AbstractOpAMPClient --> client_transport
+    OpAMPClient --> client_bootstrap
 ```
 
 ## Runtime Entrypoints
@@ -109,11 +130,32 @@ flowchart TD
     E["installed CLI: opamp-consumer"] --> B
     F["installed CLI: opamp-consumer-fluentd"] --> D
 
-    B --> G["OpAMPClient (Fluent Bit)"]
-    D --> H["FluentdOpAMPClient (Fluentd)"]
+    B --> G["client.main()"]
+    G --> H["client_bootstrap.run_default_client_main(...)"]
+    H --> I["OpAMPClient (Fluent Bit)"]
 
-    G --> I["AbstractOpAMPClient shared send/heartbeat/handler flow"]
-    H --> I
+    D --> J["fluentd_client.main()"]
+    J --> K["FluentdOpAMPClient (Fluentd)"]
+
+    I --> L["AbstractOpAMPClient + mixins"]
+    K --> L
+```
+
+## Mixin Dispatch Model
+
+```mermaid
+flowchart TD
+    A["OpAMPClient instance"] --> B{"Which method is called?"}
+
+    B -->|launch_agent_process| C["ClientRuntimeMixin.launch_agent_process()"]
+    B -->|_heartbeat_loop| D["ClientRuntimeMixin._heartbeat_loop()"]
+    B -->|_handle_server_to_agent| E["ServerMessageHandlingMixin._handle_server_to_agent()"]
+    B -->|handle_custom_message| F["ServerMessageHandlingMixin.handle_custom_message()"]
+    B -->|send| G["AbstractOpAMPClient.send()"]
+
+    H["FluentdOpAMPClient override exists?"] --> I{"Yes"}
+    I --> J["Use FluentdOpAMPClient override first"]
+    I --> K["Else use mixin/base implementation"]
 ```
 
 ## Reporting Flags and Update Controllers

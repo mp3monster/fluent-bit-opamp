@@ -14,31 +14,28 @@
 
 from __future__ import annotations
 
-import argparse
-from codecs import decode as byte_value
-import json
 from dataclasses import asdict, dataclass, field
 from abc import ABC, abstractmethod
 import sys
 import logging
-import os
 import pathlib
 import platform
-import re
 import socket
 import subprocess
 import threading
-import time
-import tracemalloc
 import asyncio
 import uuid
-import traceback
 
-
-import httpx
-from google.protobuf import text_format
 
 from opamp_consumer import config as consumer_config
+from opamp_consumer.client_bootstrap import (
+    build_minimal_agent,
+    load_agent_config as _bootstrap_load_agent_config,
+    resolve_service_instance_id_template_with_values,
+    run_client,
+    run_default_client_main,
+)
+from opamp_consumer.client_mixins import ClientRuntimeMixin, ServerMessageHandlingMixin
 from opamp_consumer.client_message_builder import (
     parse_fluentbit_metrics_health,
     populate_agent_to_server,
@@ -50,7 +47,6 @@ from opamp_consumer.client_transport import (
 )
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
-from opamp_consumer.exceptions import AgentException
 from opamp_consumer.full_update_controller import (
     AlwaysSend,
     FullUpdateControllerInterface,
@@ -64,61 +60,29 @@ from shared.opamp_config import (
     AGENT_CAPABILITIES_MAP,
     AgentCapabilities,
     OPAMP_HTTP_PATH,
-    PB_FIELD_AGENT_IDENTIFICATION,
-    PB_FIELD_COMMAND,
-    PB_FIELD_CONNECTION_SETTINGS,
-    PB_FIELD_CUSTOM_CAPABILITIES,
-    PB_FIELD_CUSTOM_MESSAGE,
-    PB_FIELD_ERROR_RESPONSE,
-    PB_FIELD_INSTANCE_UID,
-    PB_FIELD_PACKAGES_AVAILABLE,
-    PB_FLAG_REPORT_FULL_STATE,
-    PB_FIELD_REMOTE_CONFIG,
-    PB_FIELD_RETRY_INFO,
-    UTF8_ENCODING,
     parse_capabilities,
 )
 from shared.uuid_utils import generate_uuid7_bytes
 
 
-HTTP_TIMEOUT_SECONDS = 5.0  # Timeout for local HTTP calls.
 TRANSPORT_HTTP = "http"
 TRANSPORT_WEBSOCKET = "websocket"
-HEARTBEAT_SKEW_SECONDS = 1  # Sleep interval is heartbeat_frequency minus this value.
 LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
-ERR_STATUS = "error"  # Status marker for failed local heartbeat HTTP calls.
-FLUENTBIT_CMD = "fluent-bit"  # Fluent Bit executable name.
-FLUENTBIT_CONFIG_FLAG = "-c"  # Fluent Bit config flag.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
-KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key for agent description.
 KEY_SERVICE_INSTANCE_ID_COMMENT = (
     "service_instance_id"  # Comment key for service instance ID.
 )
-KEY_HTTP_PORT = "http_port"  # Fluent Bit HTTP port config key.
-KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit HTTP listen config key.
-KEY_HTTP_SERVER = "http_server"  # Fluent Bit HTTP server config key.
-KEY_HTTP_SERVER_ON = "on"  # Expected value token when HTTP server is enabled.
-KEY_FLUENT_BIT_VERSION = "fluent-bit.version"  # Fluent Bit version JSON field key.
-KEY_FLUENT_BIT_EDITION = "fluent-bit.edition"  # Fluent Bit edition JSON field key.
 KEY_SERVICE_NAME = "service.name"  # Agent description service name key.
 KEY_SERVICE_NAMESPACE = "service.namespace"  # Agent description service namespace key.
 KEY_SERVICE_INSTANCE_ID = "service.instance.id"  # Agent description instance id key.
 KEY_SERVICE_TYPE = "service.type"  # Agent description service type key.
-TOKEN_IP = "__IP__"
-TOKEN_HOSTNAME = "__hostname__"
-TOKEN_MAC_ADDR = "__mac-ad__"
 KEY_SERVICE_VERSION = "service.version"  # Agent description version key.
 KEY_HEALTH = "health"  # Heartbeat dictionary key for health endpoint results.
 VALUE_HEARTBEAT_STATUS = "heartbeat"  # Health status value used in heartbeats.
 VALUE_SUPERVISOR_NO_STATE = (
     "Supervisor has not state"  # Error message when no heartbeat data.
 )
-VALUE_AGENT_TYPE_FLUENT_BIT = "Fluent Bit"  # Display name for Fluent Bit agent type.
-JSON_KEY_FLUENT_BIT = "fluent-bit"  # JSON key for Fluent Bit map payload.
-JSON_KEY_FLUENTBIT = "fluentbit"  # Alternate JSON key for Fluent Bit map payload.
-JSON_KEY_VERSION = "version"  # Generic JSON version key.
-JSON_KEY_EDITION = "edition"  # Generic JSON edition key.
 CAPABILITY_PREFIX_REQUEST = (
     "request:"  # Prefix used for custom request capability fqdn.
 )
@@ -133,12 +97,6 @@ LOG_HTTP_SERVER_DISABLED = (
 )
 CONFIG_DOCS_URL = (
     "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
-)
-
-_HEARTBEAT_PATHS = (  # Local endpoints polled per heartbeat.
-    "/api/v1/uptime",
-    "/api/v1/health",
-    "/api/v2/metrics/prometheus",
 )
 
 
@@ -202,7 +160,9 @@ class OpAMPClientData:
         self.full_update_controller = value
 
 
-class AbstractOpAMPClient(OpAMPClientInterface, ABC):
+class AbstractOpAMPClient(
+    ClientRuntimeMixin, ServerMessageHandlingMixin, OpAMPClientInterface, ABC
+):
     """Abstract OpAMP client base for HTTP/WebSocket-capable implementations.
 
     This class provides the full `OpAMPClientInterface` behavior and leaves
@@ -374,88 +334,6 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
             populate_agent_to_server_health=self._populate_agent_to_server_health,
         )
 
-    def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
-        """Process ServerToAgent fields and dispatch each populated payload section.
-
-        Args:
-            reply: ServerToAgent payload received from the provider.
-
-        Returns:
-            True when message processing completed without critical handling errors.
-        """
-        logger = logging.getLogger(__name__)
-        logger.debug("_handle_server_to_agent called")
-        successful_message = True
-
-        logger.debug("Handling Server to agent payload:%s", reply)
-        if reply is None:
-            logger.error("Been given None response")
-            return False
-
-        try:
-            if not self._validate_reply_instance_uid(reply):
-                successful_message = False
-        except ValueError as val_err:
-            logger.error("Error processing svr instance uid %s", val_err)
-            successful_message = False
-
-        try:
-            if reply.HasField(PB_FIELD_ERROR_RESPONSE):
-                self.data.set_all_reporting_flags()
-                self.handle_error_response(error_response=reply.error_response)
-            if reply.HasField(PB_FIELD_REMOTE_CONFIG):
-                self.handle_remote_config(reply.remote_config)
-            if reply.HasField(PB_FIELD_CONNECTION_SETTINGS):
-                self.handle_connection_settings(reply.connection_settings)
-            if reply.HasField(PB_FIELD_PACKAGES_AVAILABLE):
-                self.handle_packages_available(reply.packages_available)
-            if reply.flags:
-                self.handle_flags(reply.flags)
-            if reply.capabilities:
-                self.handle_capabilities(reply.capabilities)
-            if reply.HasField(PB_FIELD_AGENT_IDENTIFICATION):
-                self.handle_agent_identification(reply.agent_identification)
-            if reply.HasField(PB_FIELD_COMMAND):
-                self.handle_command(reply.command)
-            if reply.HasField(PB_FIELD_CUSTOM_CAPABILITIES):
-                self.handle_custom_capabilities(reply.custom_capabilities)
-            if reply.HasField(PB_FIELD_CUSTOM_MESSAGE):
-                self.handle_custom_message(reply.custom_message)
-
-        except AgentException as agent_err:
-            logger.error("Agent Error received - %s", agent_err)
-            successful_message = False
-        return successful_message
-
-    def _validate_reply_instance_uid(self, reply: opamp_pb2.ServerToAgent) -> bool:
-        """Validate that a reply contains and matches the expected instance UID.
-
-        Args:
-            reply: Incoming ServerToAgent payload.
-
-        Returns:
-            True if the payload instance UID is present and matches this client.
-        """
-        logger = logging.getLogger(__name__)
-        if reply.HasField(PB_FIELD_INSTANCE_UID):
-            logger.debug(
-                "reply target is %s",
-                byte_value(reply.instance_uid, errors="replace"),
-            )
-            if reply.instance_uid == self.data.uid_instance:
-                return True
-            logger.error(
-                "Message doesn't have an instance uid or doesn't match our "
-                "service instance id %s",
-                byte_value(reply.instance_uid, errors="replace"),
-            )
-            return False
-        logger.error(
-            "Server didn't share instance_uid, my instance uid is %s",
-            byte_value(self.instance_uid, errors="replace"),
-        )
-        return False
-
     async def send(
         self,
         msg: opamp_pb2.AgentToServer | None = None,
@@ -603,162 +481,6 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
             handle_reply=self._handle_server_to_agent,
         )
 
-    def launch_agent_process(self) -> bool:
-        """Implements `OpAMPClientInterface.launch_agent_process`.
-
-        Launch the Fluent Bit process using configured params.
-        """
-        launched = True
-        logger = logging.getLogger(__name__)
-        cmd = [
-            FLUENTBIT_CMD,
-            *(self.config.agent_additional_params or []),
-            FLUENTBIT_CONFIG_FLAG,
-            self.config.agent_config_path,
-        ]
-        logger.debug(
-            "About to start Fluent Bit with %s and cmd %s",
-            self.config.agent_config_path,
-            cmd,
-        )
-
-        with self.data.process_lock:
-            process_response: subprocess.Popen[bytes] = subprocess.Popen(cmd)
-            self.data.agent_process = process_response
-            self.data.launched_at = time.time_ns()
-        logger.info("Launch result = %s", process_response)
-        return launched
-
-    def terminate_agent_process(self) -> None:
-        """Implements `OpAMPClientInterface.terminate_agent_process`.
-
-        Terminate the launched Agent process if available.
-        """
-        logger = logging.getLogger(__name__)
-        with self.data.process_lock:
-            process = self.data.agent_process
-            self.data.allow_heartbeat = False
-            if process is None:
-                return
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                logger.warning("Agent did not terminate in time; killing process")
-                print("Agent did not terminate in time; killing process")
-
-                process.kill()
-                process.wait(timeout=5)
-            self.data.agent_process = None
-
-    def restart_agent_process(self) -> bool:
-        """Implements `OpAMPClientInterface.restart_agent_process`.
-
-        Stop the current agent process and start a new instance.
-        """
-        logger = logging.getLogger(__name__)
-        logger.info("Restarting agent process")
-        lock_acquired = self.data.process_lock.acquire(timeout=30)
-        if not lock_acquired:
-            raise AgentException(
-                "Timed out waiting for process lock while restarting agent process"
-            )
-        try:
-            self.terminate_agent_process()
-            relaunched = self.launch_agent_process()
-        finally:
-            self.data.process_lock.release()
-        if not relaunched:
-            raise AgentException("Failed to restart agent process")
-        logger.info("Agent process restarted")
-        return relaunched
-
-    def _heartbeat_key(self, path: str) -> str:
-        """Return the last URL path component as the dictionary key."""
-        return path.rstrip("/").split("/")[-1]
-
-    def poll_local_status_with_codes(
-        self, port: int
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        """Implements `OpAMPClientInterface.poll_local_status_with_codes`.
-
-        Poll local health endpoints and collect response bodies and status codes.
-
-        Args:
-            port: Local agent HTTP status port to query.
-
-        Returns:
-            Tuple of `(results, codes)` maps keyed by heartbeat endpoint name.
-        """
-        results: dict[str, str] = {}
-        codes: dict[str, str] = {}
-        for path in _HEARTBEAT_PATHS:
-            url = f"{LOCALHOST_BASE}:{port}{path}"
-            key = self._heartbeat_key(path)
-            try:
-                resp = httpx.get(url, timeout=HTTP_TIMEOUT_SECONDS)
-                results[key] = resp.text
-                codes[key] = str(resp.status_code)
-                resp.raise_for_status()
-                if (resp.status_code < 200) or (resp.status_code > 299):
-                    # force the health to be reported
-                    self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = True
-                    results[key] = f"{path}={resp.status_code}"
-                    logging.getLogger(__name__).warning(
-                        "Err checking status using %s got code %s",
-                        path,
-                        resp.status_code,
-                    )
-
-            except Exception as exc:  # pragma: no cover - error path varies by env
-                results[key] = f"{ERR_PREFIX}{exc}"
-                codes[key] = ERR_STATUS
-                self.data.reporting_flags[ReportingFlag.REPORT_HEALTH] = True
-                logging.getLogger(__name__).warning(
-                    "Err checking status using %s got error %s", path, exc
-                )
-        return results, codes
-
-    def add_agent_version(self, port: int) -> None:
-        """Implements `OpAMPClientInterface.add_agent_version`.
-
-        Fetch Fluent Bit version endpoint and store in client runtime metadata.
-
-        Args:
-            port: Local agent HTTP status port used for version endpoint calls.
-        """
-        url = f"{LOCALHOST_BASE}:{port}"
-        try:
-            resp = httpx.get(url, timeout=HTTP_TIMEOUT_SECONDS)
-            resp.raise_for_status()
-            value = resp.text
-            try:
-                data = resp.json()
-                version = None
-                edition = None
-                if isinstance(data, dict):
-                    version = data.get(KEY_FLUENT_BIT_VERSION)
-                    edition = data.get(KEY_FLUENT_BIT_EDITION)
-                    fb = data.get(JSON_KEY_FLUENT_BIT) or data.get(JSON_KEY_FLUENTBIT)
-                    if isinstance(fb, dict):
-                        self.data.agent_type_name = VALUE_AGENT_TYPE_FLUENT_BIT
-                        version = version or fb.get(JSON_KEY_VERSION)
-                        edition = edition or fb.get(JSON_KEY_EDITION)
-                if version or edition:
-                    if version and edition:
-                        value = f"{version} ({edition})"
-                    else:
-                        value = version or edition
-                self.data.agent_version = value
-            except ValueError as val_exc:
-                logging.getLogger(__name__).warning(
-                    "failed to parse Agent version response: %s", val_exc
-                )
-        except Exception as exc:  # pragma: no cover - error path varies by env
-            logging.getLogger(__name__).warning(
-                "failed to parse Agent version response: %s", exc
-            )
-
     def get_agent_description(
         self, instance_uid: bytes | str | None = None
     ) -> opamp_pb2.AgentDescription:
@@ -905,404 +627,12 @@ class AbstractOpAMPClient(OpAMPClientInterface, ABC):
             HOST_META_KEY_HOSTNAME: socket.gethostname(),
         }
 
-    def handle_error_response(
-        self, error_response: opamp_pb2.ServerErrorResponse
-    ) -> None:
-        """Log details from a ServerErrorResponse.
-
-        Args:
-            error_response: Server error payload to inspect and log.
-        """
-        logger = logging.getLogger(__name__)
-        logger.warning("server error_response type=%s", error_response.type)
-        if error_response.error_message:
-            logger.warning(
-                "*******/n server error_response message=%s/n*******",
-                error_response.error_message,
-            )
-        if error_response.HasField(PB_FIELD_RETRY_INFO):
-            logger.warning(
-                "server error_response retry_after_nanoseconds=%s",
-                error_response.retry_info.retry_after_nanoseconds,
-            )
-
-    def handle_remote_config(self, remote_config: opamp_pb2.AgentRemoteConfig) -> None:
-        """Implements `OpAMPClientInterface.handle_remote_config`.
-
-        Log the remote-config payload received from the provider.
-
-        Args:
-            remote_config: Remote configuration payload from ServerToAgent.
-        """
-        logging.getLogger(__name__).info(
-            "server remote_config:\n%s", text_format.MessageToString(remote_config)
-        )
-
-    def handle_connection_settings(
-        self, connection_settings: opamp_pb2.ConnectionSettingsOffers
-    ) -> None:
-        """Implements `OpAMPClientInterface.handle_connection_settings`.
-
-        Log provider connection-settings offers for diagnostics and visibility.
-
-        Args:
-            connection_settings: Connection settings offered by the provider.
-        """
-        logging.getLogger(__name__).info(
-            "server connection_settings:\n%s",
-            text_format.MessageToString(connection_settings),
-        )
-
-    def handle_packages_available(
-        self, packages_available: opamp_pb2.PackagesAvailable
-    ) -> None:
-        """Implements `OpAMPClientInterface.handle_packages_available`.
-
-        Log package offers sent by the provider.
-
-        Args:
-            packages_available: Package availability payload from ServerToAgent.
-        """
-        logging.getLogger(__name__).info(
-            "server packages_available:\n%s",
-            text_format.MessageToString(packages_available),
-        )
-
-    def handle_flags(self, flags: int) -> None:
-        """Log raw server flag bitmask values from ServerToAgent.
-
-        Args:
-            flags: Integer bitmask from `ServerToAgent.flags`.
-        """
-        logger = logging.getLogger(__name__)
-        flag_names: list[str] = []
-        for enum_value in opamp_pb2.ServerToAgentFlags.DESCRIPTOR.values:
-            if enum_value.number == 0:
-                continue
-            if flags & enum_value.number:
-                name = enum_value.name
-                if name.startswith("ServerToAgentFlags_"):
-                    name = name[len("ServerToAgentFlags_") :]
-                flag_names.append(name)
-
-        if PB_FLAG_REPORT_FULL_STATE in flag_names:
-            self.data.set_all_reporting_flags(True)
-            logger.info(
-                "server flags include ReportFullState; set all reporting flags true"
-            )
-
-        if flag_names:
-            logger.info("server flags: %s (%s)", flags, ", ".join(flag_names))
-        else:
-            logger.info("server flags: %s", flags)
-
-    def handle_capabilities(self, capabilities: int) -> None:
-        """Log raw server capability bitmask values from ServerToAgent.
-
-        Args:
-            capabilities: Integer bitmask from `ServerToAgent.capabilities`.
-        """
-        logging.getLogger(__name__).debug("server capabilities: %s", capabilities)
-
-    def handle_command(self, command: opamp_pb2.ServerToAgentCommand) -> None:
-        """Handle ServerToAgent command payloads.
-
-        Args:
-            command: Command payload from the provider.
-        """
-        logger = logging.getLogger(__name__)
-        if command is None:
-            return
-        logger.info("server command:\n%s", text_format.MessageToString(command))
-        match command.type:
-            case opamp_pb2.CommandType.CommandType_Restart:
-                logger.info("server command to restart recognized")
-                self.restart_agent_process()
-            case _:
-                raise AgentException(f"Unknown command type: {command.type}")
-
-    def handle_agent_identification(
-        self, agent_identification: opamp_pb2.AgentIdentification
-    ) -> None:
-        """Update local instance UID when the server sends AgentIdentification.
-
-        Args:
-            agent_identification: AgentIdentification payload with replacement UID.
-        """
-        logging.getLogger(__name__).info(
-            "server agent_identification:\n%s",
-            text_format.MessageToString(agent_identification),
-        )
-        self.data.uid_instance = agent_identification.new_instance_uid
-
-    def handle_custom_capabilities(
-        self, custom_capabilities: opamp_pb2.CustomCapabilities
-    ) -> None:
-        """Log custom capability declarations received from the provider.
-
-        Args:
-            custom_capabilities: Custom capability list reported by the provider.
-        """
-        logging.getLogger(__name__).info(
-            "notified of server custom_capabilities: %s",
-            text_format.MessageToString(custom_capabilities),
-        )
-
-    def handle_custom_message(self, custom_message: opamp_pb2.CustomMessage) -> None:
-        """Implements `OpAMPClientInterface.handle_custom_message`.
-
-        Route a custom message to its handler and execute it against this client.
-
-        Args:
-            custom_message: Custom message payload containing capability and data.
-        """
-        logger = logging.getLogger(__name__)
-        logger.info(
-            "server custom_message: %s", text_format.MessageToString(custom_message)
-        )
-        if custom_message is None:
-            return
-
-        capability = str(custom_message.capability or "").strip()
-        if not capability:
-            raise AgentException("CustomMessage capability is missing")
-        logger.debug(
-            "handling custom message capability=%s type=%s data_len=%s",
-            capability,
-            str(custom_message.type or ""),
-            len(bytes(custom_message.data or b"")),
-        )
-
-        handler = create_handler(
-            capability,
-            self._custom_handler_folder,
-            client_data=self.data,
-            factory_lookup=self._custom_handler_lookup,
-            allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
-        )
-        logger.debug(
-            "custom handler lookup initial capability=%s found=%s",
-            capability,
-            handler.__class__.__name__ if handler is not None else None,
-        )
-        if handler is None:
-            self._custom_handler_lookup = build_factory_lookup(
-                self._custom_handler_folder,
-                client_data=self.data,
-            )
-            handler = create_handler(
-                capability,
-                self._custom_handler_folder,
-                client_data=self.data,
-                factory_lookup=self._custom_handler_lookup,
-                allow_custom_capabilities=bool(self.config.allow_custom_capabilities),
-            )
-            logger.debug(
-                "custom handler lookup after refresh capability=%s found=%s",
-                capability,
-                handler.__class__.__name__ if handler is not None else None,
-            )
-        if handler is None:
-            raise AgentException(
-                f"No command handler registered for capability: {capability}"
-            )
-
-        handler.set_custom_message_handler(custom_message)
-        logger.debug(
-            "executing custom handler capability=%s handler=%s",
-            capability,
-            handler.__class__.__name__,
-        )
-        command_error = handler.execute(self)
-        if command_error is not None:
-            raise AgentException(str(command_error))
-
-    async def _heartbeat_loop(self, port: int) -> None:
-        """Run a periodic polling loop that updates last heartbeat results.
-
-        Args:
-            port: Local agent HTTP status port used for heartbeat polling.
-        """
-        logger = logging.getLogger(__name__)
-        interval = max(0, int(self.config.heartbeat_frequency) - HEARTBEAT_SKEW_SECONDS)
-        logger.debug("Heartbeat cycle start - checking every %s", interval)
-        try:
-            while self.data.allow_heartbeat:
-                await asyncio.sleep(interval)
-                if check_semaphore():
-                    await self._send_disconnect_with_timeout()
-                    self.data.allow_heartbeat = False
-                try:
-                    with self.data.process_lock:
-                        results, codes = self.poll_local_status_with_codes(port)
-                        self.data.last_heartbeat_results.clear()
-                        self.data.last_heartbeat_results.update(results)
-                        self.add_agent_version(port)
-                        self.data.last_heartbeat_http_codes = codes
-                    if self.config.log_agent_api_responses and self.data.logFLB:
-                        logger.debug("Heartbeat outcome --> %s", results)
-
-                    logger.info("Heartbeat response codes: %s", codes)
-
-                except KeyboardInterrupt as kb:
-                    logger.error("Error - a disturbance in the force\n %s", kb)
-                    self.data.allow_heartbeat = False
-                    await self._send_disconnect_with_timeout()
-                    break
-                except Exception as err:  # pylint: disable=broad-exception-caught
-                    logger.error("Something stumbled - we catch and carry on\n %s", err)
-                    self.data.last_heartbeat_results = None
-                    self.data.last_heartbeat_http_codes = None
-
-                self._handle_server_to_agent(await self.send())
-        except BaseException as base_err:  # pylint: disable=broad-exception-caught
-            await self._send_disconnect_with_timeout()
-            logger.error(
-                "heartbeat outer error trap triggered by:\n%s\n %s",
-                base_err,
-                traceback.format_exc(),
-            )
-            print("...ouch, bye")
-
-
 class OpAMPClient(AbstractOpAMPClient):
     """Default concrete OpAMP client implementation."""
 
     def get_custom_handler_folder(self) -> pathlib.Path:
         """Return the default custom-handler folder bundled with the consumer."""
         return pathlib.Path(__file__).resolve().parent / "custom_handlers"
-
-
-def check_semaphore() -> bool:
-    """Return True when the supervisor semaphore file exists on local disk."""
-    if os.path.isfile("OpAMPSupervisor.signal"):
-        logging.getLogger(__name__).warning("Spotted Semaphore file")
-        return True
-    return False
-
-
-_COMMENT_KV = re.compile(
-    rf"^\s*#\s*(?P<key>agent_description|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
-    r"[:=]\s*(?P<value>.+?)\s*$",
-    re.IGNORECASE,
-)
-_AGENT_CONFIG_KV = re.compile(
-    r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
-    re.IGNORECASE,
-)
-
-
-def _apply_agent_comment(
-    config: consumer_config.ConsumerConfig,
-    logger: logging.Logger,
-    match: re.Match[str],
-) -> None:
-    """Apply supported metadata comment values to the consumer config."""
-    key = match.group("key").lower()
-    value = match.group("value")
-    if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
-        value = resolve_service_instance_id_template(value)
-    config[key] = value
-    logger.info("located >%s< with value >%s<", key, value)
-
-
-def _apply_agent_setting(
-    config: consumer_config.ConsumerConfig,
-    logger: logging.Logger,
-    match: re.Match[str],
-) -> None:
-    """Apply supported Fluent Bit HTTP settings to the consumer config."""
-    key = match.group("key").lower()
-    value = match.group("value").strip()
-    if key == KEY_HTTP_PORT:
-        port_value = int(value)
-        config.client_status_port = port_value
-        config.agent_http_port = port_value
-    elif key == KEY_HTTP_LISTEN:
-        config.agent_http_listen = value
-    elif key == KEY_HTTP_SERVER:
-        config.agent_http_server = value
-    else:
-        config[key] = value
-    logger.info("located >%s< with value >%s<", key, value)
-
-
-def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
-    """Load Fluent Bit config values and agent metadata into the config object.
-
-    Args:
-        config: Consumer configuration to enrich from Fluent Bit config file content.
-
-    Returns:
-        The same config object with parsed HTTP and metadata values applied.
-    """
-    logger = logging.getLogger(__name__)
-    logger.warning("All config is %s", config)
-    path = config.agent_config_path
-    if not path:
-        raise ValueError(f"{CFG_AGENT_CONFIG_PATH} is not set")
-
-    with open(path, encoding=UTF8_ENCODING) as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            comment_match = _COMMENT_KV.match(raw_line)
-            if comment_match is not None:
-                _apply_agent_comment(config, logger, comment_match)
-                continue
-            config_match = _AGENT_CONFIG_KV.match(raw_line)
-            if config_match is not None:
-                _apply_agent_setting(config, logger, config_match)
-
-    return config
-
-
-def build_minimal_agent(
-    instance_uid: bytes | None = None,
-    capabilities: int | None = None,
-) -> opamp_pb2.AgentToServer:
-    """Create a minimal AgentToServer message with configured capabilities.
-
-    Args:
-        instance_uid: Optional instance UID bytes to assign.
-        capabilities: Optional capabilities bitmask.
-
-    Returns:
-        Minimal AgentToServer protobuf message for tests or bootstrap flows.
-    """
-    msg = opamp_pb2.AgentToServer()
-    if instance_uid is not None:
-        msg.instance_uid = instance_uid
-    msg.capabilities = capabilities or 0
-    return msg
-
-
-async def run_client(client) -> None:
-    """Trigger a single send cycle for the provided client instance.
-
-    Args:
-        client: OpAMP client object exposing an async `send()` method.
-    """
-    await client.send()
-
-
-def _force_exit_on_lingering_threads() -> None:
-    """Force process exit when non-daemon threads keep the interpreter alive."""
-    alive_threads = [
-        thread
-        for thread in threading.enumerate()
-        if thread is not threading.main_thread()
-        and thread.is_alive()
-        and not thread.daemon
-    ]
-    if not alive_threads:
-        return
-    print(
-        "forcing process exit; non-daemon threads still alive: %s",
-        [thread.name for thread in alive_threads],
-    )
-    os._exit(0)
 
 
 def _get_local_ip() -> str:
@@ -1321,120 +651,30 @@ def _get_local_mac() -> str:
 
 def resolve_service_instance_id_template(value: str | None) -> str | None:
     """Resolve service_instance_id template tokens into runtime host values."""
-    if value is None:
-        return None
-    resolved = str(value)
-    if TOKEN_IP in resolved:
-        resolved = resolved.replace(TOKEN_IP, _get_local_ip())
-    if TOKEN_HOSTNAME in resolved:
-        resolved = resolved.replace(TOKEN_HOSTNAME, socket.gethostname())
-    if TOKEN_MAC_ADDR in resolved:
-        resolved = resolved.replace(TOKEN_MAC_ADDR, _get_local_mac())
-    return resolved
+    return resolve_service_instance_id_template_with_values(
+        value=value,
+        hostname=socket.gethostname(),
+        ip_address=_get_local_ip(),
+        mac_address=_get_local_mac(),
+    )
+
+
+def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
+    """Load Fluent Bit config values and agent metadata into the config object."""
+    return _bootstrap_load_agent_config(
+        config,
+        resolve_service_instance_id_template_fn=resolve_service_instance_id_template,
+    )
 
 
 def main() -> None:
-    """Load config, read Fluent Bit settings, launch Fluent Bit, start heartbeat."""
-    try:
-        tracemalloc.start()
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("-h", "--help", action="store_true")
-        parser.add_argument("--config-path", type=str)
-        parser.add_argument("--server-url", type=str)
-        parser.add_argument("--server-port", type=int)
-        parser.add_argument(
-            "--agent-config-path",
-            "--fluentbit-config-path",
-            dest="agent_config_path",
-            type=str,
-        )
-        parser.add_argument(
-            "--agent-additional-params",
-            "--additional-agent-params",
-            "--additional-fluent-bit-params",
-            dest="agent_additional_params",
-            nargs="*",
-        )
-        parser.add_argument("--heartbeat-frequency", type=int)
-        parser.add_argument(
-            "--log-level",
-            type=str,
-            help="logging level name override (for example DEBUG, INFO, WARNING)",
-        )
-        parser.add_argument(
-            "--full-update-controller",
-            type=str,
-            help='JSON string for full update controller (for example {"fullResendAfter":1})',
-        )
-        args = parser.parse_args()
-        effective_config_path = consumer_config.get_effective_config_path(
-            args.config_path
-        )
-        logging.getLogger(__name__).info(
-            "using consumer config path: %s",
-            effective_config_path,
-        )
-
-        config = consumer_config.load_config_with_overrides(
-            config_path=effective_config_path,
-            server_url=args.server_url,
-            server_port=args.server_port,
-            agent_config_path=args.agent_config_path,
-            agent_additional_params=args.agent_additional_params,
-            heartbeat_frequency=args.heartbeat_frequency,
-            log_level=args.log_level,
-            full_update_controller=args.full_update_controller,
-        )
-        resolved_log_level = consumer_config.resolve_log_level(config.log_level)
-        root_logger = logging.getLogger()
-        # Do not force-reconfigure handlers here. In tests/tools, handlers may be
-        # preinstalled (for capture), and replacing them can break stream lifecycle.
-        if not root_logger.handlers:
-            logging.basicConfig(level=resolved_log_level)
-        else:
-            root_logger.setLevel(resolved_log_level)
-        logger = logging.getLogger(__name__)
-
-        if args.help:
-            print(
-                json.dumps(
-                    _config_parameters_payload(config),
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
-            return
-
-        logger.info("about to process FLB config")
-        config = load_agent_config(config)
-
-        if config.client_status_port is None:
-            raise ValueError("client_status_port not found in Fluent Bit config")
-
-        if config.server_url is None and config.server_port is not None:
-            config.server_url = f"{LOCALHOST_BASE}:{config.server_port}"
-        if config.server_url is None:
-            raise ValueError("server_url is not configured")
-
-        logger.debug(msg="setting up OpAMP")
-        client = OpAMPClient(config.server_url, config)
-
-        client.launch_agent_process()
-        client.add_agent_version(config.client_status_port)
-
-        logger.info("introducing self to server")
-        asyncio.run(run_client(client))
-
-        asyncio.run(client._heartbeat_loop(config.client_status_port))
-        client.terminate_agent_process()
-
-    except KeyboardInterrupt as kb:
-        print(f"... bzzzz keyboard\n %s", kb)
-    except SystemExit as sys_exit:
-        print(f"... bzzzz brutal exit\n %s", sys_exit)
-
-    except:  # pylint: disable=bare-except
-        print("... bzzzzzzzzzzz")
+    """Load config, start Fluent Bit client runtime, and run heartbeat loop."""
+    run_default_client_main(
+        client_class=OpAMPClient,
+        config_parameters_payload_builder=_config_parameters_payload,
+        load_agent_config_fn=load_agent_config,
+        localhost_base=LOCALHOST_BASE,
+    )
 
 
 if __name__ == "__main__":
