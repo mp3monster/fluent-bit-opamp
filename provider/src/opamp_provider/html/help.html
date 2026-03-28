@@ -90,6 +90,7 @@
       <li>Red rows are past the significant comms threshold.</li>
       <li>Rows with pending config or commands show a colored border (pending indicator).</li>
       <li>The pending indicator means the server has queued a change for that agent but has not yet sent it.</li>
+      <li>Until a client reports <code>service.instance.id</code>, the UI uses the OpAMP unique ID (<code>instance_uid</code>) as the service instance name/display ID.</li>
       <li>Disconnected status means the agent explicitly sent an OpAMP disconnect message and will be purged after the configured retention period.</li>
       <li>Disconnected agents are excluded from late/overdue counts and are tinted electric blue in the table.</li>
     </ul>
@@ -104,20 +105,41 @@
       </div>
     </div>
     <section class="custom-commands">
-      <h2>Global Settings Reference</h2>
+      <h2>Main Page Right-Click Options</h2>
       <p>
-        The <strong>Global Settings</strong> panel lets you control server-side communication
-        thresholds and default client heartbeat behavior from the UI.
+        On the main client table, right-click a client row to open the context menu.
       </p>
       <ul class="command-list">
-        <li><strong>ServerSettings:</strong> Updates delayed/significant communication thresholds used by status highlighting and saves the values to <code>opamp.json</code>.</li>
-        <li><strong>ClientSettings:</strong> Updates the default heartbeat frequency value tracked by the provider for clients.</li>
+        <li><strong>Remove Client:</strong> Removes that client record from provider memory.</li>
+        <li><strong>Issue New Unique ID:</strong> Requests a new OpAMP instance UID for that client.</li>
       </ul>
+    </section>
+    <section class="custom-commands">
+      <h2>Global Settings Overview</h2>
+      <p>
+        Use the <strong>Global Settings</strong> button in the main header to open provider-wide settings.
+        The dialog has two tabs: <strong>ServerSettings</strong> and <strong>ClientSettings</strong>.
+      </p>
+      <ul class="command-list">
+        <li><strong>ServerSettings tab:</strong> Communication thresholds and provider event-history size.</li>
+        <li><strong>ClientSettings tab:</strong> Default client heartbeat frequency managed by the provider.</li>
+      </ul>
+    </section>
+    <section class="custom-commands">
+      <h2>Global Settings Reference</h2>
       <ul class="command-list">
         <li><strong>delayed_comms_seconds</strong><br>__HELP_DELAYED_COMMS_SECONDS__</li>
         <li><strong>significant_comms_seconds</strong><br>__HELP_SIGNIFICANT_COMMS_SECONDS__</li>
         <li><strong>client_event_history_size</strong><br>__HELP_CLIENT_EVENT_HISTORY_SIZE__</li>
         <li><strong>default_heartbeat_frequency</strong><br>__HELP_DEFAULT_HEARTBEAT_FREQUENCY__</li>
+      </ul>
+    </section>
+    <section class="custom-commands">
+      <h2>Global Settings Save Actions</h2>
+      <ul class="command-list">
+        <li><strong>OK:</strong> Applies changes from the active tab to live provider settings.</li>
+        <li><strong>OK + Save:</strong> Applies server settings and persists them to <code>opamp.json</code>.</li>
+        <li><strong>Cancel:</strong> Closes the dialog without applying pending edits.</li>
       </ul>
       <p>
         Note: Whether a client permanently stores heartbeat-related changes is client-specific behavior.
@@ -128,6 +150,10 @@
     <section class="custom-commands">
       <h2>Provider Config Editability</h2>
       <p>The list below shows which provider configuration values are currently editable directly in the UI.</p>
+      <p>
+        Security note: Not all server settings are exposed for UI control. Some values remain
+        configuration-file or deployment managed to reduce operational and security risk.
+      </p>
       <ul class="command-list">
         <li><strong>delayed_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>significant_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
