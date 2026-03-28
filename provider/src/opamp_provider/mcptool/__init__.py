@@ -28,11 +28,14 @@ be exposed over SSE and/or Streamable HTTP.
 
 from __future__ import annotations
 
+import json
 import logging
+from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Literal
 
 from quart import Quart
 
+from opamp_provider import auth as provider_auth
 from opamp_provider.mcptool.routes import mcpserver, mcptool_blueprint
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,37 @@ def register_mcp_transport(
     quart_asgi_app = app.asgi_app
     sse_prefixes = (normalized_sse, "/messages")
 
+    async def _send_auth_rejection(
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+        decision: provider_auth.AuthDecision,
+    ) -> None:
+        payload = json.dumps({"error": decision.error or "unauthorized"}).encode("utf-8")
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode("utf-8")),
+        ]
+        if decision.status_code == HTTPStatus.UNAUTHORIZED:
+            headers.append(
+                (
+                    b"www-authenticate",
+                    provider_auth.WWW_AUTHENTICATE_BEARER.encode("utf-8"),
+                )
+            )
+        await send(
+            {
+                "type": "http.response.start",
+                "status": int(decision.status_code),
+                "headers": headers,
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": payload,
+                "more_body": False,
+            }
+        )
+
     async def _dispatch(  # type: ignore[override]
         scope: dict[str, Any],
         receive: Callable[[], Awaitable[dict[str, Any]]],
@@ -118,9 +152,19 @@ def register_mcp_transport(
                 if mode == "sse" and any(
                     _path_matches_prefix(path, prefix) for prefix in sse_prefixes
                 ):
+                    if scope_type == "http":
+                        decision = provider_auth.evaluate_asgi_scope_auth(scope)
+                        if not decision.allowed:
+                            await _send_auth_rejection(send, decision)
+                            return
                     await mcp_asgi_app(scope, receive, send)
                     return
                 if mode == "streamable-http" and _path_matches_prefix(path, normalized_streamable):
+                    if scope_type == "http":
+                        decision = provider_auth.evaluate_asgi_scope_auth(scope)
+                        if not decision.allowed:
+                            await _send_auth_rejection(send, decision)
+                            return
                     await mcp_asgi_app(scope, receive, send)
                     return
 

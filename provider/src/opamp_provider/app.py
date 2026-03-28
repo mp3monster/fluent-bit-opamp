@@ -29,6 +29,7 @@ from quart import Quart, Response, jsonify, redirect, request, websocket
 from werkzeug.exceptions import HTTPException
 
 from opamp_provider import config as provider_config
+from opamp_provider import auth as provider_auth
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.commands import (
     command_object_factory,
@@ -154,6 +155,23 @@ async def handle_unexpected_error(error: Exception) -> Response:
         return error
     logger.exception("Unhandled app error", exc_info=error)
     return jsonify({"error": "internal server error"}), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@app.before_request
+async def enforce_bearer_auth() -> Response | None:
+    """Apply optional bearer-token auth to configured protected paths."""
+    decision = provider_auth.evaluate_bearer_auth(
+        path=request.path,
+        method=request.method,
+        authorization_header=request.headers.get("Authorization"),
+        remote_addr=request.remote_addr,
+    )
+    if decision.allowed:
+        return None
+    response = jsonify({"error": decision.error})
+    if decision.status_code == HTTPStatus.UNAUTHORIZED:
+        response.headers["WWW-Authenticate"] = provider_auth.WWW_AUTHENTICATE_BEARER
+    return response, decision.status_code
 
 
 def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:

@@ -92,6 +92,23 @@ opamp-provider --config-path ./config/opamp.json --port 4320
 
 The UI includes a shutdown button that prompts for confirmation and calls the shutdown API.
 
+## Optional Bearer Authentication
+
+Provider bearer auth is environment-controlled and defaults to disabled.
+
+- `OPAMP_AUTH_MODE=disabled` (default) for local development/tests.
+- `OPAMP_AUTH_MODE=static` with `OPAMP_AUTH_STATIC_TOKEN=<secret>`.
+- `OPAMP_AUTH_MODE=jwt` with JWT settings (for example Keycloak issuer/audience).
+
+Protected path prefixes default to:
+
+- `/tool`
+- `/sse`
+- `/messages`
+- `/mcp`
+
+See [docs/authentication.md](../docs/authentication.md) for full setup, Keycloak Docker script usage, and MCP token examples.
+
 ## Shutdown API
 
 ```

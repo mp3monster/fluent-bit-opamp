@@ -103,6 +103,28 @@
       color: var(--muted);
     }
 
+    .controls .token-input {
+      min-width: 28ch;
+      text-align: left;
+    }
+
+    .controls .token-button {
+      border: 1px solid var(--border);
+      background: #eef2ff;
+      color: #2f3f8f;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .controls .token-status {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
     input, select, textarea {
       font-family: inherit;
       padding: 8px 10px;
@@ -684,6 +706,12 @@
       <label>Page size
         <input id="pageSizeInput" class="short-input" type="number" min="5" value="20" />
       </label>
+      <label>Bearer Token
+        <input id="authTokenInput" class="token-input" type="password" placeholder="Optional for secured endpoints" autocomplete="off" />
+      </label>
+      <button id="applyAuthTokenBtn" class="token-button" type="button">Set Token</button>
+      <button id="clearAuthTokenBtn" class="token-button" type="button">Clear Token</button>
+      <span id="authTokenStatus" class="token-status">Token: not set</span>
       <span style="color: var(--muted);">Click headers to sort.</span>
     </div>
     <table class="table fade-in">
@@ -946,6 +974,7 @@
       significant: 300,
       clientEventHistorySize: 50,
       defaultHeartbeatFrequency: 30,
+      authToken: "",
       timer: null,
     };
 
@@ -959,6 +988,10 @@
     const pageJump = document.getElementById("pageJump");
     const refreshInput = document.getElementById("refreshInput");
     const pageSizeInput = document.getElementById("pageSizeInput");
+    const authTokenInput = document.getElementById("authTokenInput");
+    const applyAuthTokenBtn = document.getElementById("applyAuthTokenBtn");
+    const clearAuthTokenBtn = document.getElementById("clearAuthTokenBtn");
+    const authTokenStatus = document.getElementById("authTokenStatus");
     const modal = document.getElementById("modal");
     const modalCard = document.getElementById("modalCard");
     const modalFields = document.getElementById("modalFields");
@@ -1047,6 +1080,7 @@
         description: "Request a replacement OpAMP instance UID for this client.",
       },
     ];
+    const AUTH_TOKEN_STORAGE_KEY = "opamp_ui_bearer_token";
 
     let activeClient = null;
     let contextClient = null;
@@ -1115,6 +1149,18 @@
         state.page = 1;
         renderTable();
       }
+    });
+    applyAuthTokenBtn.addEventListener("click", () => {
+      setAuthToken(authTokenInput.value);
+    });
+    clearAuthTokenBtn.addEventListener("click", () => {
+      authTokenInput.value = "";
+      setAuthToken("");
+    });
+    authTokenInput.addEventListener("keydown", event => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      setAuthToken(authTokenInput.value);
     });
 
     tabButtons.forEach(btn => {
@@ -1197,7 +1243,7 @@
     });
 
     async function fetchSettings() {
-      const resp = await fetch("/api/settings/comms");
+      const resp = await apiFetch("/api/settings/comms");
       if (!resp.ok) return;
       const data = await resp.json();
       state.delayed = data.delayed_comms_seconds ?? 60;
@@ -1206,7 +1252,7 @@
     }
 
     async function fetchClientSettings() {
-      const resp = await fetch("/api/settings/client");
+      const resp = await apiFetch("/api/settings/client");
       if (!resp.ok) return;
       const data = await resp.json();
       const defaultHeartbeatFrequency = parseInt(
@@ -1220,7 +1266,7 @@
 
     async function fetchGlobalSettingsHelp() {
       applyGlobalSettingsHelp(DEFAULT_GLOBAL_SETTINGS_HELP);
-      const resp = await fetch("/api/help/global-settings");
+      const resp = await apiFetch("/api/help/global-settings");
       if (!resp.ok) return;
       const data = await resp.json();
       const fields = data && typeof data.fields === "object" ? data.fields : {};
@@ -1327,14 +1373,14 @@
       const query = clientId
         ? `?client_id=${encodeURIComponent(clientId)}`
         : "";
-      const resp = await fetch(`/api/commands/custom${query}`);
+      const resp = await apiFetch(`/api/commands/custom${query}`);
       if (!resp.ok) return;
       const data = await resp.json();
       state.customCommands = Array.isArray(data.commands) ? data.commands : [];
     }
 
     async function fetchClients() {
-      const resp = await fetch("/api/clients");
+      const resp = await apiFetch("/api/clients");
       if (!resp.ok) return;
       const data = await resp.json();
       state.clients = data.clients || [];
@@ -1755,7 +1801,7 @@
         || proposedSignificant !== state.significant
         || proposedClientEventHistorySize !== state.clientEventHistorySize
       ) {
-        const commsResp = await fetch("/api/settings/comms", {
+        const commsResp = await apiFetch("/api/settings/comms", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1774,7 +1820,7 @@
         state.clientEventHistorySize = parseInt(commsPayload.client_event_history_size, 10);
       }
       if (proposedValue !== state.defaultHeartbeatFrequency) {
-        const resp = await fetch("/api/settings/client", {
+        const resp = await apiFetch("/api/settings/client", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ default_heartbeat_frequency: proposedValue }),
@@ -1820,7 +1866,7 @@
         return;
       }
 
-      const commsResp = await fetch("/api/settings/comms", {
+      const commsResp = await apiFetch("/api/settings/comms", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2099,7 +2145,7 @@
       }
       const ok = window.confirm(`Queue command "${command}" for client ${target.client_id}?`);
       if (!ok) return;
-      const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
+      const resp = await apiFetch(`/api/clients/${target.client_id}/commands`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2171,7 +2217,7 @@
       );
       if (!ok) return;
 
-      const resp = await fetch(`/api/clients/${target.client_id}/commands`, {
+      const resp = await apiFetch(`/api/clients/${target.client_id}/commands`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pairs }),
@@ -2199,7 +2245,7 @@
         window.alert("Client heartbeat frequency must be a positive integer.");
         return;
       }
-      const resp = await fetch(`/api/clients/${target.client_id}/heartbeat-frequency`, {
+      const resp = await apiFetch(`/api/clients/${target.client_id}/heartbeat-frequency`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ heartbeat_frequency: proposedValue }),
@@ -2226,7 +2272,7 @@
         return;
       }
       if (configValue) {
-        await fetch(`/api/clients/${activeClient.client_id}/config`, {
+        await apiFetch(`/api/clients/${activeClient.client_id}/config`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ config: configValue }),
@@ -2327,7 +2373,7 @@
       if (!contextClient) return;
       const ok = window.confirm(`Remove client ${contextClient.client_id} from the server?`);
       if (!ok) return;
-      const resp = await fetch(`/api/clients/${contextClient.client_id}`, { method: "DELETE" });
+      const resp = await apiFetch(`/api/clients/${contextClient.client_id}`, { method: "DELETE" });
       hideContextMenu();
       if (!resp.ok) {
         window.alert("Failed to remove client.");
@@ -2342,7 +2388,7 @@
         `Issue a new unique ID for client ${target.client_id}?`
       );
       if (!ok) return;
-      const resp = await fetch(`/api/clients/${target.client_id}/identify`, {
+      const resp = await apiFetch(`/api/clients/${target.client_id}/identify`, {
         method: "POST",
       });
       if (options.closeContextMenu !== false) {
@@ -2386,7 +2432,7 @@
       shutdownButton.disabled = true;
       shutdownButton.textContent = "Shutting down...";
       try {
-        const resp = await fetch("/api/shutdown", {
+        const resp = await apiFetch("/api/shutdown", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ confirm: true }),
@@ -2406,7 +2452,53 @@
       state.timer = setInterval(fetchClients, state.refreshSeconds * 1000);
     }
 
+    function loadStoredAuthToken() {
+      try {
+        return String(window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "").trim();
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    function updateAuthTokenStatus() {
+      authTokenStatus.textContent = state.authToken ? "Token: set" : "Token: not set";
+    }
+
+    function setAuthToken(token) {
+      state.authToken = String(token || "").trim();
+      try {
+        if (state.authToken) {
+          window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, state.authToken);
+        } else {
+          window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+        }
+      } catch (_error) {
+        // Ignore localStorage failures and continue with in-memory token use.
+      }
+      updateAuthTokenStatus();
+    }
+
+    function initializeAuthToken() {
+      const storedToken = loadStoredAuthToken();
+      state.authToken = storedToken;
+      authTokenInput.value = storedToken;
+      updateAuthTokenStatus();
+    }
+
+    async function apiFetch(resource, options = {}) {
+      const fetchOptions = { ...options };
+      const headers = {
+        ...(options.headers || {}),
+      };
+      if (state.authToken) {
+        headers.Authorization = `Bearer ${state.authToken}`;
+      }
+      fetchOptions.headers = headers;
+      return fetch(resource, fetchOptions);
+    }
+
     async function init() {
+      initializeAuthToken();
       await fetchGlobalSettingsHelp();
       await fetchSettings();
       await fetchClientSettings();

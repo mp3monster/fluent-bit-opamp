@@ -8,6 +8,7 @@ This table lists the helper scripts and their platform-specific names.
 | Run the OpAMP supervisor (consumer) | `scripts/run_supervisor.sh` | `scripts/run_supervisor.cmd` |
 | Run the OpAMP supervisor (Fluentd consumer) | `scripts/run_supervisor_fluentd.sh` | `scripts/run_supervisor_fluentd.cmd` |
 | Start Fluentd directly | `scripts/start_fluentd.sh` | `scripts/start_fluentd.cmd` |
+| Configure local Keycloak for JWT auth testing | `scripts/configure_keycloak.sh` | `scripts/configure_keycloak.cmd` |
 | Request server shutdown via API | `scripts/shutdown_opamp_server.sh` | `scripts/shutdown_opamp_server.cmd` |
 | Build deployable Python artifacts (provider + consumer) | `scripts/build_artifacts.sh` | `scripts/build_artifacts.cmd` |
 

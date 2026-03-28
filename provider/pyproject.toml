@@ -28,6 +28,7 @@ dependencies = [
   "protobuf>=5.27",
   "grpcio-tools>=1.60",
   "fastmcp>=2.0",
+  "PyJWT>=2.8",
 ]
 
 [project.optional-dependencies]

@@ -177,11 +177,39 @@
     <div>Licensed under Apache 2.0 • Attribution: <a href="https://mp3monster.org" target="_blank" rel="noopener noreferrer">mp3monster.org</a></div>
   </footer>
   <script>
+    const AUTH_TOKEN_STORAGE_KEY = "opamp_ui_bearer_token";
+
+    function loadStoredAuthToken() {
+      try {
+        return String(window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "").trim();
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    async function apiFetch(resource, options = {}) {
+      const token = loadStoredAuthToken();
+      const headers = {
+        ...(options.headers || {}),
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      return fetch(resource, {
+        ...options,
+        headers,
+      });
+    }
+
     async function loadCustomCommands() {
       const list = document.getElementById("customCommandList");
       try {
-        const resp = await fetch("/api/commands/custom");
+        const resp = await apiFetch("/api/commands/custom");
         if (!resp.ok) {
+          if (resp.status === 401 || resp.status === 403) {
+            list.innerHTML = "<li>Authorization required. Set a bearer token in the main UI.</li>";
+            return;
+          }
           list.innerHTML = "<li>Failed to load custom commands.</li>";
           return;
         }

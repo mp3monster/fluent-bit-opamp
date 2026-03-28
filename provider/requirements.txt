@@ -3,5 +3,6 @@ pydantic>=2.6
 protobuf>=5.27
 grpcio-tools>=1.60
 fastmcp>=2.0
+PyJWT>=2.8
 pytest>=8.0
 pytest-asyncio>=0.23
