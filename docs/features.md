@@ -82,7 +82,6 @@ Here's the markdown table for `ServerToAgent` message fields:
   
 
 ### Server Side
-* Add authentication framework for the UI and APIs - currently we operate in a Jaeger style trust arrangement
 * Implement persistence mechanism
 * UI so that specific nodes and global polling can be set
 * send configurations to multiple nodes at once

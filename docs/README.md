@@ -97,5 +97,6 @@ python3 -m opamp_consumer.client --config-path config/opamp.json
 
 - Provider Web UI: http://localhost:8080/ui
 - Help page: http://localhost:8080/help
+- Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.
 - For Windows CMD usage, the commands are similar but use `\.venv\Scripts\activate.bat` to activate the venv.
