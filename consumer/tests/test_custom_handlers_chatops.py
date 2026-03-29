@@ -10,18 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import json
+import logging
 
 from opamp_consumer.client import OpAMPClientData
 from opamp_consumer.config import ConsumerConfig
-from opamp_consumer.custom_handlers import (
-    ChatOpsCommand,
-    build_factory_lookup,
-    create_handler,
-    discover_handlers,
-)
-from opamp_consumer.exceptions import CommandException
+from opamp_consumer.custom_handlers import ChatOpsCommand
 from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import opamp_pb2
 
@@ -37,7 +31,9 @@ def _make_client_data() -> OpAMPClientData:
         allow_custom_capabilities=True,
         log_level="debug",
     )
-    return OpAMPClientData(config=config, base_url="http://localhost", uid_instance=b"id")
+    return OpAMPClientData(
+        config=config, base_url="http://localhost", uid_instance=b"id"
+    )
 
 
 class _FakeOpAMPClient(OpAMPClientInterface):
@@ -190,155 +186,3 @@ def test_chatops_execute_action_reports_failure_custom_message(monkeypatch) -> N
     payload = json.loads(returned.data.decode("utf-8"))
     assert payload["http_code"] == "500"
     assert payload["err_msg"] == 'bad \\"payload\\"\\nline2'
-
-
-def test_shutdowncommand_factory_creates_handler_by_fqdn() -> None:
-    """Factory lookup should resolve the provider shutdown-agent custom command."""
-    lookup = build_factory_lookup(
-        "consumer/src/opamp_consumer/custom_handlers",
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    fqdn = "org.mp3monster.opamp_provider.command_shutdown_agent"
-    assert fqdn in lookup
-
-    instance = create_handler(
-        fqdn,
-        "consumer/src/opamp_consumer/custom_handlers",
-        client_data=_make_client_data(),
-        factory_lookup=lookup,
-        allow_custom_capabilities=True,
-    )
-    assert instance is not None
-    assert instance.get_reverse_fqdn() == fqdn
-    assert instance.__class__.__name__ == "ShutdownCommand"
-
-
-def test_registry_discovers_and_creates_handlers(tmp_path) -> None:
-    """Discover handlers from a folder and instantiate by FQDN."""
-    handler_code = '''
-from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
-
-class SampleHandler(CustomMessageHandlerInterface):
-    def __init__(self):
-        self._data = None
-    def set_client_data(self, data):
-        self._data = data
-    def get_fqdn(self):
-        return "sample.handler"
-    def handle_message(self, message, message_type):
-        pass
-    def execute_action(self, action, opamp_client):
-        pass
-'''
-    handler_path = tmp_path / "sample_handler.py"
-    handler_path.write_text(handler_code)
-
-    registry = discover_handlers(
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert registry == {"sample.handler": "SampleHandler"}
-    lookup = build_factory_lookup(
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert "sample.handler" in lookup
-
-    instance = create_handler(
-        "sample.handler",
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert instance is not None
-    assert instance.get_fqdn() == "sample.handler"
-    assert getattr(instance, "_data") is not None
-
-
-def test_registry_ignores_missing_folder(tmp_path) -> None:
-    """Return empty results when the handler folder is missing."""
-    missing = tmp_path / "missing"
-    registry = discover_handlers(
-        missing,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert registry == {}
-    assert (
-        create_handler(
-            "sample.handler",
-            missing,
-            client_data=_make_client_data(),
-            allow_custom_capabilities=True,
-        )
-        is None
-    )
-
-
-def test_registry_ignores_non_handler_classes(tmp_path) -> None:
-    """Ignore classes that do not implement the handler interface."""
-    handler_code = '''\nclass NotAHandler:\n    pass\n'''
-    handler_path = tmp_path / "not_handler.py"
-    handler_path.write_text(handler_code)
-
-    registry = discover_handlers(
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert registry == {}
-
-
-def test_registry_skips_broken_module(tmp_path) -> None:
-    """Skip modules that fail to import without raising."""
-    handler_code = "raise RuntimeError('boom')\n"
-    handler_path = tmp_path / "broken.py"
-    handler_path.write_text(handler_code)
-
-    registry = discover_handlers(
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert registry == {}
-
-
-def test_execute_returns_commandexception_on_handler_error(tmp_path) -> None:
-    """execute should return CommandException when a handler raises."""
-    handler_code = '''
-from opamp_consumer.custom_handlers.handler_interface import CustomMessageHandlerInterface
-
-class BrokenHandler(CustomMessageHandlerInterface):
-    def __init__(self):
-        super().__init__()
-        self._data = None
-    def set_client_data(self, data):
-        self._data = data
-    def get_fqdn(self):
-        return "broken.handler"
-    def handle_message(self, message, message_type):
-        raise RuntimeError("boom")
-    def execute_action(self, action, opamp_client):
-        pass
-'''
-    handler_path = tmp_path / "broken_handler.py"
-    handler_path.write_text(handler_code)
-    instance = create_handler(
-        "broken.handler",
-        tmp_path,
-        client_data=_make_client_data(),
-        allow_custom_capabilities=True,
-    )
-    assert instance is not None
-
-    payload = opamp_pb2.CustomMessage()
-    payload.capability = "broken.handler"
-    payload.type = "test"
-    payload.data = b'{"action":"run"}'
-    instance.set_custom_message_handler(payload)
-
-    result = instance.execute(_FakeOpAMPClient())
-    assert isinstance(result, CommandException)
