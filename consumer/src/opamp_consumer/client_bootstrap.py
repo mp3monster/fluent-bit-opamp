@@ -32,14 +32,14 @@ from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.proto import opamp_pb2
 from shared.opamp_config import UTF8_ENCODING
 
-KEY_AGENT_DESCRIPTION = "agent_description"
-KEY_SERVICE_INSTANCE_ID_COMMENT = "service_instance_id"
-KEY_HTTP_PORT = "http_port"
-KEY_HTTP_LISTEN = "http_listen"
-KEY_HTTP_SERVER = "http_server"
-TOKEN_IP = "__IP__"
-TOKEN_HOSTNAME = "__hostname__"
-TOKEN_MAC_ADDR = "__mac-ad__"
+KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key carrying free-form agent description.
+KEY_SERVICE_INSTANCE_ID_COMMENT = "service_instance_id"  # Comment key for service instance template.
+KEY_HTTP_PORT = "http_port"  # Fluent Bit/agent config key for local status HTTP port.
+KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit/agent config key for bind/listen address.
+KEY_HTTP_SERVER = "http_server"  # Fluent Bit/agent config key that enables HTTP server support.
+TOKEN_IP = "__IP__"  # Template token replaced with resolved local IP.
+TOKEN_HOSTNAME = "__hostname__"  # Template token replaced with local hostname.
+TOKEN_MAC_ADDR = "__mac-ad__"  # Template token replaced with local MAC address.
 
 _COMMENT_KV = re.compile(
     rf"^\s*#\s*(?P<key>{KEY_AGENT_DESCRIPTION}|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"

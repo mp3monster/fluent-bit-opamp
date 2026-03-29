@@ -1,0 +1,47 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+agent.md
+
+consumer/test.txt
+
+proto/anyvalue.proto
+
+proto/opamp.proto
+
+*.code-workspace
+
+test.txt
+
+*.log
+
+.flake8
+
+OpAMPSupervisor.signal
+
+docs/screenshots/
+
+tools

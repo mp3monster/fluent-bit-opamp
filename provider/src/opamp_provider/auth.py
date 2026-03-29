@@ -27,21 +27,21 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency in some dev envs
     jwt = None  # type: ignore[assignment]
 
-AUTH_MODE_DISABLED = "disabled"
-AUTH_MODE_STATIC = "static"
-AUTH_MODE_JWT = "jwt"
-DEFAULT_AUTH_MODE = AUTH_MODE_DISABLED
-DEFAULT_PROTECTED_PATH_PREFIXES = ("/tool", "/sse", "/messages", "/mcp")
+AUTH_MODE_DISABLED = "disabled"  # Auth mode that bypasses bearer validation checks.
+AUTH_MODE_STATIC = "static"  # Auth mode using a single configured static bearer token.
+AUTH_MODE_JWT = "jwt"  # Auth mode validating JWT bearer tokens against JWKS.
+DEFAULT_AUTH_MODE = AUTH_MODE_DISABLED  # Default auth mode when none is configured.
+DEFAULT_PROTECTED_PATH_PREFIXES = ("/tool", "/sse", "/messages", "/mcp")  # Default route prefixes protected by bearer auth.
 
-ENV_AUTH_MODE = "OPAMP_AUTH_MODE"
-ENV_AUTH_PROTECTED_PATH_PREFIXES = "OPAMP_AUTH_PROTECTED_PATH_PREFIXES"
-ENV_AUTH_STATIC_TOKEN = "OPAMP_AUTH_STATIC_TOKEN"
-ENV_AUTH_JWT_ISSUER = "OPAMP_AUTH_JWT_ISSUER"
-ENV_AUTH_JWT_AUDIENCE = "OPAMP_AUTH_JWT_AUDIENCE"
-ENV_AUTH_JWT_JWKS_URL = "OPAMP_AUTH_JWT_JWKS_URL"
-ENV_AUTH_JWT_LEEWAY_SECONDS = "OPAMP_AUTH_JWT_LEEWAY_SECONDS"
+ENV_AUTH_MODE = "OPAMP_AUTH_MODE"  # Environment variable selecting auth mode.
+ENV_AUTH_PROTECTED_PATH_PREFIXES = "OPAMP_AUTH_PROTECTED_PATH_PREFIXES"  # Environment variable listing protected path prefixes.
+ENV_AUTH_STATIC_TOKEN = "OPAMP_AUTH_STATIC_TOKEN"  # Environment variable holding static bearer token value.
+ENV_AUTH_JWT_ISSUER = "OPAMP_AUTH_JWT_ISSUER"  # Environment variable for expected JWT issuer claim.
+ENV_AUTH_JWT_AUDIENCE = "OPAMP_AUTH_JWT_AUDIENCE"  # Environment variable for expected JWT audience claim.
+ENV_AUTH_JWT_JWKS_URL = "OPAMP_AUTH_JWT_JWKS_URL"  # Environment variable for JWKS endpoint URL.
+ENV_AUTH_JWT_LEEWAY_SECONDS = "OPAMP_AUTH_JWT_LEEWAY_SECONDS"  # Environment variable for JWT clock-skew leeway.
 
-WWW_AUTHENTICATE_BEARER = 'Bearer realm="opamp-provider"'
+WWW_AUTHENTICATE_BEARER = 'Bearer realm="opamp-provider"'  # WWW-Authenticate challenge for bearer-protected endpoints.
 
 
 @dataclass(frozen=True)
@@ -128,13 +128,13 @@ def _load_auth_settings_from_env() -> AuthSettings:
     )
 
 
-AUTH_SETTINGS = _load_auth_settings_from_env()
+AUTH_SETTINGS = _load_auth_settings_from_env()  # Module-level auth settings singleton loaded from environment.
 
 
 def reload_auth_settings() -> AuthSettings:
     """Reload environment-backed auth settings (used by tests and runtime tweaks)."""
     global AUTH_SETTINGS
-    AUTH_SETTINGS = _load_auth_settings_from_env()
+    AUTH_SETTINGS = _load_auth_settings_from_env()  # Refreshed module-level auth settings singleton.
     return AUTH_SETTINGS
 
 
@@ -320,4 +320,3 @@ def evaluate_asgi_scope_auth(scope: dict) -> AuthDecision:
         authorization_header=authorization_header,
         remote_addr=remote_addr,
     )
-

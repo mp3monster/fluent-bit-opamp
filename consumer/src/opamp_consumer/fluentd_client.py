@@ -39,16 +39,16 @@ from opamp_consumer.client import (
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
 from opamp_consumer.proto import opamp_pb2
 
-FLUENTD_CMD = "fluentd"
-FLUENTD_CONFIG_FLAG = "-c"
-FLUENTD_VERSION_FLAG = "--version"
-VALUE_AGENT_TYPE_FLUENTD = "Fluentd"
-KEY_FLUENTD_PORT = "port"
-KEY_FLUENTD_BIND = "bind"
-KEY_AGENT_DESCRIPTION = "agent_description"
-CONFIG_PATH_ARGS = ("--config-path",)
-AGENT_CONFIG_PATH_ARGS = ("--agent-config-path", "--fluentd-config-path")
-AGENT_ADDITIONAL_ARGS = ("--agent-additional-params", "--additional-fluentd-params")
+FLUENTD_CMD = "fluentd"  # Executable used to launch Fluentd.
+FLUENTD_CONFIG_FLAG = "-c"  # CLI flag for Fluentd config file path.
+FLUENTD_VERSION_FLAG = "--version"  # CLI flag that prints Fluentd version.
+VALUE_AGENT_TYPE_FLUENTD = "Fluentd"  # Agent type value reported in AgentDescription.
+KEY_FLUENTD_PORT = "port"  # Fluentd monitor-agent config key for HTTP port.
+KEY_FLUENTD_BIND = "bind"  # Fluentd monitor-agent config key for listen/bind host.
+KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key for agent description metadata.
+CONFIG_PATH_ARGS = ("--config-path",)  # Supported CLI aliases for config file path.
+AGENT_CONFIG_PATH_ARGS = ("--agent-config-path", "--fluentd-config-path")  # CLI aliases for fluentd config path.
+AGENT_ADDITIONAL_ARGS = ("--agent-additional-params", "--additional-fluentd-params")  # CLI aliases for extra Fluentd args.
 
 _FLUENTD_MONITOR_AGENT_KV = re.compile(
     r"^\s*(?P<key>port|bind)\s+(?P<value>\S.*)$",

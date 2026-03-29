@@ -23,16 +23,16 @@ from opamp_provider.command_interface import (
 )
 from opamp_provider.proto import opamp_pb2
 
-CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
-CHATOPCOMMAND_TYPE = "request"
-COMMAND_CLASSIFIER = "custom"
-COMMAND_DESCRIPTION = "custom chatopcommand queued"
-COMMAND_DISPLAY_NAME = "ChatOps Command"
-COMMAND_ACTION = "chatopcommand"
-PARAMETER_ACTION_NAME = "tag"
-PARAMETER_ACTION_TYPE = "string"
-PARAMETER_ACTION_DESCRIPTION = "Custom command operation name."
-ENCODING_UTF8 = "utf-8"
+CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"  # Capability FQDN routed to ChatOps handlers on the client.
+CHATOPCOMMAND_TYPE = "request"  # CustomMessage.type value for chatops requests.
+COMMAND_CLASSIFIER = "custom"  # Command classifier for provider routing.
+COMMAND_DESCRIPTION = "custom chatopcommand queued"  # Event/queue description text.
+COMMAND_DISPLAY_NAME = "ChatOps Command"  # Display name presented in UI metadata.
+COMMAND_ACTION = "chatopcommand"  # Action name used for command dispatch and filtering.
+PARAMETER_ACTION_NAME = "tag"  # User parameter name that selects ChatOps operation.
+PARAMETER_ACTION_TYPE = "string"  # User parameter datatype metadata.
+PARAMETER_ACTION_DESCRIPTION = "Custom command operation name."  # User parameter help text.
+ENCODING_UTF8 = "utf-8"  # Text encoding used for serialized custom payload bytes.
 
 
 def _utc_now() -> datetime:

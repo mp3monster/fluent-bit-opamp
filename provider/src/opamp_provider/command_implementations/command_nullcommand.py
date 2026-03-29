@@ -27,10 +27,10 @@ from opamp_provider.command_interface import (
 )
 from opamp_provider.proto import opamp_pb2
 
-NULLCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.nullcommand"
-NULLCOMMAND_TYPE = "Null Command"
-NULLCOMMAND_CLASSIFIER = "custom"
-NULLCOMMAND_ACTION = "nullcommand"
+NULLCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.nullcommand"  # Capability FQDN routed to the null-command handler.
+NULLCOMMAND_TYPE = "Null Command"  # CustomMessage.type value for null-command payloads.
+NULLCOMMAND_CLASSIFIER = "custom"  # Command classifier for provider routing.
+NULLCOMMAND_ACTION = "nullcommand"  # Action name used for queueing and dispatch.
 
 
 def _utc_now() -> datetime:

@@ -19,9 +19,9 @@ import pathlib
 import sys
 
 
-ROOT_PATH = pathlib.Path(__file__).resolve().parents[1]
-PROVIDER_SRC = ROOT_PATH / "provider" / "src"
-CONSUMER_SRC = ROOT_PATH / "consumer" / "src"
+ROOT_PATH = pathlib.Path(__file__).resolve().parents[1]  # Repository root path.
+PROVIDER_SRC = ROOT_PATH / "provider" / "src"  # Provider source path added to import search path.
+CONSUMER_SRC = ROOT_PATH / "consumer" / "src"  # Consumer source path added to import search path.
 for path in (ROOT_PATH, PROVIDER_SRC, CONSUMER_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))

@@ -60,25 +60,25 @@ class ServerCapabilities(IntEnum):
     AcceptsConnectionSettingsRequest = 0x00000040
 
 
-OPAMP_HTTP_PATH = "/v1/opamp"
-UTF8_ENCODING = "utf-8"
-OPAMP_TRANSPORT_HEADER_NONE = 0
-PB_FIELD_INSTANCE_UID = "instance_uid"
-PB_FIELD_ERROR_RESPONSE = "error_response"
-PB_FIELD_REMOTE_CONFIG = "remote_config"
-PB_FIELD_CONNECTION_SETTINGS = "connection_settings"
-PB_FIELD_PACKAGES_AVAILABLE = "packages_available"
-PB_FIELD_AGENT_IDENTIFICATION = "agent_identification"
-PB_FIELD_COMMAND = "command"
-PB_FIELD_CUSTOM_CAPABILITIES = "custom_capabilities"
-PB_FIELD_CUSTOM_MESSAGE = "custom_message"
-PB_FIELD_RETRY_INFO = "retry_info"
-PB_FIELD_AGENT_DESCRIPTION = "agent_description"
-PB_FIELD_AGENT_DISCONNECT = "agent_disconnect"
-PB_FIELD_HEALTH = "health"
-PB_FIELD_PACKAGE_STATUSES = "package_statuses"
-PB_FIELD_CONNECTION_SETTINGS_REQUEST = "connection_settings_request"
-PB_FLAG_REPORT_FULL_STATE = "ReportFullState"
+OPAMP_HTTP_PATH = "/v1/opamp"  # Default OpAMP HTTP/WebSocket endpoint path.
+UTF8_ENCODING = "utf-8"  # Canonical UTF-8 encoding name used for bytes/text conversion.
+OPAMP_TRANSPORT_HEADER_NONE = 0  # OpAMP frame header value indicating raw protobuf payload.
+PB_FIELD_INSTANCE_UID = "instance_uid"  # Agent/Server protobuf field name for instance UID.
+PB_FIELD_ERROR_RESPONSE = "error_response"  # ServerToAgent protobuf field for error payload.
+PB_FIELD_REMOTE_CONFIG = "remote_config"  # ServerToAgent protobuf field for remote config offer.
+PB_FIELD_CONNECTION_SETTINGS = "connection_settings"  # ServerToAgent protobuf field for connection settings offers.
+PB_FIELD_PACKAGES_AVAILABLE = "packages_available"  # ServerToAgent protobuf field for available packages.
+PB_FIELD_AGENT_IDENTIFICATION = "agent_identification"  # ServerToAgent protobuf field for agent identification updates.
+PB_FIELD_COMMAND = "command"  # ServerToAgent protobuf field for standard command payload.
+PB_FIELD_CUSTOM_CAPABILITIES = "custom_capabilities"  # Shared protobuf field for custom capability lists.
+PB_FIELD_CUSTOM_MESSAGE = "custom_message"  # Shared protobuf field for custom capability messages.
+PB_FIELD_RETRY_INFO = "retry_info"  # ServerErrorResponse details field containing retry hints.
+PB_FIELD_AGENT_DESCRIPTION = "agent_description"  # AgentToServer field for agent metadata description.
+PB_FIELD_AGENT_DISCONNECT = "agent_disconnect"  # AgentToServer field signaling graceful disconnect.
+PB_FIELD_HEALTH = "health"  # AgentToServer field for component/top-level health.
+PB_FIELD_PACKAGE_STATUSES = "package_statuses"  # AgentToServer field for package status reports.
+PB_FIELD_CONNECTION_SETTINGS_REQUEST = "connection_settings_request"  # AgentToServer field for connection settings requests.
+PB_FLAG_REPORT_FULL_STATE = "ReportFullState"  # ServerToAgent flag bit name that requests a full state report.
 
 
 def parse_capabilities(names: Iterable[str], enum_cls: type[IntEnum]) -> int:

@@ -27,10 +27,10 @@ except ImportError:  # pragma: no cover - Python <3.11 fallback
 class ReportingFlag(StrEnum):
     """Enumeration of provider-directed reporting controls."""
 
-    REPORT_HEALTH = "reportHealth"
-    REPORT_CAPABILITIES = "reportCapabilities"
-    REPORT_CUSTOM_CAPABILITIES = "reportCustomCapabilities"
-    REPORT_DESCRIPTION = "reportDescription"
+    REPORT_HEALTH = "reportHealth"  # Toggle sending component/top-level health payloads.
+    REPORT_CAPABILITIES = "reportCapabilities"  # Toggle sending standard OpAMP capabilities.
+    REPORT_CUSTOM_CAPABILITIES = "reportCustomCapabilities"  # Toggle sending custom capability list.
+    REPORT_DESCRIPTION = "reportDescription"  # Toggle sending AgentDescription payloads.
 
     @classmethod
     def set_all_reporting_flags(
@@ -41,4 +41,3 @@ class ReportingFlag(StrEnum):
         """Set all reporting-flag dictionary values to the provided boolean."""
         for flag in cls:
             reporting_flags[flag] = value
-

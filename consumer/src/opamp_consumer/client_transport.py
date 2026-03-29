@@ -24,9 +24,9 @@ from opamp_consumer.proto import opamp_pb2
 from opamp_consumer.transport import decode_message, encode_message
 from shared.opamp_config import OPAMP_TRANSPORT_HEADER_NONE, UTF8_ENCODING
 
-CONTENT_TYPE_PROTO = "application/x-protobuf"
-HEADER_CONTENT_TYPE = "Content-Type"
-ERR_UNSUPPORTED_HEADER = "unsupported transport header"
+CONTENT_TYPE_PROTO = "application/x-protobuf"  # MIME type for protobuf HTTP payloads.
+HEADER_CONTENT_TYPE = "Content-Type"  # HTTP header key used for request content type.
+ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Error for unknown OpAMP framing header.
 
 
 async def send_http_message(

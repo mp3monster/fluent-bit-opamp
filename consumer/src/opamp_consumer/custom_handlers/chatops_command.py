@@ -29,11 +29,11 @@ if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
     from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
-CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"
-CONTENT_TYPE_HEADER = "Content-Type"
-CONTENT_LENGTH_HEADER = "Content-Length"
-CONTENT_TYPE_JSON = "application/json"
-UTF8_ENCODING = "utf-8"
+CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"  # Capability routed to ChatOps handler.
+CONTENT_TYPE_HEADER = "Content-Type"  # HTTP header key for content type.
+CONTENT_LENGTH_HEADER = "Content-Length"  # HTTP header key for payload byte length.
+CONTENT_TYPE_JSON = "application/json"  # MIME type used for ChatOps HTTP payloads.
+UTF8_ENCODING = "utf-8"  # Text encoding used for payload serialization/parsing.
 
 
 class ChatOpsCommand(CustomMessageHandlerInterface):

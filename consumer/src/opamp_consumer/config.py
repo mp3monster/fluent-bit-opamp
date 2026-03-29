@@ -22,46 +22,42 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]
+ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]  # Repository root for resolving shared imports and defaults.
 if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
 from shared.opamp_config import AgentCapabilities, UTF8_ENCODING, parse_capabilities
 
-ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"
-DEFAULT_CONFIG_FILENAME = "opamp.json"
-DEFAULT_TRANSPORT = "http"
-CFG_CONSUMER = "consumer"
-CFG_SERVER_URL = "server_url"
-CFG_SERVER_PORT = "server_port"
-CFG_AGENT_CONFIG_PATH = "agent_config_path"
+ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"  # Environment variable overriding config file location.
+DEFAULT_CONFIG_FILENAME = "opamp.json"  # Default configuration filename.
+DEFAULT_TRANSPORT = "http"  # Fallback transport mode when none is configured.
+CFG_CONSUMER = "consumer"  # Top-level JSON section name for consumer settings.
+CFG_SERVER_URL = "server_url"  # Consumer JSON key for provider URL.
+CFG_SERVER_PORT = "server_port"  # Consumer JSON key for provider port.
+CFG_AGENT_CONFIG_PATH = "agent_config_path"  # Consumer JSON key for agent config file path.
 CFG_FLUENTBIT_CONFIG_PATH = "fluentbit_config_path"  # Backward-compatible legacy key.
-CFG_AGENT_ADDITIONAL_PARAMS = "agent_additional_params"
-CFG_ADDITIONAL_AGENT_PARAMS = (
-    "additional_agent_params"  # Backward-compatible legacy key.
-)
-CFG_ADDITIONAL_FLUENTBIT_PARAMS = (
-    "additional_fluent_bit_params"  # Backward-compatible legacy key.
-)
-CFG_HEARTBEAT_FREQUENCY = "heartbeat_frequency"
-CFG_LOG_LEVEL = "log_level"
-CFG_SERVICE_NAME = "service_name"
-CFG_SERVICE_NAMESPACE = "service_namespace"
-CFG_TRANSPORT = "transport"
-CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"
-CFG_ALLOW_CUSTOM_CAPABILITIES = "allow_custom_capabilities"
-CFG_CLIENT_STATUS_PORT = "client_status_port"
-CFG_CHAT_OPS_PORT = "chat_ops_port"
-CFG_FULL_UPDATE_CONTROLLER = "full_update_controller"
-CFG_FULL_UPDATE_CONTROLLER_TYPE = "full_update_controller_type"
-HARDWIRED_AGENT_CAPABILITY_NAMES = (
+CFG_AGENT_ADDITIONAL_PARAMS = "agent_additional_params"  # Consumer JSON key for extra agent CLI args.
+CFG_ADDITIONAL_AGENT_PARAMS = "additional_agent_params"  # Backward-compatible legacy key.
+CFG_ADDITIONAL_FLUENTBIT_PARAMS = "additional_fluent_bit_params"  # Backward-compatible legacy key.
+CFG_HEARTBEAT_FREQUENCY = "heartbeat_frequency"  # Consumer JSON key for heartbeat interval seconds.
+CFG_LOG_LEVEL = "log_level"  # Consumer JSON key for logging level override.
+CFG_SERVICE_NAME = "service_name"  # Consumer JSON key for service.name override.
+CFG_SERVICE_NAMESPACE = "service_namespace"  # Consumer JSON key for service.namespace override.
+CFG_TRANSPORT = "transport"  # Consumer JSON key for selected transport mode.
+CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"  # Consumer JSON key enabling verbose API logging.
+CFG_ALLOW_CUSTOM_CAPABILITIES = "allow_custom_capabilities"  # Consumer JSON key allowing dynamic custom capabilities.
+CFG_CLIENT_STATUS_PORT = "client_status_port"  # Consumer JSON key for local status endpoint port.
+CFG_CHAT_OPS_PORT = "chat_ops_port"  # Consumer JSON key for local ChatOps endpoint port.
+CFG_FULL_UPDATE_CONTROLLER = "full_update_controller"  # Consumer JSON key for full-update controller config object.
+CFG_FULL_UPDATE_CONTROLLER_TYPE = "full_update_controller_type"  # Consumer JSON key for full-update controller implementation type.
+HARDWIRED_AGENT_CAPABILITY_NAMES = (  # Built-in capabilities always advertised by this consumer.
     "ReportsStatus",
     "AcceptsRestartCommand",
     "ReportsHealth",
 )
-DEFAULT_LOG_LEVEL = "debug"
-DEFAULT_FULL_UPDATE_CONTROLLER: dict[str, int] = {"fullResendAfter": 1}
-DEFAULT_FULL_UPDATE_CONTROLLER_TYPE = "SentCount"
+DEFAULT_LOG_LEVEL = "debug"  # Default consumer log level when unspecified.
+DEFAULT_FULL_UPDATE_CONTROLLER: dict[str, int] = {"fullResendAfter": 1}  # Default controller settings payload.
+DEFAULT_FULL_UPDATE_CONTROLLER_TYPE = "SentCount"  # Default full-update controller implementation name.
 
 
 @dataclass
@@ -492,7 +488,7 @@ def load_config_with_overrides(
 def set_config(config: ConsumerConfig) -> None:
     """Update the module-level config singleton."""
     global CONFIG
-    CONFIG = config
+    CONFIG = config  # Module-level consumer config singleton.
 
 
-CONFIG = load_config()
+CONFIG = load_config()  # Module-level consumer config singleton loaded at import time.

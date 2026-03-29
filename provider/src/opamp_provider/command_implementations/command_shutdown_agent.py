@@ -23,10 +23,10 @@ from opamp_provider.command_interface import (
 )
 from opamp_provider.proto import opamp_pb2
 
-SHUTDOWN_AGENT_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agent"
-SHUTDOWN_AGENT_TYPE = "Shutdown Agent"
-SHUTDOWN_AGENT_CLASSIFIER = "custom"
-SHUTDOWN_AGENT_ACTION = "shutdownagent"
+SHUTDOWN_AGENT_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agent"  # Capability FQDN routed to shutdown handler.
+SHUTDOWN_AGENT_TYPE = "Shutdown Agent"  # CustomMessage.type value for shutdown requests.
+SHUTDOWN_AGENT_CLASSIFIER = "custom"  # Command classifier for provider routing.
+SHUTDOWN_AGENT_ACTION = "shutdownagent"  # Action name used for queueing and dispatch.
 
 
 def _utc_now() -> datetime:

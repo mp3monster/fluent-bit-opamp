@@ -31,13 +31,13 @@ from opamp_provider.proto import opamp_pb2
 from shared.opamp_config import anyvalue_to_string
 from shared.uuid_utils import generate_uuid7_bytes
 
-MIN_INTEGER = -sys.maxsize - 1
-FORCE_RESYNC_CLASSIFIER = "command"
-FORCE_RESYNC_ACTION = "forceresync"
-FORCE_RESYNC_EVENT_DESCRIPTION = "Force Resync"
-DEFAULT_HISTORY_MAX_EVENTS = 50
-DEFAULT_HEARTBEAT_FREQUENCY = 30
-HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION = "send heartbeatfrequency event"
+MIN_INTEGER = -sys.maxsize - 1  # Sentinel initial sequence number before first AgentToServer message.
+FORCE_RESYNC_CLASSIFIER = "command"  # Classifier used for queued force-resync command events.
+FORCE_RESYNC_ACTION = "forceresync"  # Action name used to request full-state resend from client.
+FORCE_RESYNC_EVENT_DESCRIPTION = "Force Resync"  # User-visible description for force-resync events.
+DEFAULT_HISTORY_MAX_EVENTS = 50  # Default per-client event history length when none configured.
+DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default expected heartbeat interval assigned to a client.
+HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION = "send heartbeatfrequency event"  # User-visible event text for heartbeat updates.
 
 
 def _utc_now() -> datetime:
@@ -95,8 +95,8 @@ def _normalize_custom_capabilities(capabilities: Iterable[str]) -> list[str]:
 class ClientChannel(str, Enum):
     """Allowed transport channel values stored on ClientRecord."""
 
-    HTTP = "HTTP"
-    WEBSOCKET = "websocket"
+    HTTP = "HTTP"  # Message arrived over HTTP transport.
+    WEBSOCKET = "websocket"  # Message arrived over WebSocket transport.
 
 
 class ClientRecord(BaseModel):
@@ -695,4 +695,4 @@ class ClientStore:
         return removed
 
 
-STORE = ClientStore()
+STORE = ClientStore()  # Module-level in-memory client store singleton.

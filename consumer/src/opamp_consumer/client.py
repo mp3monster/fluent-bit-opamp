@@ -65,14 +65,12 @@ from shared.opamp_config import (
 from shared.uuid_utils import generate_uuid7_bytes
 
 
-TRANSPORT_HTTP = "http"
-TRANSPORT_WEBSOCKET = "websocket"
+TRANSPORT_HTTP = "http"  # Transport selector for HTTP polling mode.
+TRANSPORT_WEBSOCKET = "websocket"  # Transport selector for WebSocket mode.
 LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
-KEY_SERVICE_INSTANCE_ID_COMMENT = (
-    "service_instance_id"  # Comment key for service instance ID.
-)
+KEY_SERVICE_INSTANCE_ID_COMMENT = "service_instance_id"  # Comment key for service instance ID.
 KEY_SERVICE_NAME = "service.name"  # Agent description service name key.
 KEY_SERVICE_NAMESPACE = "service.namespace"  # Agent description service namespace key.
 KEY_SERVICE_INSTANCE_ID = "service.instance.id"  # Agent description instance id key.
@@ -80,24 +78,16 @@ KEY_SERVICE_TYPE = "service.type"  # Agent description service type key.
 KEY_SERVICE_VERSION = "service.version"  # Agent description version key.
 KEY_HEALTH = "health"  # Heartbeat dictionary key for health endpoint results.
 VALUE_HEARTBEAT_STATUS = "heartbeat"  # Health status value used in heartbeats.
-VALUE_SUPERVISOR_NO_STATE = (
-    "Supervisor has not state"  # Error message when no heartbeat data.
-)
-CAPABILITY_PREFIX_REQUEST = (
-    "request:"  # Prefix used for custom request capability fqdn.
-)
+VALUE_SUPERVISOR_NO_STATE = "Supervisor has not state"  # Error message when no heartbeat data.
+CAPABILITY_PREFIX_REQUEST = "request:"  # Prefix used for custom request capability FQDN.
 HOST_META_KEY_OS_TYPE = "os_type"  # Host metadata key for OS type.
 HOST_META_KEY_OS_VERSION = "os_version"  # Host metadata key for OS version.
 HOST_META_KEY_HOSTNAME = "hostname"  # Host metadata key for hostname.
 # Keep a local alias for backward compatibility with existing imports/tests.
-CAPABILITIES_MAP = AGENT_CAPABILITIES_MAP
+CAPABILITIES_MAP = AGENT_CAPABILITIES_MAP  # Backward-compatible alias to shared capability map.
 LOG_INVALID_HTTP_PORT = "invalid http_port value: %s"  # Log format for bad ports.
-LOG_HTTP_SERVER_DISABLED = (
-    "http_server is not enabled: %s"  # Log format for disabled HTTP.
-)
-CONFIG_DOCS_URL = (
-    "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
-)
+LOG_HTTP_SERVER_DISABLED = "http_server is not enabled: %s"  # Log format for disabled HTTP.
+CONFIG_DOCS_URL = "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
 
 
 def _config_parameters_payload(config: ConsumerConfig) -> dict[str, object]:

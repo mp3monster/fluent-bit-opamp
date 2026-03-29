@@ -41,7 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover - dependency may be optional in 
 
 mcptool_blueprint = Blueprint("mcptool", __name__)
 mcpserver = FastMCP("OpAMP Server")
-MODEL_DUMP_MODE = "json"
+MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for MCP/HTTP JSON responses.
 
 
 def _list_connected_otel_agents_payload() -> dict[str, Any]:

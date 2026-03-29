@@ -62,30 +62,29 @@ CONTENT_TYPE_PROTO = "application/x-protobuf"  # Content-Type for protobuf paylo
 LOG_HTTP_MSG = "opamp http AgentToServer:\n%s"  # Log format for HTTP messages.
 LOG_WS_MSG = "opamp ws AgentToServer:\n%s"  # Log format for WebSocket messages.
 ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Transport header error text.
-LOG_REST_COMMAND = "queued command for client %s classifier=%s action=%s at %s"
-LOG_SEND_COMMAND = "sent command to client %s at %s"
+LOG_REST_COMMAND = "queued command for client %s classifier=%s action=%s at %s"  # Log format for queued REST-originated commands.
+LOG_SEND_COMMAND = "sent command to client %s at %s"  # Log format for command dispatch completion.
 OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header value.
-SERVER_CAPABILITIES = int(
-    ServerCapabilities.AcceptsStatus
-)  # Server advertises AcceptsStatus only.
-DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
-MODEL_DUMP_MODE = "json"
+SERVER_CAPABILITIES = int(ServerCapabilities.AcceptsStatus)  # Server advertises AcceptsStatus only.
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30  # Fallback heartbeat interval for connection settings offers.
+MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for API JSON payloads.
 
-COMMAND_RESTART = "restart"
-COMMAND_FORCE_RESYNC = "forceresync"
-COMMAND_CHATOP = "chatopcommand"
-COMMAND_SHUTDOWN_AGENT = "shutdownagent"
-COMMAND_NULLCOMMAND = "nullcommand"
-CLASSIFIER_COMMAND = "command"
-CLASSIFIER_CUSTOM_COMMAND = "custom_command"
-CLASSIFIER_CUSTOM = "custom"
-CHANNEL_HTTP = "HTTP"
-CHANNEL_WEBSOCKET = "websocket"
-ACTION_APPLY_CONFIG = "apply_config"
-ACTION_CHANGE_CONNECTIONS = "change_connections"
-ACTION_PACKAGE_AVAILABLE = "package_availabe"
-ACTION_COMMAND_AGENT = "command_agent"
-ACTION_CUSTOM_AGENT_COMMAND = "custom_agent_command"
+COMMAND_RESTART = "restart"  # Standard OpAMP restart command action name.
+COMMAND_FORCE_RESYNC = "forceresync"  # Custom action name used to trigger full state resync.
+COMMAND_CHATOP = "chatopcommand"  # Custom action name for ChatOps command dispatch.
+COMMAND_SHUTDOWN_AGENT = "shutdownagent"  # Custom action name for remote shutdown requests.
+COMMAND_NULLCOMMAND = "nullcommand"  # Custom no-op action used for testing command plumbing.
+CLASSIFIER_COMMAND = "command"  # Classifier used for standard OpAMP commands.
+CLASSIFIER_CUSTOM_COMMAND = "custom_command"  # Classifier used for provider custom command routing.
+CLASSIFIER_CUSTOM = "custom"  # Alternate classifier value emitted by some custom command builders.
+CHANNEL_HTTP = "HTTP"  # Client channel label for HTTP transport.
+CHANNEL_WEBSOCKET = "websocket"  # Client channel label for WebSocket transport.
+ACTION_APPLY_CONFIG = "apply_config"  # Next-action token to build remote_config payload.
+ACTION_CHANGE_CONNECTIONS = "change_connections"  # Next-action token to build connection settings payload.
+ACTION_PACKAGE_AVAILABLE = "package_availabe"  # Next-action token to build packages available payload.
+ACTION_COMMAND_AGENT = "command_agent"  # Next-action token to send an OpAMP standard command.
+ACTION_CUSTOM_AGENT_COMMAND = "custom_agent_command"  # Next-action token to send a custom capability command.
+# Allowed next-action values accepted by /rest/nextAction.
 ACTION_OPTIONS = {
     ACTION_APPLY_CONFIG,
     ACTION_CHANGE_CONNECTIONS,
@@ -123,9 +122,9 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
         ),
     },
 }
-_SHUTDOWN_REQUESTED = False
-_LAST_DISCONNECT_PURGE: datetime | None = None
-_WEBSOCKET_CLIENTS: dict[object, str | None] = {}
+_SHUTDOWN_REQUESTED = False  # Guard to prevent duplicate shutdown scheduling.
+_LAST_DISCONNECT_PURGE: datetime | None = None  # Timestamp of last disconnected-client purge pass.
+_WEBSOCKET_CLIENTS: dict[object, str | None] = {}  # Active websocket -> client_id mapping.
 
 # Keep in-memory client heartbeat defaults aligned with loaded provider config.
 STORE.set_default_heartbeat_frequency(

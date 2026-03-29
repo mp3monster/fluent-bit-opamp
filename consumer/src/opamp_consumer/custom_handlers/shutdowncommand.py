@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from opamp_consumer.client import OpAMPClientData
     from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
-SHUTDOWNCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agent"
+SHUTDOWNCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agent"  # Capability routed to shutdown handler.
 
 
 class ShutdownCommand(CustomMessageHandlerInterface):

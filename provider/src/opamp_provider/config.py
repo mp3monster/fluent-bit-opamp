@@ -24,31 +24,31 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
-ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]
+ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]  # Repository root used for default config path resolution.
 if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
 from shared.opamp_config import UTF8_ENCODING
 
-ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"
-CFG_PROVIDER = "provider"
-CFG_DELAYED_COMMS_SECONDS = "delayed_comms_seconds"
-CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"
-CFG_WEBUI_PORT = "webui_port"
-CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"
-CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"
-CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"
-CFG_LOG_LEVEL = "log_level"
-CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"
+ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"  # Environment variable overriding provider config file location.
+CFG_PROVIDER = "provider"  # Top-level JSON section name for provider settings.
+CFG_DELAYED_COMMS_SECONDS = "delayed_comms_seconds"  # Provider JSON key for delayed comms threshold.
+CFG_SIGNIFICANT_COMMS_SECONDS = "significant_comms_seconds"  # Provider JSON key for significant comms threshold.
+CFG_WEBUI_PORT = "webui_port"  # Provider JSON key for web UI listen port.
+CFG_MINUTES_KEEP_DISCONNECTED = "minutes_keep_disconnected"  # Provider JSON key for disconnected-client retention window.
+CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"  # Provider JSON key for Retry-After value on throttled responses.
+CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"  # Provider JSON key for per-client event history length.
+CFG_LOG_LEVEL = "log_level"  # Provider JSON key for logging level override.
+CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"  # Provider JSON key for default client heartbeat interval.
 
-DEFAULT_DELAYED_COMMS_SECONDS = 60
-DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300
-DEFAULT_WEBUI_PORT = 8080
-DEFAULT_MINUTES_KEEP_DISCONNECTED = 30
-DEFAULT_RETRY_AFTER_SECONDS = 30
-DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50
-DEFAULT_LOG_LEVEL = "INFO"
-DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY = 30
+DEFAULT_DELAYED_COMMS_SECONDS = 60  # Default delayed comms threshold in seconds.
+DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300  # Default significant comms threshold in seconds.
+DEFAULT_WEBUI_PORT = 8080  # Default web UI listening port.
+DEFAULT_MINUTES_KEEP_DISCONNECTED = 30  # Default retention window for disconnected clients in minutes.
+DEFAULT_RETRY_AFTER_SECONDS = 30  # Default Retry-After duration in seconds.
+DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50  # Default maximum number of retained client events.
+DEFAULT_LOG_LEVEL = "INFO"  # Default provider log level.
+DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default heartbeat frequency assigned to new clients.
 
 
 @dataclass(frozen=True)
@@ -193,7 +193,7 @@ def load_config_with_overrides(
 def set_config(config: ProviderConfig) -> None:
     """Update the module-level config singleton."""
     global CONFIG
-    CONFIG = config
+    CONFIG = config  # Module-level provider config singleton.
 
 
 def update_comms_thresholds(
@@ -293,4 +293,4 @@ def _build_backup_path(config_path: pathlib.Path) -> pathlib.Path:
     return backup_path
 
 
-CONFIG = load_config()
+CONFIG = load_config()  # Module-level provider config singleton loaded at import time.
