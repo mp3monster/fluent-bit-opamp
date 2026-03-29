@@ -364,6 +364,74 @@ def test_send_as_is_skips_population(monkeypatch) -> None:
     assert called["count"] == 0
 
 
+def test_send_websocket_error_falls_back_to_http(monkeypatch) -> None:
+    """WebSocket transport errors should fall back to HTTP send."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.transport = "websocket"
+    calls = {"ws": 0, "http": 0}
+
+    async def _fake_send_websocket(_msg):
+        calls["ws"] += 1
+        raise RuntimeError("ws unavailable")
+
+    async def _fake_send_http(_msg):
+        calls["http"] += 1
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(instance, "send_websocket", _fake_send_websocket)
+    monkeypatch.setattr(instance, "send_http", _fake_send_http)
+
+    import asyncio
+
+    response = asyncio.run(instance.send(opamp_pb2.AgentToServer(), send_as_is=True))
+    assert response is not None
+    assert calls == {"ws": 1, "http": 1}
+
+
+def test_send_returns_none_when_websocket_and_http_fail(monkeypatch, caplog) -> None:
+    """Send should return None when both websocket and HTTP paths fail."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.transport = "websocket"
+    caplog.set_level(logging.WARNING)
+
+    async def _fake_send_websocket(_msg):
+        raise RuntimeError("ws unavailable")
+
+    async def _fake_send_http(_msg):
+        raise RuntimeError("http unavailable")
+
+    monkeypatch.setattr(instance, "send_websocket", _fake_send_websocket)
+    monkeypatch.setattr(instance, "send_http", _fake_send_http)
+
+    import asyncio
+
+    response = asyncio.run(instance.send(opamp_pb2.AgentToServer(), send_as_is=True))
+    assert response is None
+    assert "Error sending websocket client-to-server message" in caplog.text
+    assert "Error sending HTTP client-to-server message" in caplog.text
+
+
+def test_get_config_value_missing_key_returns_empty_and_logs(caplog) -> None:
+    """Missing config keys should return an empty string and log an error."""
+    instance = client.OpAMPClient("http://localhost")
+    caplog.set_level(logging.ERROR)
+
+    value = instance._get_config_value("not_a_real_config_key")
+
+    assert value == ""
+    assert "Error handling request for not_a_real_config_key" in caplog.text
+
+
+def test_handle_server_to_agent_invalid_reply_returns_false() -> None:
+    """Invalid/malformed reply should be handled and return False."""
+    instance = client.OpAMPClient("http://localhost")
+    reply = opamp_pb2.ServerToAgent()
+
+    assert instance._handle_server_to_agent(reply) is False
+
+
 def test_populate_disconnect_sets_instance_uid() -> None:
     """Disconnect population should ensure instance UID and agent_disconnect."""
     instance = client.OpAMPClient("http://localhost")

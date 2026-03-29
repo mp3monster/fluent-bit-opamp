@@ -29,10 +29,10 @@ import uuid
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.client_bootstrap import (
-    build_minimal_agent,
+    build_minimal_agent as _bootstrap_build_minimal_agent,
     load_agent_config as _bootstrap_load_agent_config,
     resolve_service_instance_id_template_with_values,
-    run_client,
+    run_client as _bootstrap_run_client,
     run_default_client_main,
 )
 from opamp_consumer.client_mixins import ClientRuntimeMixin, ServerMessageHandlingMixin
@@ -250,20 +250,14 @@ class AbstractOpAMPClient(
         Returns:
             The string value for the key, or `""` when missing/unset.
         """
-        value: str = ""
-        try:
-            value = self.data.config[key]
-            if value is None:
-                logging.getLogger(__name__).error("Error handling request for %s", key)
-                value = ""
-            return value
-        except KeyValue as val:
+        value = getattr(self.data.config, key, None)
+        if value is None:
             logging.getLogger(__name__).error(
-                "Error handling request for %s, error is %s",
+                "Error handling request for %s",
                 key,
-                val,
             )
             return ""
+        return str(value)
 
     async def send_http(self, msg: opamp_pb2.AgentToServer) -> opamp_pb2.ServerToAgent:
         """Send an AgentToServer message via HTTP and return the response.
@@ -360,9 +354,9 @@ class AbstractOpAMPClient(
         if transport == TRANSPORT_WEBSOCKET:
             try:
                 response = await self.send_websocket(msg)
-            except:
+            except Exception as err:
                 logging.getLogger(__name__).warning(
-                    "Error sending websocket client-to-server message"
+                    "Error sending websocket client-to-server message -- %s", err
                 )
         if response is not None:
             if not send_as_is and self.data.full_update_controller is not None:
@@ -627,6 +621,7 @@ class AbstractOpAMPClient(
             HOST_META_KEY_HOSTNAME: socket.gethostname(),
         }
 
+
 class OpAMPClient(AbstractOpAMPClient):
     """Default concrete OpAMP client implementation."""
 
@@ -665,6 +660,22 @@ def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
         config,
         resolve_service_instance_id_template_fn=resolve_service_instance_id_template,
     )
+
+
+def build_minimal_agent(
+    instance_uid: bytes | None = None,
+    capabilities: int | None = None,
+) -> opamp_pb2.AgentToServer:
+    """Create a minimal AgentToServer message with configured capabilities."""
+    return _bootstrap_build_minimal_agent(
+        instance_uid=instance_uid,
+        capabilities=capabilities,
+    )
+
+
+async def run_client(client) -> None:
+    """Trigger a single send cycle for the provided client instance."""
+    await _bootstrap_run_client(client)
 
 
 def main() -> None:

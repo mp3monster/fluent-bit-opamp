@@ -10,6 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 import opamp_consumer.client as client
 from opamp_consumer.client import (
     build_minimal_agent,
@@ -98,3 +100,43 @@ HTTP_Port 2020
     load_agent_config(config)
 
     assert config.service_instance_id == "edge-01-192.168.10.5-00:11:22:33:44:55"
+
+
+def test_load_agent_config_raises_when_path_missing() -> None:
+    """Missing agent_config_path should raise ValueError."""
+    config = ConsumerConfig(
+        server_url="http://localhost",
+        agent_config_path=None,
+        agent_additional_params=[],
+        heartbeat_frequency=30,
+        agent_capabilities=0,
+        log_level="debug",
+    )
+
+    with pytest.raises(ValueError):
+        load_agent_config(config)
+
+
+def test_load_agent_config_raises_on_invalid_http_port(tmp_path) -> None:
+    """Invalid HTTP_Port values should raise ValueError during parsing."""
+    sample_path = tmp_path / "fluent-bit-invalid.conf"
+    sample_path.write_text(
+        """
+[SERVICE]
+HTTP_Server On
+HTTP_Listen 0.0.0.0
+HTTP_Port not_a_number
+""",
+        encoding=UTF8_ENCODING,
+    )
+    config = ConsumerConfig(
+        server_url="http://localhost",
+        agent_config_path=str(sample_path),
+        agent_additional_params=[],
+        heartbeat_frequency=30,
+        agent_capabilities=0,
+        log_level="debug",
+    )
+
+    with pytest.raises(ValueError):
+        load_agent_config(config)
