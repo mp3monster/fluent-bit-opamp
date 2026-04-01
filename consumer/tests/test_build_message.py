@@ -10,15 +10,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import opamp_consumer.fluentbit_client as client
 import pytest
-
-import opamp_consumer.client as client
-from opamp_consumer.client import (
+from opamp_consumer.config import ConsumerConfig
+from opamp_consumer.fluentbit_client import (
     build_minimal_agent,
     load_agent_config,
     resolve_service_instance_id_template,
 )
-from opamp_consumer.config import ConsumerConfig
+
 from shared.opamp_config import UTF8_ENCODING
 
 

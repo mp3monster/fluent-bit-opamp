@@ -5,13 +5,23 @@ This table lists the helper scripts and their platform-specific names.
 | Purpose | Linux / macOS | Windows |
 | --- | --- | --- |
 | Run the OpAMP server (provider) | `scripts/run_opamp_server.sh` | `scripts/run_opamp_server.cmd` |
-| Run the OpAMP supervisor (consumer) | `scripts/run_supervisor.sh` | `scripts/run_supervisor.cmd` |
-| Run the OpAMP supervisor (Fluentd consumer) | `scripts/run_supervisor_fluentd.sh` | `scripts/run_supervisor_fluentd.cmd` |
+| Run the OpAMP supervisor (consumer) | `scripts/run_fluentbit_supervisor.sh` | `scripts/run_fluentbit_supervisor.cmd` |
+| Run the OpAMP supervisor (Fluentd consumer) | `scripts/run_fluentd_supervisor.sh` | `scripts/run_fluentd_supervisor.cmd` |
+| Run all supervisor launch scripts (each in a new window) | `scripts/run_all_supervisors.sh` | `scripts/run_all_supervisors.cmd` |
 | Start Fluentd directly | `scripts/start_fluentd.sh` | `scripts/start_fluentd.cmd` |
 | Configure local Keycloak for JWT auth testing | `scripts/configure_keycloak.sh` | `scripts/configure_keycloak.cmd` |
 | Render Mermaid `.mmd` to PNG (local wrapper) | `scripts/render_mermaid_png.sh` | n/a |
 | Request server shutdown via API | `scripts/shutdown_opamp_server.sh` | `scripts/shutdown_opamp_server.cmd` |
 | Build deployable Python artifacts (provider + consumer) | `scripts/build_artifacts.sh` | `scripts/build_artifacts.cmd` |
+
+## Supervisor config defaults
+
+- `run_fluentbit_supervisor` resolves config in this order:
+  `tests/opamp.json` -> `config/opamp.json`.
+- `run_fluentd_supervisor` resolves config in this order:
+  `consumer/opamp-fluentd.json` -> `tests/opamp.json` -> `config/opamp.json`.
+- `run_fluentd_supervisor` and `start_fluentd` use `consumer/fluentd.conf`
+  as the canonical Fluentd config path.
 
 ## Artifact build scripts
 

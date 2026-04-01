@@ -1,6 +1,6 @@
 # Consumer Client Architecture Diagram
 
-This diagram shows the current consumer structure after splitting large `client.py` responsibilities into mixins and bootstrap helpers.
+This diagram shows the current consumer structure after splitting Fluent Bit concrete behavior into `fluentbit_client.py`, shared base behavior into `abstract_client.py`, and reusable helpers into mixins/bootstrap modules.
 
 ## Class and Module Relationships
 
@@ -125,12 +125,12 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    A["scripts/run_supervisor.sh or .cmd"] --> B["python -m opamp_consumer.client"]
-    C["scripts/run_supervisor_fluentd.sh or .cmd"] --> D["python -m opamp_consumer.fluentd_client"]
+    A["scripts/run_fluentbit_supervisor.sh or .cmd"] --> B["python -m opamp_consumer.fluentbit_client"]
+    C["scripts/run_fluentd_supervisor.sh or .cmd"] --> D["python -m opamp_consumer.fluentd_client"]
     E["installed CLI: opamp-consumer"] --> B
     F["installed CLI: opamp-consumer-fluentd"] --> D
 
-    B --> G["client.main()"]
+    B --> G["fluentbit_client.main()"]
     G --> H["client_bootstrap.run_default_client_main(...)"]
     H --> I["OpAMPClient (Fluent Bit)"]
 

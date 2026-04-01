@@ -27,7 +27,7 @@ from opamp_consumer.custom_handlers.handler_interface import (
 )
 
 if TYPE_CHECKING:
-    from opamp_consumer.client import OpAMPClientData
+    from opamp_consumer.abstract_client import OpAMPClientData
 
 
 def _load_module_from_path(path: pathlib.Path) -> types.ModuleType | None:

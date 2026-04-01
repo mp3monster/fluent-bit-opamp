@@ -24,7 +24,7 @@ from opamp_consumer.exceptions import CommandException
 from opamp_consumer.proto import opamp_pb2
 
 if TYPE_CHECKING:
-    from opamp_consumer.client import OpAMPClientData
+    from opamp_consumer.abstract_client import OpAMPClientData
     from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
 

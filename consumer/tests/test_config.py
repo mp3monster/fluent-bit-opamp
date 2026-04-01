@@ -158,7 +158,7 @@ def test_full_update_controller_type_loads_from_config(tmp_path, monkeypatch) ->
 def test_fluentd_test_config_loads_successfully() -> None:
     """Ensure the Fluentd test config file is valid for consumer config loading."""
     repo_root = Path(__file__).resolve().parents[2]
-    config_path = repo_root / "consumer" / "tests" / "opamp_fluentd.json"
+    config_path = repo_root / "consumer" / "opamp-fluentd.json"
 
     loaded = consumer_config.load_config_with_overrides(
         config_path=config_path,
@@ -172,4 +172,4 @@ def test_fluentd_test_config_loads_successfully() -> None:
     )
 
     assert loaded.service_name == "Fluentd"
-    assert loaded.agent_config_path == "./consumer/tests/fluentd.conf"
+    assert loaded.agent_config_path == "./consumer/fluentd.conf"

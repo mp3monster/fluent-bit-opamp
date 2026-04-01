@@ -12,9 +12,9 @@
 
 import logging
 
-import opamp_consumer.client as client
-from opamp_consumer.client import CAPABILITIES_MAP, CONFIG_DOCS_URL
+import opamp_consumer.fluentbit_client as client
 from opamp_consumer.config import ConsumerConfig
+from opamp_consumer.fluentbit_client import CAPABILITIES_MAP, CONFIG_DOCS_URL
 from opamp_consumer.proto import opamp_pb2
 
 

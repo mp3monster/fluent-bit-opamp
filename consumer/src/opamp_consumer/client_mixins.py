@@ -15,12 +15,15 @@
 from __future__ import annotations
 
 import asyncio
-from codecs import decode as byte_value
 import logging
 import os
 import subprocess
+import sys
+import threading
 import time
 import traceback
+from codecs import decode as byte_value
+from typing import TYPE_CHECKING
 
 import httpx
 from google.protobuf import text_format
@@ -37,15 +40,33 @@ from shared.opamp_config import (
     PB_FIELD_CUSTOM_MESSAGE,
     PB_FIELD_ERROR_RESPONSE,
     PB_FIELD_INSTANCE_UID,
-    PB_FLAG_REPORT_FULL_STATE,
     PB_FIELD_PACKAGES_AVAILABLE,
     PB_FIELD_REMOTE_CONFIG,
     PB_FIELD_RETRY_INFO,
+    PB_FLAG_REPORT_FULL_STATE,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from opamp_consumer.abstract_client import OpAMPClientData
+    from opamp_consumer.config import ConsumerConfig
 
 
 class ServerMessageHandlingMixin:
     """ServerToAgent message dispatch and handler implementations."""
+
+    data: OpAMPClientData
+    config: ConsumerConfig
+    _custom_handler_folder: Path
+    _custom_handler_lookup: dict[str, object]
+
+    def restart_agent_process(self) -> bool:
+        """Restart the managed agent process.
+
+        Concrete implementations are expected to provide this behavior.
+        """
+        raise NotImplementedError
 
     def _handle_server_to_agent(self, reply: opamp_pb2.ServerToAgent) -> bool:
         """Process ServerToAgent fields and dispatch each populated payload section.
@@ -110,7 +131,8 @@ class ServerMessageHandlingMixin:
             True if the payload instance UID is present and matches this client.
         """
         logger = logging.getLogger(__name__)
-        if reply.HasField(PB_FIELD_INSTANCE_UID):
+        # `instance_uid` is a proto3 scalar bytes field and does not support HasField().
+        if reply.instance_uid:
             logger.debug(
                 "reply target is %s",
                 byte_value(reply.instance_uid, errors="replace"),
@@ -125,7 +147,7 @@ class ServerMessageHandlingMixin:
             return False
         logger.error(
             "Server didn't share instance_uid, my instance uid is %s",
-            byte_value(self.instance_uid, errors="replace"),
+            byte_value(self.data.uid_instance or b"", errors="replace"),
         )
         return False
 
@@ -279,13 +301,16 @@ class ServerMessageHandlingMixin:
         if custom_message is None:
             return
 
-        # Preserve historical monkeypatch points on opamp_consumer.client used by tests.
-        from opamp_consumer import client as client_module
+        # Resolve handler factories from the concrete client module for test patch points.
+        client_module = sys.modules.get(self.__class__.__module__)
 
-        create_handler_fn = getattr(client_module, "create_handler", create_handler)
-        build_factory_lookup_fn = getattr(
-            client_module, "build_factory_lookup", build_factory_lookup
-        )
+        create_handler_fn = create_handler
+        build_factory_lookup_fn = build_factory_lookup
+        if client_module is not None:
+            create_handler_fn = getattr(client_module, "create_handler", create_handler)
+            build_factory_lookup_fn = getattr(
+                client_module, "build_factory_lookup", build_factory_lookup
+            )
 
         capability = str(custom_message.capability or "").strip()
         if not capability:
@@ -345,49 +370,62 @@ class ServerMessageHandlingMixin:
 class ClientRuntimeMixin:
     """Agent process lifecycle and heartbeat polling behavior."""
 
-    _runtime_agent_command = "fluent-bit"
+    data: OpAMPClientData
+    config: ConsumerConfig
+
+    async def send(self) -> opamp_pb2.ServerToAgent | None:
+        """Send AgentToServer payloads and return the provider response."""
+        raise NotImplementedError
+
+    _runtime_agent_command = "agent"
     _runtime_config_flag = "-c"
-    _heartbeat_paths = (
-        "/api/v1/uptime",
-        "/api/v1/health",
-        "/api/v2/metrics/prometheus",
-    )
+    _heartbeat_paths = ("/health",)
     _localhost_base = "http://localhost"
     _http_timeout_seconds = 5.0
     _error_prefix = "error: "
     _error_status = "error"
     _heartbeat_skew_seconds = 1
     _semaphore_filename = "OpAMPSupervisor.signal"
-    _key_fluent_bit_version = "fluent-bit.version"
-    _key_fluent_bit_edition = "fluent-bit.edition"
-    _json_key_fluent_bit = "fluent-bit"
-    _json_key_fluentbit = "fluentbit"
+    _key_agent_version = "version"
+    _key_agent_edition = "edition"
+    _json_key_agent = "agent"
+    _json_key_agent_fallback: str | None = None
     _json_key_version = "version"
     _json_key_edition = "edition"
-    _value_agent_type_fluent_bit = "Fluent Bit"
+    _value_agent_type = "Agent"
 
     def launch_agent_process(self) -> bool:
-        """Launch the Fluent Bit process using configured params."""
-        launched = True
+        """Launch the configured agent process using runtime command metadata."""
         logger = logging.getLogger(__name__)
-        cmd = [
+        command = [
             self._runtime_agent_command,
             *(self.config.agent_additional_params or []),
             self._runtime_config_flag,
             self.config.agent_config_path,
         ]
         logger.debug(
-            "About to start Fluent Bit with %s and cmd %s",
+            "About to start agent process with config %s and command %s",
             self.config.agent_config_path,
-            cmd,
+            command,
         )
-
-        with self.data.process_lock:
-            process_response: subprocess.Popen[bytes] = subprocess.Popen(cmd)
-            self.data.agent_process = process_response
-            self.data.launched_at = time.time_ns()
+        try:
+            with self.data.process_lock:
+                process_response: subprocess.Popen[bytes] = subprocess.Popen(command)
+                self.data.agent_process = process_response
+                self.data.launched_at = time.time_ns()
+        except FileNotFoundError as file_error:
+            logger.error(
+                "Agent launch failed because command was not found (%s): %s",
+                self._runtime_agent_command,
+                file_error,
+            )
+            return False
+        except Exception as launch_error:  # pragma: no cover - env-dependent
+            logger.exception("Agent launch failed for command %s", command)
+            logger.debug("Agent launch exception detail: %s", launch_error)
+            return False
         logger.info("Launch result = %s", process_response)
-        return launched
+        return True
 
     def terminate_agent_process(self) -> None:
         """Terminate the launched Agent process if available."""
@@ -425,6 +463,71 @@ class ClientRuntimeMixin:
             raise AgentException("Failed to restart agent process")
         logger.info("Agent process restarted")
         return relaunched
+
+    def _populate_disconnect(
+        self, msg: opamp_pb2.AgentToServer
+    ) -> opamp_pb2.AgentToServer:
+        """Populate disconnect data and ensure instance UID is set."""
+        if self.data.uid_instance is not None:
+            msg.instance_uid = self.data.uid_instance
+            logging.getLogger(__name__).warning(
+                "Set disconnect message instance UID to %s", self.data.uid_instance
+            )
+        msg.agent_disconnect.SetInParent()
+        return msg
+
+    async def send_disconnect(self) -> None:
+        """Implements `OpAMPClientInterface.send_disconnect` with best-effort send."""
+        msg = self._populate_disconnect(opamp_pb2.AgentToServer())
+        logging.getLogger(__name__).debug("Built disconnect message")
+
+        try:
+            await self.send(msg, send_as_is=True)
+            self.data.allow_heartbeat = False
+        except Exception as err:  # pragma: no cover - error path varies by env
+            logging.getLogger(__name__).warning(
+                "Failed to send disconnect message - %s", err
+            )
+
+    async def _send_disconnect_with_timeout(self, timeout_seconds: float = 1.0) -> None:
+        """Best-effort disconnect send with a short timeout."""
+        try:
+            logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
+            await asyncio.wait_for(self.send_disconnect(), timeout=timeout_seconds)
+        except Exception as err:  # pragma: no cover - error path varies by env
+            logging.getLogger(__name__).error("Disconnect send timed out-- %s", err)
+
+        logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
+
+    def finalize(self) -> None:
+        """Implements `OpAMPClientInterface.finalize` with async-loop fallback."""
+        try:
+            loop = asyncio.get_running_loop()
+            logging.getLogger(__name__).debug("finalize - got loop")
+        except RuntimeError:
+
+            def _runner() -> None:
+                """Run best-effort async disconnect send inside a dedicated thread."""
+                try:
+                    logging.getLogger(__name__).debug(
+                        "About to send disconnect message"
+                    )
+                    asyncio.run(self._send_disconnect_with_timeout())
+                except Exception as err:
+                    logging.getLogger(__name__).error(
+                        "Failed to send disconnect message, error is:\n %s", err
+                    )
+                    return
+
+            thread = threading.Thread(target=_runner, daemon=True)
+            thread.start()
+        else:
+            loop.create_task(self._send_disconnect_with_timeout())
+
+    def __del__(self) -> None:
+        """Attempt graceful disconnect/finalize during object destruction."""
+        print("FINALIZER triggered")
+        self.finalize()
 
     def _heartbeat_key(self, path: str) -> str:
         """Return the last URL path component as the dictionary key."""
@@ -484,17 +587,20 @@ class ClientRuntimeMixin:
                 version = None
                 edition = None
                 if isinstance(data, dict):
-                    version = data.get(self._key_fluent_bit_version)
-                    edition = data.get(self._key_fluent_bit_edition)
-                    fluent_bit_payload = data.get(
-                        self._json_key_fluent_bit
-                    ) or data.get(self._json_key_fluentbit)
-                    if isinstance(fluent_bit_payload, dict):
-                        self.data.agent_type_name = self._value_agent_type_fluent_bit
-                        version = version or fluent_bit_payload.get(
+                    version = data.get(self._key_agent_version)
+                    edition = data.get(self._key_agent_edition)
+                    agent_payload = data.get(self._json_key_agent)
+                    if (
+                        agent_payload is None
+                        and self._json_key_agent_fallback is not None
+                    ):
+                        agent_payload = data.get(self._json_key_agent_fallback)
+                    if isinstance(agent_payload, dict):
+                        self.data.agent_type_name = self._value_agent_type
+                        version = version or agent_payload.get(
                             self._json_key_version
                         )
-                        edition = edition or fluent_bit_payload.get(
+                        edition = edition or agent_payload.get(
                             self._json_key_edition
                         )
                 if version or edition:

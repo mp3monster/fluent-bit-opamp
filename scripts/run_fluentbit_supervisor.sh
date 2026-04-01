@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_DIR="${REPO_ROOT}/logs"
-LOG_FILE="${LOG_DIR}/supervisor.log"
+LOG_FILE="${LOG_DIR}/supervisor_fluentbit.log"
 
 if [[ -t 1 ]]; then
   printf '\033]0;%s\007' "OpAMP Supervisor"
@@ -18,7 +18,7 @@ fi
 CONFIG_PATH="${REPO_ROOT}/tests/opamp.json"
 FLUENTBIT_PATH="${REPO_ROOT}/tests/fluent-bit.yaml"
 if [ ! -f "${CONFIG_PATH}" ]; then
-  CONFIG_PATH="${REPO_ROOT}/consumer/opamp.json"
+  CONFIG_PATH="${REPO_ROOT}/config/opamp.json"
 fi
 if [ ! -f "${FLUENTBIT_PATH}" ]; then
   FLUENTBIT_PATH="${REPO_ROOT}/consumer/fluent-bit.yaml"
@@ -31,4 +31,4 @@ python3 -m pip show httpx >/dev/null 2>&1 || python3 -m pip install -r "${REPO_R
 rm -f "${PWD}/OpAMPSupervisor.signal"
 mkdir -p "${LOG_DIR}"
 rm -f "${LOG_FILE}"
-python3 -m opamp_consumer.client --config-path "${CONFIG_PATH}" --fluentbit-config-path "${FLUENTBIT_PATH}" "$@" 2>&1 | tee "${LOG_FILE}"
+python3 -m opamp_consumer.fluentbit_client --config-path "${CONFIG_PATH}" --fluentbit-config-path "${FLUENTBIT_PATH}" "$@" 2>&1 | tee "${LOG_FILE}"

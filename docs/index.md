@@ -12,6 +12,7 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/consumer_mixins.md](consumer_mixins.md) — how consumer mixins are composed, dispatched, and overridden.
 - [docs/consumer_update_controllers.md](consumer_update_controllers.md) — how full update controllers drive reporting flags and outbound message field cadence.
 - [docs/authentication.md](authentication.md) — bearer token auth modes, static-token setup, Keycloak/JWT setup, and MCP token usage.
+- [docs/service_daemon_setup.md](service_daemon_setup.md) — running provider/consumer as `systemd` or Windows services, including Fluent Bit/Fluentd launch permissions.
 - [docs/opamp_tofu_design.md](opamp_tofu_design.md) — design plan for adding TOFU protection to `/v1/opamp` without changing current endpoint behavior yet.
 - [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](../provider/README.md) — provider configuration and web UI notes.

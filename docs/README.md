@@ -40,7 +40,7 @@ cd D:\dev\opamp
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r consumer\requirements.txt
-python -m opamp_consumer.client --config-path config\opamp.json
+python -m opamp_consumer.fluentbit_client --config-path config\opamp.json
 ```
 
 ### Bash (Linux/macOS)
@@ -50,7 +50,7 @@ cd /path/to/opamp
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r consumer/requirements.txt
-python3 -m opamp_consumer.client --config-path config/opamp.json
+python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 ```
 
 ## Run provider + consumer together
@@ -71,7 +71,7 @@ In a new PowerShell window:
 ```powershell
 cd D:\dev\opamp
 .venv\Scripts\Activate.ps1
-python -m opamp_consumer.client --config-path config\opamp.json
+python -m opamp_consumer.fluentbit_client --config-path config\opamp.json
 ```
 
 ### Bash (Linux/macOS)
@@ -90,7 +90,7 @@ In a new shell:
 ```bash
 cd /path/to/opamp
 source .venv/bin/activate
-python3 -m opamp_consumer.client --config-path config/opamp.json
+python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 ```
 
 ## Notes
@@ -98,5 +98,6 @@ python3 -m opamp_consumer.client --config-path config/opamp.json
 - Provider Web UI: http://localhost:8080/ui
 - Help page: http://localhost:8080/help
 - Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
+- Running as a Linux daemon or Windows service (including consumer permissions to launch Fluent Bit/Fluentd): see `docs/service_daemon_setup.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.
 - For Windows CMD usage, the commands are similar but use `\.venv\Scripts\activate.bat` to activate the venv.

@@ -37,5 +37,5 @@ dev = [
 ]
 
 [project.scripts]
-opamp-consumer = "opamp_consumer.client:main"
+opamp-consumer = "opamp_consumer.fluentbit_client:main"
 opamp-consumer-fluentd = "opamp_consumer.fluentd_client:main"

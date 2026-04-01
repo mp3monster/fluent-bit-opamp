@@ -59,6 +59,12 @@ Helper scripts live in `scripts/` at the repo root:
 
 Both scripts write logs to `logs/opamp_server.log` and rotate it on startup.
 
+## Running As A Service/Daemon
+
+For Linux `systemd` and Windows service examples for provider and consumer deployments (and consumer launch permissions for Fluent Bit/Fluentd), see:
+
+- `../docs/service_daemon_setup.md`
+
 ## Quickstart (manual)
 
 ```bash

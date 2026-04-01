@@ -128,7 +128,7 @@ Example:
 ## CLI Example
 
 ```bash
-python -m opamp_consumer.client \
+python -m opamp_consumer.fluentbit_client \
   --config-path ./opamp.json \
   --server-url http://localhost:4320 \
   --server-port 4320 \
@@ -142,20 +142,34 @@ python -m opamp_consumer.client \
 ## Run Scripts
 
 Helper scripts in repo root:
-- `scripts/run_supervisor.cmd`
-- `scripts/run_supervisor.sh`
-- `scripts/run_supervisor_fluentd.cmd`
-- `scripts/run_supervisor_fluentd.sh`
+- `scripts/run_fluentbit_supervisor.cmd`
+- `scripts/run_fluentbit_supervisor.sh`
+- `scripts/run_fluentd_supervisor.cmd`
+- `scripts/run_fluentd_supervisor.sh`
+- `scripts/run_all_supervisors.cmd`
+- `scripts/run_all_supervisors.sh`
 
-Both write logs to `logs/supervisor.log` and rotate on startup.
+Fluent Bit writes to `logs/supervisor_fluentbit.log` and Fluentd writes to
+`logs/supervisor_fluentd.log` (each rotates on startup).
+
+Default config resolution:
+- Fluent Bit supervisor: `tests/opamp.json` -> `config/opamp.json`
+- Fluentd supervisor: `consumer/opamp-fluentd.json` -> `tests/opamp.json` -> `config/opamp.json`
+- Fluentd runtime config path: `consumer/fluentd.conf`
 
 Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directory.
+
+## Running As A Service/Daemon
+
+For Linux `systemd` and Windows service examples (including required permissions so the consumer can launch `fluent-bit` or `fluentd`), see:
+
+- `../docs/service_daemon_setup.md`
 
 ## Installed CLI Commands
 
 When installed as a package, console scripts are available:
 
-- `opamp-consumer` -> `opamp_consumer.client:main`
+- `opamp-consumer` -> `opamp_consumer.fluentbit_client:main`
 - `opamp-consumer-fluentd` -> `opamp_consumer.fluentd_client:main`
 
 ## Fluentd Consumer
@@ -165,6 +179,23 @@ An alternate concrete consumer implementation is available for Fluentd use cases
 - Module entrypoint: `python -m opamp_consumer.fluentd_client`
 - Fluentd config alias: `--fluentd-config-path` (maps to `agent_config_path`)
 - Fluentd additional args alias: `--additional-fluentd-params` (maps to `agent_additional_params`)
+
+### Required Fluentd Monitor Source
+
+For OpAMP to read Fluentd health/version data, the Fluentd config must include a `monitor_agent` source (core Fluentd functionality).
+
+Example:
+
+```conf
+<source>
+  @type monitor_agent
+  bind 0.0.0.0
+  port 24220
+  log_level info
+</source>
+```
+
+If `monitor_agent` is not configured, the consumer cannot poll Fluentd runtime status endpoints.
 
 Example:
 

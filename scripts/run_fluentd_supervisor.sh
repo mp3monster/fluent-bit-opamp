@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_DIR="${REPO_ROOT}/logs"
-LOG_FILE="${LOG_DIR}/supervisor.log"
+LOG_FILE="${LOG_DIR}/supervisor_fluentd.log"
 
 if [[ -t 1 ]]; then
   printf '\033]0;%s\007' "OpAMP Supervisor (Fluentd)"
@@ -15,16 +15,13 @@ if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
   source "${REPO_ROOT}/.venv/bin/activate"
 fi
 
-CONFIG_PATH="${REPO_ROOT}/consumer/tests/opamp_fluentd.json"
+CONFIG_PATH="${REPO_ROOT}/consumer/opamp-fluentd.json"
 FLUENTD_PATH="${REPO_ROOT}/consumer/fluentd.conf"
 if [ ! -f "${CONFIG_PATH}" ]; then
   CONFIG_PATH="${REPO_ROOT}/tests/opamp.json"
 fi
 if [ ! -f "${CONFIG_PATH}" ]; then
-  CONFIG_PATH="${REPO_ROOT}/consumer/opamp.json"
-fi
-if [ ! -f "${FLUENTD_PATH}" ]; then
-  FLUENTD_PATH="${REPO_ROOT}/tests/fluentd.conf"
+  CONFIG_PATH="${REPO_ROOT}/config/opamp.json"
 fi
 
 export PYTHONPATH="${REPO_ROOT}/consumer/src"

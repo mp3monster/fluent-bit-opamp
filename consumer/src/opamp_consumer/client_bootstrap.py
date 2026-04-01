@@ -25,7 +25,7 @@ import sys
 import threading
 import tracemalloc
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
@@ -33,7 +33,9 @@ from opamp_consumer.proto import opamp_pb2
 from shared.opamp_config import UTF8_ENCODING
 
 KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key carrying free-form agent description.
-KEY_SERVICE_INSTANCE_ID_COMMENT = "service_instance_id"  # Comment key for service instance template.
+KEY_SERVICE_INSTANCE_ID_COMMENT = (
+    "service_instance_id"  # Comment key for service instance template.
+)
 KEY_HTTP_PORT = "http_port"  # Fluent Bit/agent config key for local status HTTP port.
 KEY_HTTP_LISTEN = "http_listen"  # Fluent Bit/agent config key for bind/listen address.
 KEY_HTTP_SERVER = "http_server"  # Fluent Bit/agent config key that enables HTTP server support.
@@ -50,6 +52,138 @@ _AGENT_CONFIG_KV = re.compile(
     r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
     re.IGNORECASE,
 )
+
+# Supported CLI aliases for the consumer config path.
+DEFAULT_CONFIG_PATH_ARGS = ("--config-path",)
+# Supported CLI aliases for the launched-agent config path.
+DEFAULT_AGENT_CONFIG_PATH_ARGS = (
+    "--agent-config-path",
+    "--fluentbit-config-path",
+    "--fluentd-config-path",
+)
+# Supported CLI aliases for additional launched-agent command parameters.
+DEFAULT_AGENT_ADDITIONAL_ARGS = (
+    "--agent-additional-params",
+    "--additional-agent-params",
+    "--additional-fluent-bit-params",
+    "--additional-fluentd-params",
+)
+
+
+def build_common_cli_parser(
+    *,
+    config_path_args: tuple[str, ...] = DEFAULT_CONFIG_PATH_ARGS,
+    agent_config_path_args: tuple[str, ...] = DEFAULT_AGENT_CONFIG_PATH_ARGS,
+    agent_additional_args: tuple[str, ...] = DEFAULT_AGENT_ADDITIONAL_ARGS,
+) -> argparse.ArgumentParser:
+    """Build the shared consumer CLI parser with configurable option aliases."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument(*config_path_args, dest="config_path", type=str)
+    parser.add_argument("--server-url", type=str)
+    parser.add_argument("--server-port", type=int)
+    parser.add_argument(*agent_config_path_args, dest="agent_config_path", type=str)
+    parser.add_argument(
+        *agent_additional_args,
+        dest="agent_additional_params",
+        nargs="*",
+    )
+    parser.add_argument("--heartbeat-frequency", type=int)
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        help="logging level name override (for example DEBUG, INFO, WARNING)",
+    )
+    parser.add_argument(
+        "--full-update-controller",
+        type=str,
+        help='JSON string for full update controller (for example {"fullResendAfter":1})',
+    )
+    return parser
+
+
+def load_config_from_cli_args(args: argparse.Namespace) -> ConsumerConfig:
+    """Load consumer config using values parsed by `build_common_cli_parser`.
+
+    Args:
+        args: Parsed CLI argument namespace from the shared consumer parser.
+
+    Returns:
+        Consumer configuration resolved from file plus CLI overrides.
+    """
+    effective_config_path = consumer_config.get_effective_config_path(
+        getattr(args, "config_path", None)
+    )
+    logging.getLogger(__name__).info(
+        "using consumer config path: %s",
+        effective_config_path,
+    )
+    override_fields = (
+        "server_url",
+        "server_port",
+        "agent_config_path",
+        "agent_additional_params",
+        "heartbeat_frequency",
+        "log_level",
+        "full_update_controller",
+    )
+    override_values = {
+        field: getattr(args, field, None) for field in override_fields
+    }
+    return consumer_config.load_config_with_overrides(
+        config_path=effective_config_path,
+        **override_values,
+    )
+
+
+def configure_logging_for_config(config: ConsumerConfig) -> logging.Logger:
+    """Configure root logging based on config log level and return module logger."""
+    resolved_log_level = consumer_config.resolve_log_level(config.log_level)
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=resolved_log_level)
+    else:
+        root_logger.setLevel(resolved_log_level)
+    return logging.getLogger(__name__)
+
+
+def maybe_print_config_help(
+    *,
+    args: argparse.Namespace,
+    config: ConsumerConfig,
+    config_parameters_payload_builder: Callable[[ConsumerConfig], dict[str, object]],
+) -> bool:
+    """Print config help payload when `--help` is requested.
+
+    Returns:
+        True when help was printed and caller should exit early.
+    """
+    if not bool(getattr(args, "help", False)):
+        return False
+    print(
+        json.dumps(
+            config_parameters_payload_builder(config),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return True
+
+
+def validate_runtime_server_config(
+    *,
+    config: ConsumerConfig,
+    localhost_base: str,
+    missing_status_port_error: str,
+) -> ConsumerConfig:
+    """Validate and normalize runtime server/port configuration fields."""
+    if config.client_status_port is None:
+        raise ValueError(missing_status_port_error)
+    if config.server_url is None and config.server_port is not None:
+        config.server_url = f"{localhost_base}:{config.server_port}"
+    if config.server_url is None:
+        raise ValueError("server_url is not configured")
+    return config
 
 
 def _apply_agent_comment(
@@ -232,82 +366,25 @@ def run_default_client_main(
     """Run the default Fluent Bit-backed client CLI bootstrap flow."""
     try:
         tracemalloc.start()
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("-h", "--help", action="store_true")
-        parser.add_argument("--config-path", type=str)
-        parser.add_argument("--server-url", type=str)
-        parser.add_argument("--server-port", type=int)
-        parser.add_argument(
-            "--agent-config-path",
-            "--fluentbit-config-path",
-            dest="agent_config_path",
-            type=str,
-        )
-        parser.add_argument(
-            "--agent-additional-params",
-            "--additional-agent-params",
-            "--additional-fluent-bit-params",
-            dest="agent_additional_params",
-            nargs="*",
-        )
-        parser.add_argument("--heartbeat-frequency", type=int)
-        parser.add_argument(
-            "--log-level",
-            type=str,
-            help="logging level name override (for example DEBUG, INFO, WARNING)",
-        )
-        parser.add_argument(
-            "--full-update-controller",
-            type=str,
-            help='JSON string for full update controller (for example {"fullResendAfter":1})',
-        )
+        parser = build_common_cli_parser()
         args = parser.parse_args()
-        effective_config_path = consumer_config.get_effective_config_path(
-            args.config_path
-        )
-        logging.getLogger(__name__).info(
-            "using consumer config path: %s",
-            effective_config_path,
-        )
+        config = load_config_from_cli_args(args)
+        logger = configure_logging_for_config(config)
 
-        config = consumer_config.load_config_with_overrides(
-            config_path=effective_config_path,
-            server_url=args.server_url,
-            server_port=args.server_port,
-            agent_config_path=args.agent_config_path,
-            agent_additional_params=args.agent_additional_params,
-            heartbeat_frequency=args.heartbeat_frequency,
-            log_level=args.log_level,
-            full_update_controller=args.full_update_controller,
-        )
-        resolved_log_level = consumer_config.resolve_log_level(config.log_level)
-        root_logger = logging.getLogger()
-        if not root_logger.handlers:
-            logging.basicConfig(level=resolved_log_level)
-        else:
-            root_logger.setLevel(resolved_log_level)
-        logger = logging.getLogger(__name__)
-
-        if args.help:
-            print(
-                json.dumps(
-                    config_parameters_payload_builder(config),
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
+        if maybe_print_config_help(
+            args=args,
+            config=config,
+            config_parameters_payload_builder=config_parameters_payload_builder,
+        ):
             return
 
         logger.info("about to process FLB config")
         config = load_agent_config_fn(config)
-
-        if config.client_status_port is None:
-            raise ValueError("client_status_port not found in Fluent Bit config")
-
-        if config.server_url is None and config.server_port is not None:
-            config.server_url = f"{localhost_base}:{config.server_port}"
-        if config.server_url is None:
-            raise ValueError("server_url is not configured")
+        config = validate_runtime_server_config(
+            config=config,
+            localhost_base=localhost_base,
+            missing_status_port_error="client_status_port not found in Fluent Bit config",
+        )
 
         logger.debug(msg="setting up OpAMP")
         client = client_class(config.server_url, config)
@@ -336,7 +413,7 @@ def run_default_client_program_entrypoint(
     load_agent_config_fn: Callable[[ConsumerConfig], ConsumerConfig],
     localhost_base: str,
 ) -> None:
-    """Run main flow and terminate process with legacy client.py semantics."""
+    """Run main flow and terminate process with legacy Fluent Bit semantics."""
     run_default_client_main(
         client_class=client_class,
         config_parameters_payload_builder=config_parameters_payload_builder,

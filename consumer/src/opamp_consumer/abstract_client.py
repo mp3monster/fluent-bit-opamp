@@ -10,43 +10,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpAMP client skeleton for HTTP and WebSocket transports."""
+"""Shared abstract OpAMP client implementation and runtime data model."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from abc import ABC, abstractmethod
-import sys
 import logging
 import pathlib
 import platform
 import socket
 import subprocess
 import threading
-import asyncio
 import uuid
-
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, field
 
 from opamp_consumer import config as consumer_config
-from opamp_consumer.client_bootstrap import (
-    build_minimal_agent as _bootstrap_build_minimal_agent,
-    load_agent_config as _bootstrap_load_agent_config,
-    resolve_service_instance_id_template_with_values,
-    run_client as _bootstrap_run_client,
-    run_default_client_main,
-)
-from opamp_consumer.client_mixins import ClientRuntimeMixin, ServerMessageHandlingMixin
+from opamp_consumer.client_bootstrap import resolve_service_instance_id_template_with_values
 from opamp_consumer.client_message_builder import (
     parse_fluentbit_metrics_health,
     populate_agent_to_server,
     populate_agent_to_server_health,
 )
+from opamp_consumer.client_mixins import ClientRuntimeMixin, ServerMessageHandlingMixin
 from opamp_consumer.client_transport import (
     send_http_message,
     send_websocket_message,
 )
-from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
-from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
+from opamp_consumer.config import ConsumerConfig
+from opamp_consumer.custom_handlers import build_factory_lookup, create_handler  # noqa: F401
 from opamp_consumer.full_update_controller import (
     AlwaysSend,
     FullUpdateControllerInterface,
@@ -58,16 +49,15 @@ from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.reporting_flag import ReportingFlag
 from shared.opamp_config import (
     AGENT_CAPABILITIES_MAP,
-    AgentCapabilities,
     OPAMP_HTTP_PATH,
+    AgentCapabilities,
     parse_capabilities,
 )
 from shared.uuid_utils import generate_uuid7_bytes
 
-
 TRANSPORT_HTTP = "http"  # Transport selector for HTTP polling mode.
 TRANSPORT_WEBSOCKET = "websocket"  # Transport selector for WebSocket mode.
-LOCALHOST_BASE = "http://localhost"  # Base URL for local Fluent Bit endpoints.
+LOCALHOST_BASE = "http://localhost"  # Base URL for local agent endpoints.
 ERR_PREFIX = "error: "  # Prefix for error values stored in results.
 KEY_FLUENTBIT_VERSION = "fluentbit_version"  # Result key for version response.
 KEY_SERVICE_INSTANCE_ID_COMMENT = "service_instance_id"  # Comment key for service instance ID.
@@ -85,9 +75,9 @@ HOST_META_KEY_OS_VERSION = "os_version"  # Host metadata key for OS version.
 HOST_META_KEY_HOSTNAME = "hostname"  # Host metadata key for hostname.
 # Keep a local alias for backward compatibility with existing imports/tests.
 CAPABILITIES_MAP = AGENT_CAPABILITIES_MAP  # Backward-compatible alias to shared capability map.
-LOG_INVALID_HTTP_PORT = "invalid http_port value: %s"  # Log format for bad ports.
-LOG_HTTP_SERVER_DISABLED = "http_server is not enabled: %s"  # Log format for disabled HTTP.
-CONFIG_DOCS_URL = "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
+CONFIG_DOCS_URL = (
+    "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
+)
 
 
 def _config_parameters_payload(config: ConsumerConfig) -> dict[str, object]:
@@ -162,7 +152,16 @@ class AbstractOpAMPClient(
     def __init__(self, base_url: str, config: ConsumerConfig | None = None) -> None:
         """Create a client bound to a base URL."""
         if config is None:
-            config = globals().get("CONFIG") or consumer_config.CONFIG
+            config = globals().get("CONFIG")
+        if config is None:
+            try:
+                from opamp_consumer import fluentbit_client as client_module
+
+                config = getattr(client_module, "CONFIG", None)
+            except Exception:  # pragma: no cover - defensive import fallback
+                config = None
+        if config is None:
+            config = consumer_config.CONFIG
         if config is None:
             logging.getLogger(__name__).warning("No config supplied to OpAMPClient")
             raise ValueError("OpAMP client requires a consumer config")
@@ -365,88 +364,6 @@ class AbstractOpAMPClient(
             )
         return None
 
-    def _populate_disconnect(
-        self, msg: opamp_pb2.AgentToServer
-    ) -> opamp_pb2.AgentToServer:
-        """Populate disconnect data and ensure instance UID is set.
-
-        Args:
-            msg: AgentToServer message to mark as a disconnect payload.
-
-        Returns:
-            Updated disconnect message.
-        """
-        if self.data.uid_instance is not None:
-            msg.instance_uid = self.data.uid_instance
-            logging.getLogger(__name__).warning(
-                "Set disconnect message instance UID to %s", self.data.uid_instance
-            )
-        msg.agent_disconnect.SetInParent()
-        return msg
-
-    async def send_disconnect(self) -> None:
-        """Implements `OpAMPClientInterface.send_disconnect`.
-
-        Send a disconnect message without modifying the payload.
-        """
-        msg = self._populate_disconnect(opamp_pb2.AgentToServer())
-        logging.getLogger(__name__).debug("Built disconnect message")
-
-        try:
-            await self.send(msg, send_as_is=True)
-            self.allow_heartbeat = False
-        except Exception as err:
-            logging.getLogger(__name__).warning(
-                "Failed to send disconnect message - %s", err
-            )
-
-    async def _send_disconnect_with_timeout(self, timeout_seconds: float = 1.0) -> None:
-        """Best-effort disconnect send with a short timeout.
-
-        Args:
-            timeout_seconds: Maximum wait time for sending disconnect.
-        """
-        try:
-            logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
-            await asyncio.wait_for(self.send_disconnect(), timeout=timeout_seconds)
-        except Exception as err:
-            logging.getLogger(__name__).error("Disconnect send timed out-- %s", err)
-
-        logging.getLogger(__name__).warning("_send_disconnect_with_timeout exiting")
-
-    def finalize(self) -> None:
-        """Implements `OpAMPClientInterface.finalize`.
-
-        Best-effort finalizer to send disconnect.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-            logging.getLogger(__name__).debug("finalize - got loop")
-        except RuntimeError:
-
-            def _runner() -> None:
-                """Run best-effort async disconnect send inside a dedicated thread."""
-                try:
-                    logging.getLogger(__name__).debug(
-                        "About to send disconnect message"
-                    )
-                    asyncio.run(self._send_disconnect_with_timeout())
-                except Exception as err:
-                    logging.getLogger(__name__).error(
-                        "Failed to send disconnect message, error is:\n %s", err
-                    )
-                    return
-
-            thread = threading.Thread(target=_runner, daemon=True)
-            thread.start()
-        else:
-            loop.create_task(self._send_disconnect_with_timeout())
-
-    def __del__(self) -> None:
-        """Attempt graceful disconnect/finalize during object destruction."""
-        print("FINALIZER triggered")
-        self.finalize()
-
     async def send_websocket(
         self, msg: opamp_pb2.AgentToServer
     ) -> opamp_pb2.ServerToAgent:
@@ -612,14 +529,6 @@ class AbstractOpAMPClient(
         }
 
 
-class OpAMPClient(AbstractOpAMPClient):
-    """Default concrete OpAMP client implementation."""
-
-    def get_custom_handler_folder(self) -> pathlib.Path:
-        """Return the default custom-handler folder bundled with the consumer."""
-        return pathlib.Path(__file__).resolve().parent / "custom_handlers"
-
-
 def _get_local_ip() -> str:
     """Return a best-effort local host IP address."""
     try:
@@ -642,44 +551,3 @@ def resolve_service_instance_id_template(value: str | None) -> str | None:
         ip_address=_get_local_ip(),
         mac_address=_get_local_mac(),
     )
-
-
-def load_agent_config(config: consumer_config.ConsumerConfig) -> ConsumerConfig:
-    """Load Fluent Bit config values and agent metadata into the config object."""
-    return _bootstrap_load_agent_config(
-        config,
-        resolve_service_instance_id_template_fn=resolve_service_instance_id_template,
-    )
-
-
-def build_minimal_agent(
-    instance_uid: bytes | None = None,
-    capabilities: int | None = None,
-) -> opamp_pb2.AgentToServer:
-    """Create a minimal AgentToServer message with configured capabilities."""
-    return _bootstrap_build_minimal_agent(
-        instance_uid=instance_uid,
-        capabilities=capabilities,
-    )
-
-
-async def run_client(client) -> None:
-    """Trigger a single send cycle for the provided client instance."""
-    await _bootstrap_run_client(client)
-
-
-def main() -> None:
-    """Load config, start Fluent Bit client runtime, and run heartbeat loop."""
-    run_default_client_main(
-        client_class=OpAMPClient,
-        config_parameters_payload_builder=_config_parameters_payload,
-        load_agent_config_fn=load_agent_config,
-        localhost_base=LOCALHOST_BASE,
-    )
-
-
-if __name__ == "__main__":
-    main()
-    print("... Bye")
-    # _force_exit_on_lingering_threads()
-    sys.exit(1)

@@ -10,9 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from opamp_consumer.client import OpAMPClientData
 from opamp_consumer.config import ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
+from opamp_consumer.fluentbit_client import OpAMPClientData
 
 
 def _make_client_data() -> OpAMPClientData:

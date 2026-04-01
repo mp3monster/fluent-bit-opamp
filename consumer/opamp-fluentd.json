@@ -4,9 +4,9 @@
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
-    "log_agent_api_responses": false,
-    "agent_config_path": "d://dev//opamp//consumer//fluent-bit.yaml",
-    "agent_additional_params": [],
+    "log_agent_api_responses": true,
+    "agent_config_path": "./consumer/fluentd.conf",
+    "agent_additional_params": ["-v"],
     "heartbeat_frequency": 30,
     "full_update_controller": {
       "fullResendAfter": 2
@@ -14,7 +14,7 @@
     "full_update_controller_type": "SentCount",
     "allow_custom_capabilities": true,
     "log_level": "debug",
-    "service_name": "Fluentbit",
-    "service_namespace": "FluentBitNS"
+    "service_name": "Fluentd",
+    "service_namespace": "FluentdNS"
   }
 }

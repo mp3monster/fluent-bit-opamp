@@ -6,7 +6,7 @@ This document explains how mixins are used in the consumer and how method dispat
 
 A mixin is a class that contributes behavior to another class through inheritance, without being a full standalone domain model.
 
-In this project, mixins are used to keep `client.py` smaller by separating large behavior groups into focused files.
+In this project, mixins are used to keep `fluentbit_client.py` and `abstract_client.py` smaller by separating large behavior groups into focused files.
 
 ## Where mixins are used
 
@@ -74,12 +74,13 @@ Example: `FluentdOpAMPClient` overrides runtime methods such as `launch_agent_pr
 
 - keeps each file focused and easier to review
 - allows runtime behavior and server-dispatch behavior to evolve independently
-- reduces merge conflict pressure in one large `client.py`
+- reduces merge conflict pressure in one large concrete client module
 - provides clearer extension points for alternate client types
 
 ## Related files
 
-- `consumer/src/opamp_consumer/client.py`
+- `consumer/src/opamp_consumer/abstract_client.py`
+- `consumer/src/opamp_consumer/fluentbit_client.py`
 - `consumer/src/opamp_consumer/client_mixins.py`
 - `consumer/src/opamp_consumer/client_bootstrap.py`
 - `consumer/src/opamp_consumer/fluentd_client.py`

@@ -12,7 +12,7 @@
 
 import logging
 
-import opamp_consumer.client as client
+import opamp_consumer.fluentbit_client as client
 import pytest
 from opamp_consumer.exceptions import AgentException
 from opamp_consumer.proto import opamp_pb2

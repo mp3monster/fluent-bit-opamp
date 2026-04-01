@@ -8,13 +8,15 @@ Use this file as the default implementation contract for contributors and coding
 - Do not revert or rewrite unrelated local changes.
 - Avoid destructive repo commands unless explicitly requested.
 - Preserve backwards compatibility unless the task explicitly approves a breaking change.
+- In sandboxed Codex runs, do not pause to ask in chat before using elevated permissions; request escalation directly through the command/tool approval flow when required.
 
 ## Code standards
 
 - Target Python `>=3.10`.
 - Use descriptive names; avoid single-letter variable names.
 - Include Apache 2.0 license header with `mp3monster.org` attribution in non-generated Python files.
-- Add docstrings for public classes and methods, including purpose, inputs, and outputs. If a method implements an interface name the interface
+- Add docstrings for public classes and methods, including purpose, inputs, and outputs. If a method implements an interface, name the interface.
+- If a method is an override or specialized implementation of shared/common behavior, the docstring must explicitly describe what differs and why that implementation-specific behavior is required.
 - Prefer constants over repeated string literals and magic numbers.
 - constants should have descriptive comments explaining what they represent
 - Nested methods are discouraged
@@ -27,7 +29,7 @@ Use this file as the default implementation contract for contributors and coding
 - Keep consumer/provider config behavior consistent with:
   - `OPAMP_CONFIG_PATH`
   - `config/opamp.json`
-  - `consumer/opamp.json` and `tests/opamp.json` when applicable
+  - `tests/opamp.json` when applicable
 - For `consumer/src`, avoid raw string-key literals where constants exist (enforced by hook).
 - For OpAMP send/reporting logic, ensure resend cadence and flag updates are counted exactly once per successful send path.
 
