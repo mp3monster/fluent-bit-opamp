@@ -97,6 +97,8 @@ python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 
 - Provider Web UI: http://localhost:8080/ui
 - Help page: http://localhost:8080/help
+- Consumer diagram walkthrough (rendered PNGs): `docs/consumer_client_diagrams.md`
+- Provider/server diagram walkthrough (rendered PNGs): `docs/provider_server_diagrams.md`
 - Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
 - Running as a Linux daemon or Windows service (including consumer permissions to launch Fluent Bit/Fluentd): see `docs/service_daemon_setup.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.

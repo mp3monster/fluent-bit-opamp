@@ -6,6 +6,8 @@ This repository hosts a small OpAMP provider (server) and consumer (client) setu
 
 - [docs/README.md](docs/README.md) — full setup and run instructions.
 - [docs/index.md](docs/index.md) — documentation landing page and project overview.
+- [docs/consumer_client_diagrams.md](docs/consumer_client_diagrams.md) — rendered consumer client diagrams with walkthrough notes.
+- [docs/provider_server_diagrams.md](docs/provider_server_diagrams.md) — rendered provider/server diagrams with architecture walkthrough notes.
 - [docs/features.md](docs/features.md) — feature notes and design direction.
 - [docs/scripts.md](docs/scripts.md) — script reference table by platform.
 - [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.

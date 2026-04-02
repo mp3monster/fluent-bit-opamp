@@ -9,6 +9,9 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [OpAMP posts on blog.mp3monster.org](https://blog.mp3monster.org/category/technology/fluent-observability/opamp/) — external blog posts and updates.
 - [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
 - [docs/consumer_client_diagram.md](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
+- [docs/consumer_client_diagrams.md](consumer_client_diagrams.md) — rendered consumer diagrams with explanation per diagram panel.
+- [docs/provider_server_diagram.md](provider_server_diagram.md) — provider/server Mermaid source diagrams.
+- [docs/provider_server_diagrams.md](provider_server_diagrams.md) — rendered provider/server diagrams plus links to auth, endpoints, and command docs.
 - [docs/consumer_mixins.md](consumer_mixins.md) — how consumer mixins are composed, dispatched, and overridden.
 - [docs/consumer_update_controllers.md](consumer_update_controllers.md) — how full update controllers drive reporting flags and outbound message field cadence.
 - [docs/authentication.md](authentication.md) — bearer token auth modes, static-token setup, Keycloak/JWT setup, and MCP token usage.
