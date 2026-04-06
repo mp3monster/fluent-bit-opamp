@@ -14,9 +14,15 @@ KEYCLOAK_CLIENT_ID="${KEYCLOAK_CLIENT_ID:-opamp-mcp}"
 KEYCLOAK_CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-opamp-mcp-secret}"
 KEYCLOAK_USER="${KEYCLOAK_USER:-opamp-user}"
 KEYCLOAK_USER_PASSWORD="${KEYCLOAK_USER_PASSWORD:-opamp-password}"
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-}"
 
 KEYCLOAK_INTERNAL_URL="http://127.0.0.1:8080"
 KEYCLOAK_EXTERNAL_URL="http://127.0.0.1:${KEYCLOAK_HOST_PORT}"
+
+print_usage() {
+  echo "Usage: $0 [--ready-only]"
+  echo "Container runtime can be set with CONTAINER_RUNTIME=docker|podman"
+}
 
 require_command() {
   local command_name="$1"
@@ -26,17 +32,67 @@ require_command() {
   fi
 }
 
+runtime_info_ok() {
+  local runtime="$1"
+  if "${runtime}" info >/dev/null 2>&1; then
+    return
+  fi
+  return 1
+}
+
+select_container_runtime() {
+  if [[ -n "${CONTAINER_RUNTIME}" ]]; then
+    case "${CONTAINER_RUNTIME}" in
+      docker|podman)
+        ;;
+      *)
+        echo "Invalid CONTAINER_RUNTIME '${CONTAINER_RUNTIME}'. Expected 'docker' or 'podman'." >&2
+        exit 1
+        ;;
+    esac
+    require_command "${CONTAINER_RUNTIME}"
+    if runtime_info_ok "${CONTAINER_RUNTIME}"; then
+      return
+    fi
+  else
+    if command -v docker >/dev/null 2>&1 && runtime_info_ok docker; then
+      CONTAINER_RUNTIME="docker"
+      return
+    fi
+    if command -v podman >/dev/null 2>&1 && runtime_info_ok podman; then
+      CONTAINER_RUNTIME="podman"
+      return
+    fi
+    if command -v docker >/dev/null 2>&1; then
+      CONTAINER_RUNTIME="docker"
+    elif command -v podman >/dev/null 2>&1; then
+      CONTAINER_RUNTIME="podman"
+    else
+      echo "Missing required command: docker or podman" >&2
+      exit 1
+    fi
+  fi
+
+  cat >&2 <<'EOF'
+Container runtime is not reachable.
+Start Docker Desktop (or Podman service), then retry.
+If you use Docker Desktop on Windows, ensure Linux containers are enabled and run:
+  docker context use desktop-linux
+EOF
+  exit 1
+}
+
 ensure_container_running() {
-  if docker ps --format '{{.Names}}' | grep -Fx "${KEYCLOAK_CONTAINER_NAME}" >/dev/null 2>&1; then
+  if "${CONTAINER_RUNTIME}" ps --format '{{.Names}}' | grep -Fx "${KEYCLOAK_CONTAINER_NAME}" >/dev/null 2>&1; then
     return
   fi
-  if docker ps -a --format '{{.Names}}' | grep -Fx "${KEYCLOAK_CONTAINER_NAME}" >/dev/null 2>&1; then
+  if "${CONTAINER_RUNTIME}" ps -a --format '{{.Names}}' | grep -Fx "${KEYCLOAK_CONTAINER_NAME}" >/dev/null 2>&1; then
     echo "Starting existing Keycloak container ${KEYCLOAK_CONTAINER_NAME}..."
-    docker start "${KEYCLOAK_CONTAINER_NAME}" >/dev/null
+    "${CONTAINER_RUNTIME}" start "${KEYCLOAK_CONTAINER_NAME}" >/dev/null
     return
   fi
-  echo "Creating Keycloak container ${KEYCLOAK_CONTAINER_NAME}..."
-  docker run -d \
+  echo "Creating Keycloak container ${KEYCLOAK_CONTAINER_NAME} using ${CONTAINER_RUNTIME}..."
+  "${CONTAINER_RUNTIME}" run -d \
     --name "${KEYCLOAK_CONTAINER_NAME}" \
     -p "${KEYCLOAK_HOST_PORT}:8080" \
     -e KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN}" \
@@ -58,7 +114,7 @@ wait_for_keycloak() {
 }
 
 kcadm() {
-  docker exec "${KEYCLOAK_CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh "$@"
+  "${CONTAINER_RUNTIME}" exec "${KEYCLOAK_CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh "$@"
 }
 
 create_or_update_realm() {
@@ -118,12 +174,41 @@ create_or_update_user() {
 }
 
 main() {
-  require_command docker
+  local ready_only=false
+  if [[ $# -gt 1 ]]; then
+    print_usage >&2
+    exit 1
+  fi
+  if [[ $# -eq 1 ]]; then
+    case "$1" in
+      --ready-only)
+        ready_only=true
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        print_usage >&2
+        exit 1
+        ;;
+    esac
+  fi
+
+  select_container_runtime
   require_command curl
-  require_command python3
+  if ! $ready_only; then
+    require_command python3
+  fi
 
   ensure_container_running
   wait_for_keycloak
+
+  if $ready_only; then
+    echo "Keycloak container is ready on ${KEYCLOAK_EXTERNAL_URL} (runtime: ${CONTAINER_RUNTIME})."
+    return 0
+  fi
 
   echo "Authenticating Keycloak admin client..."
   kcadm config credentials \
@@ -138,6 +223,7 @@ main() {
 
   echo
   echo "Keycloak setup complete."
+  echo "Runtime: ${CONTAINER_RUNTIME}"
   echo "Realm: ${KEYCLOAK_REALM}"
   echo "Client ID: ${KEYCLOAK_CLIENT_ID}"
   echo "Client Secret: ${KEYCLOAK_CLIENT_SECRET}"

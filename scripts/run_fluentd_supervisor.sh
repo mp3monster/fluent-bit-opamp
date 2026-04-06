@@ -31,4 +31,4 @@ python3 -m pip show httpx >/dev/null 2>&1 || python3 -m pip install -r "${REPO_R
 rm -f "${PWD}/OpAMPSupervisor.signal"
 mkdir -p "${LOG_DIR}"
 rm -f "${LOG_FILE}"
-python3 -m opamp_consumer.fluentd_client --config-path "${CONFIG_PATH}" --fluentd-config-path "${FLUENTD_PATH}" "$@" 2>&1 | tee "${LOG_FILE}"
+python3 -m opamp_consumer.fluentd_client --config-path "${CONFIG_PATH}" --agent-config-path "${FLUENTD_PATH}" "$@" 2>&1 | tee "${LOG_FILE}"

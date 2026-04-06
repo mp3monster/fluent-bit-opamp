@@ -24,7 +24,7 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 if exist "%LOG_FILE%" del /f /q "%LOG_FILE%" >nul 2>&1
 where powershell >nul 2>&1
 if %errorlevel%==0 (
-  powershell -NoProfile -Command "python -m opamp_consumer.fluentd_client --config-path '%CONFIG_PATH%' --fluentd-config-path '%FLUENTD_PATH%' %* 2>&1 | Tee-Object -FilePath '%LOG_FILE%'"
+  powershell -NoProfile -Command "python -m opamp_consumer.fluentd_client --config-path '%CONFIG_PATH%' --agent-config-path '%FLUENTD_PATH%' %* 2>&1 | Tee-Object -FilePath '%LOG_FILE%'"
 ) else (
-  python -m opamp_consumer.fluentd_client --config-path "%CONFIG_PATH%" --fluentd-config-path "%FLUENTD_PATH%" %* > "%LOG_FILE%" 2>&1
+  python -m opamp_consumer.fluentd_client --config-path "%CONFIG_PATH%" --agent-config-path "%FLUENTD_PATH%" %* > "%LOG_FILE%" 2>&1
 )

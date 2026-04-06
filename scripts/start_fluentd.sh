@@ -6,10 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 FLUENTD_CONFIG_PATH="${REPO_ROOT}/consumer/fluentd.conf"
 if [ ! -f "${FLUENTD_CONFIG_PATH}" ]; then
-  FLUENTD_CONFIG_PATH="${REPO_ROOT}/tests/fluentd.conf"
-fi
-if [ ! -f "${FLUENTD_CONFIG_PATH}" ]; then
-  echo "No fluentd config file found at consumer/fluentd.conf or tests/fluentd.conf"
+  echo "No fluentd config file found at consumer/fluentd.conf"
   exit 1
 fi
 
@@ -20,4 +17,3 @@ fi
 
 echo "Starting fluentd with config: ${FLUENTD_CONFIG_PATH}"
 exec fluentd -c "${FLUENTD_CONFIG_PATH}" "$@"
-
