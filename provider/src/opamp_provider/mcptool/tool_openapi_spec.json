@@ -3,13 +3,42 @@
   "info": {
     "title": "OpAMP Provider Tool API",
     "version": "1.0.0",
-    "description": "OpenAPI specification for /tool endpoints."
+    "description": "OpenAPI specification for /tool endpoints. Bearer authentication is optional at deployment time; when enabled, protected /tool paths may return 401/403."
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Optional bearer auth. Enabled by provider auth configuration."
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
   },
   "paths": {
     "/tool/otelAgents": {
       "get": {
         "summary": "List connected agents",
         "description": "Returns agents that are not disconnected.",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
         "responses": {
           "200": {
             "description": "Connected agents returned successfully.",
@@ -35,6 +64,44 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorized. Returned when bearer auth is enabled and the Authorization header is missing or invalid.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer auth challenge for unauthorized requests.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Returned when bearer auth is enabled and the token is not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -43,6 +110,12 @@
       "get": {
         "summary": "List available commands",
         "description": "Returns all available commands, including OpAMP-standard and custom.",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
         "responses": {
           "200": {
             "description": "Commands returned successfully.",
@@ -68,6 +141,44 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorized. Returned when bearer auth is enabled and the Authorization header is missing or invalid.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer auth challenge for unauthorized requests.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Returned when bearer auth is enabled and the token is not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -76,9 +187,60 @@
       "get": {
         "summary": "Get tool API specification",
         "description": "Returns this OpenAPI specification document.",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
         "responses": {
           "200": {
-            "description": "Tool OpenAPI specification returned successfully."
+            "description": "Tool OpenAPI specification returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. Returned when bearer auth is enabled and the Authorization header is missing or invalid.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer auth challenge for unauthorized requests.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Returned when bearer auth is enabled and the token is not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }

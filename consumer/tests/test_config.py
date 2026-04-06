@@ -48,6 +48,61 @@ def test_allow_custom_capabilities_defaults_false_when_missing(
     assert loaded.allow_custom_capabilities is False
 
 
+def test_server_authorization_defaults_none_when_missing(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.server_authorization == consumer_config.SERVER_AUTHORIZATION_NONE
+
+
+def test_server_authorization_loads_from_canonical_key(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    raw["consumer"]["server-authorization"] = "config-var"
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.server_authorization == consumer_config.SERVER_AUTHORIZATION_CONFIG_VAR
+
+
+def test_server_authorization_ignores_removed_legacy_key(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    raw["consumer"]["use_authorization"] = "true"
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.server_authorization == consumer_config.SERVER_AUTHORIZATION_NONE
+
+
+def test_server_authorization_loads_idp_settings(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    raw["consumer"]["server-authorization"] = "idp"
+    raw["consumer"]["idp-token-url"] = "http://idp.example.com/token"
+    raw["consumer"]["idp-client-id"] = "client-id"
+    raw["consumer"]["idp-client-secret"] = "client-secret"
+    raw["consumer"]["idp-scope"] = "opamp.read"
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.server_authorization == consumer_config.SERVER_AUTHORIZATION_IDP
+    assert loaded.idp_token_url == "http://idp.example.com/token"
+    assert loaded.idp_client_id == "client-id"
+    assert loaded.idp_client_secret == "client-secret"
+    assert loaded.idp_scope == "opamp.read"
+
+
 def test_allow_custom_capabilities_true_when_configured(
     tmp_path, monkeypatch
 ) -> None:

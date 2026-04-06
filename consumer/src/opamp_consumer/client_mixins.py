@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -394,10 +395,25 @@ class ClientRuntimeMixin:
     _json_key_edition = "edition"
     _value_agent_type = "Agent"
 
+    def _resolve_launch_command(self, raw_command: list[str]) -> list[str]:
+        """Resolve the runtime executable from PATH and normalize Windows wrappers."""
+        executable = str(raw_command[0] if raw_command else "").strip()
+        if not executable:
+            raise FileNotFoundError("agent runtime command is empty")
+
+        resolved_executable = shutil.which(executable)
+        if not resolved_executable:
+            raise FileNotFoundError(executable)
+
+        command = [resolved_executable, *raw_command[1:]]
+        if os.name == "nt" and resolved_executable.lower().endswith((".bat", ".cmd")):
+            return ["cmd", "/c", resolved_executable, *raw_command[1:]]
+        return command
+
     def launch_agent_process(self) -> bool:
         """Launch the configured agent process using runtime command metadata."""
         logger = logging.getLogger(__name__)
-        command = [
+        raw_command = [
             self._runtime_agent_command,
             *(self.config.agent_additional_params or []),
             self._runtime_config_flag,
@@ -406,9 +422,11 @@ class ClientRuntimeMixin:
         logger.debug(
             "About to start agent process with config %s and command %s",
             self.config.agent_config_path,
-            command,
+            raw_command,
         )
         try:
+            command = self._resolve_launch_command(raw_command)
+            logger.debug("Resolved runtime command: %s", command)
             with self.data.process_lock:
                 process_response: subprocess.Popen[bytes] = subprocess.Popen(command)
                 self.data.agent_process = process_response

@@ -37,6 +37,8 @@ def disable_auth_by_default(monkeypatch):
     monkeypatch.delenv(provider_auth.ENV_AUTH_JWT_AUDIENCE, raising=False)
     monkeypatch.delenv(provider_auth.ENV_AUTH_JWT_JWKS_URL, raising=False)
     monkeypatch.delenv(provider_auth.ENV_AUTH_JWT_LEEWAY_SECONDS, raising=False)
+    monkeypatch.delenv(provider_auth.ENV_AUTH_IDP_LOGIN_URL, raising=False)
+    monkeypatch.delenv(provider_auth.ENV_AUTH_IDP_CLIENT_ID, raising=False)
     monkeypatch.delenv(provider_auth.ENV_AUTH_PROTECTED_PATH_PREFIXES, raising=False)
     provider_auth.reload_auth_settings()
     yield

@@ -13,6 +13,9 @@
 import asyncio
 import logging
 
+import httpx
+import opamp_consumer.abstract_client as abstract_client
+import opamp_consumer.client_mixins as client_mixins
 import opamp_consumer.fluentbit_client as client
 import pytest
 from opamp_consumer.exceptions import AgentException
@@ -131,6 +134,15 @@ def test_terminate_agent_process_terminates_only_launched_process(monkeypatch) -
     monkeypatch.setattr(
         client.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess()
     )
+    monkeypatch.setattr(
+        client_mixins.shutil,
+        "which",
+        lambda executable: (
+            "/usr/bin/fluent-bit"
+            if executable == "fluent-bit"
+            else None
+        ),
+    )
 
     instance.launch_agent_process()
     assert instance.data.agent_process is not None
@@ -171,3 +183,199 @@ def test_restart_agent_process_raises_on_failed_launch(monkeypatch) -> None:
 
     with pytest.raises(AgentException):
         instance.restart_agent_process()
+
+
+def test_send_http_passes_authorization_header_for_env_var_mode(monkeypatch) -> None:
+    """HTTP send should attach Authorization header in env-var auth mode."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "env-var"
+    monkeypatch.setenv(abstract_client.ENV_OPAMP_TOKEN, "consumer-token")
+    captured = {}
+
+    async def _fake_send_http_message(**kwargs):
+        captured.update(kwargs)
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(abstract_client, "send_http_message", _fake_send_http_message)
+
+    response = asyncio.run(instance.send_http(opamp_pb2.AgentToServer()))
+    assert response is not None
+    assert captured["authorization_header"] == "Bearer consumer-token"
+
+
+def test_send_websocket_passes_authorization_header_for_config_var_mode(
+    monkeypatch,
+) -> None:
+    """WebSocket send should attach Authorization header in config-var auth mode."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "config-var"
+    instance.config.opamp_token = "ws-token"
+    captured = {}
+
+    async def _fake_send_websocket_message(**kwargs):
+        captured.update(kwargs)
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(
+        abstract_client,
+        "send_websocket_message",
+        _fake_send_websocket_message,
+    )
+
+    response = asyncio.run(instance.send_websocket(opamp_pb2.AgentToServer()))
+    assert response is not None
+    assert captured["authorization_header"] == "Bearer ws-token"
+
+
+def test_authorization_header_is_none_when_mode_none() -> None:
+    """Header generation should be skipped when server-authorization is none."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "none"
+
+    assert asyncio.run(instance._resolve_authorization_header_value()) is None
+    assert instance.config.server_authorization_header_value is None
+
+
+def test_authorization_header_env_var_uses_opamp_token(monkeypatch) -> None:
+    """Env-var mode should use OpAMP-token environment variable."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "env-var"
+    monkeypatch.setenv(abstract_client.ENV_OPAMP_TOKEN, "consumer-token")
+
+    header = asyncio.run(instance._resolve_authorization_header_value())
+    assert header == "Bearer consumer-token"
+
+
+def test_authorization_header_raises_when_env_var_missing(monkeypatch) -> None:
+    """Env-var mode should error when no supported env token is configured."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "env-var"
+    monkeypatch.delenv(abstract_client.ENV_OPAMP_TOKEN, raising=False)
+
+    with pytest.raises(ValueError, match="server-authorization=env-var"):
+        asyncio.run(instance._resolve_authorization_header_value())
+
+
+def test_idp_mode_requests_token_and_records_header(monkeypatch) -> None:
+    """IDP mode should fetch token from IdP and record header name/value on config."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "idp"
+    instance.config.idp_token_url = "http://idp.example.com/token"
+    instance.config.idp_client_id = "client-id"
+    instance.config.idp_client_secret = "client-secret"
+    instance.config.idp_scope = "opamp.read"
+    instance.config.server_authorization_header_value = None
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"access_token": "idp-token", "token_type": "Bearer"}
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            assert url == "http://idp.example.com/token"
+            assert data["grant_type"] == "client_credentials"
+            assert data["client_id"] == "client-id"
+            assert data["client_secret"] == "client-secret"
+            assert data["scope"] == "opamp.read"
+            return FakeResponse()
+
+    monkeypatch.setattr(abstract_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    header = asyncio.run(instance._resolve_authorization_header_value())
+    assert header == "Bearer idp-token"
+    assert instance.config.server_authorization_header_name == "Authorization"
+    assert instance.config.server_authorization_header_value == "Bearer idp-token"
+
+
+def test_idp_mode_retries_http_after_auth_error(monkeypatch) -> None:
+    """IDP mode should renegotiate credentials and retry once after HTTP 401."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "idp"
+    instance.config.server_authorization_header_value = "Bearer old-token"
+    calls = {"count": 0, "refresh": 0}
+
+    async def _fake_refresh():
+        calls["refresh"] += 1
+        instance.config.server_authorization_header_value = "Bearer new-token"
+        return "Bearer new-token"
+
+    async def _fake_send_http_message(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request("POST", "http://localhost/v1/opamp")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError(
+                "unauthorized",
+                request=request,
+                response=response,
+            )
+        assert kwargs["authorization_header"] == "Bearer new-token"
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(
+        instance,
+        "_refresh_idp_authorization_header",
+        _fake_refresh,
+    )
+    monkeypatch.setattr(abstract_client, "send_http_message", _fake_send_http_message)
+
+    response = asyncio.run(instance.send_http(opamp_pb2.AgentToServer()))
+    assert response is not None
+    assert calls["count"] == 2
+    assert calls["refresh"] == 1
+
+
+def test_idp_mode_retries_websocket_after_auth_error(monkeypatch) -> None:
+    """IDP mode should renegotiate credentials and retry once after websocket auth failure."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.server_authorization = "idp"
+    instance.config.server_authorization_header_value = "Bearer old-token"
+    calls = {"count": 0, "refresh": 0}
+
+    class FakeWebSocketAuthError(Exception):
+        status_code = 403
+
+    async def _fake_refresh():
+        calls["refresh"] += 1
+        instance.config.server_authorization_header_value = "Bearer ws-new-token"
+        return "Bearer ws-new-token"
+
+    async def _fake_send_websocket_message(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise FakeWebSocketAuthError("forbidden")
+        assert kwargs["authorization_header"] == "Bearer ws-new-token"
+        reply = opamp_pb2.ServerToAgent()
+        reply.instance_uid = instance.data.uid_instance
+        return reply
+
+    monkeypatch.setattr(
+        instance,
+        "_refresh_idp_authorization_header",
+        _fake_refresh,
+    )
+    monkeypatch.setattr(
+        abstract_client,
+        "send_websocket_message",
+        _fake_send_websocket_message,
+    )
+
+    response = asyncio.run(instance.send_websocket(opamp_pb2.AgentToServer()))
+    assert response is not None
+    assert calls["count"] == 2
+    assert calls["refresh"] == 1

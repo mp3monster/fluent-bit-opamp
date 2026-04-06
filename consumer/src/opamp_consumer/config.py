@@ -35,15 +35,19 @@ CFG_CONSUMER = "consumer"  # Top-level JSON section name for consumer settings.
 CFG_SERVER_URL = "server_url"  # Consumer JSON key for provider URL.
 CFG_SERVER_PORT = "server_port"  # Consumer JSON key for provider port.
 CFG_AGENT_CONFIG_PATH = "agent_config_path"  # Consumer JSON key for agent config file path.
-CFG_FLUENTBIT_CONFIG_PATH = "fluentbit_config_path"  # Backward-compatible legacy key.
 CFG_AGENT_ADDITIONAL_PARAMS = "agent_additional_params"  # Consumer JSON key for extra agent CLI args.
-CFG_ADDITIONAL_AGENT_PARAMS = "additional_agent_params"  # Backward-compatible legacy key.
-CFG_ADDITIONAL_FLUENTBIT_PARAMS = "additional_fluent_bit_params"  # Backward-compatible legacy key.
 CFG_HEARTBEAT_FREQUENCY = "heartbeat_frequency"  # Consumer JSON key for heartbeat interval seconds.
 CFG_LOG_LEVEL = "log_level"  # Consumer JSON key for logging level override.
 CFG_SERVICE_NAME = "service_name"  # Consumer JSON key for service.name override.
 CFG_SERVICE_NAMESPACE = "service_namespace"  # Consumer JSON key for service.namespace override.
 CFG_TRANSPORT = "transport"  # Consumer JSON key for selected transport mode.
+CFG_SERVER_AUTHORIZATION = "server-authorization"  # Consumer JSON key controlling outbound provider authorization mode.
+CFG_OPAMP_TOKEN = "OpAMP-token"  # Consumer JSON key for static OpAMP token value.
+CFG_IDP_TOKEN_URL = "idp-token-url"  # Consumer JSON key for IdP token endpoint URL.
+CFG_IDP_CLIENT_ID = "idp-client-id"  # Consumer JSON key for IdP client ID.
+CFG_IDP_CLIENT_SECRET = "idp-client-secret"  # Consumer JSON key for IdP client secret.
+CFG_IDP_SCOPE = "idp-scope"  # Consumer JSON key for IdP OAuth scope.
+CFG_IDP_GRANT_TYPE = "idp-grant-type"  # Consumer JSON key for IdP OAuth grant type.
 CFG_LOG_AGENT_API_RESPONSES = "log_agent_api_responses"  # Consumer JSON key enabling verbose API logging.
 CFG_ALLOW_CUSTOM_CAPABILITIES = "allow_custom_capabilities"  # Consumer JSON key allowing dynamic custom capabilities.
 CFG_CLIENT_STATUS_PORT = "client_status_port"  # Consumer JSON key for local status endpoint port.
@@ -58,6 +62,12 @@ HARDWIRED_AGENT_CAPABILITY_NAMES = (  # Built-in capabilities always advertised 
 DEFAULT_LOG_LEVEL = "debug"  # Default consumer log level when unspecified.
 DEFAULT_FULL_UPDATE_CONTROLLER: dict[str, int] = {"fullResendAfter": 1}  # Default controller settings payload.
 DEFAULT_FULL_UPDATE_CONTROLLER_TYPE = "SentCount"  # Default full-update controller implementation name.
+SERVER_AUTHORIZATION_NONE = "none"  # Disable outbound provider Authorization header usage.
+SERVER_AUTHORIZATION_ENV_VAR = "env-var"  # Read outbound provider token from environment.
+SERVER_AUTHORIZATION_CONFIG_VAR = "config-var"  # Read outbound provider token from config file.
+SERVER_AUTHORIZATION_IDP = "idp"  # Obtain outbound provider token from an IdP token endpoint.
+DEFAULT_SERVER_AUTHORIZATION = SERVER_AUTHORIZATION_NONE  # Default outbound provider authorization mode.
+DEFAULT_IDP_GRANT_TYPE = "client_credentials"  # Default OAuth grant type for IdP token requests.
 
 
 @dataclass
@@ -103,6 +113,24 @@ class ConsumerConfig:
         None  # Service namespace reported in AgentDescription attributes.
     )
     transport: str | None = None  # Active OpAMP transport mode (http or websocket).
+    server_authorization: str = (
+        DEFAULT_SERVER_AUTHORIZATION
+        # Outbound provider authorization mode: none | env-var | config-var | idp.
+    )
+    opamp_token: str | None = (
+        None  # Optional static OpAMP token used when server_authorization=config-var.
+    )
+    idp_token_url: str | None = None  # IdP token endpoint used when server_authorization=idp.
+    idp_client_id: str | None = None  # IdP OAuth client ID.
+    idp_client_secret: str | None = None  # IdP OAuth client secret.
+    idp_scope: str | None = None  # Optional IdP OAuth scope.
+    idp_grant_type: str = DEFAULT_IDP_GRANT_TYPE  # IdP OAuth grant type.
+    server_authorization_header_name: str = (
+        "Authorization"  # Runtime header name used for outbound authorization.
+    )
+    server_authorization_header_value: str | None = (
+        None  # Runtime header value used for outbound authorization.
+    )
     log_agent_api_responses: bool | None = (
         None  # Whether to log verbose API response payloads.
     )
@@ -128,28 +156,6 @@ class ConsumerConfig:
             value: Value to assign to the target attribute.
         """
         return setattr(self, key, value)
-
-    @property
-    def http_listen(self) -> str | None:
-        """Backward-compatible alias for `agent_http_listen`."""
-        return self.agent_http_listen
-
-    @http_listen.setter
-    def http_listen(self, value: str | None) -> None:
-        """Keep legacy `http_listen` assignments synchronized to `agent_http_listen`."""
-        if value:
-            self.agent_http_listen = value
-
-    @property
-    def http_server(self) -> str | None:
-        """Backward-compatible alias for `agent_http_server`."""
-        return self.agent_http_server
-
-    @http_server.setter
-    def http_server(self, value: str | None) -> None:
-        """Keep legacy `http_server` assignments synchronized to `agent_http_server`."""
-        if value:
-            self.agent_http_server = value
 
 
 def resolve_log_level(log_level: str) -> int:
@@ -223,15 +229,6 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding=UTF8_ENCODING))
 
 
-def _pick_first_defined(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
-    """Return the first non-None value found for the provided keys."""
-    for key in keys:
-        value = mapping.get(key)
-        if value is not None:
-            return value
-    return None
-
-
 def _resolve_config_value(
     *,
     mapping: dict[str, Any],
@@ -239,12 +236,9 @@ def _resolve_config_value(
     logger: logging.Logger,
     override: Any | None = None,
     default: Any | None = None,
-    legacy_keys: tuple[str, ...] = (),
 ) -> Any:
-    """Resolve a config value from canonical key, optional legacy keys, and CLI override."""
+    """Resolve a config value from canonical key and CLI override."""
     value = mapping.get(key, default)
-    if value is None and legacy_keys:
-        value = _pick_first_defined(mapping, legacy_keys)
     if override is not None:
         logger.info("cli override %s.%s; ignoring config value", CFG_CONSUMER, key)
         return override
@@ -254,6 +248,53 @@ def _resolve_config_value(
 def _coerce_optional_int(value: Any) -> int | None:
     """Convert optional numeric input to int or None."""
     return int(value) if value is not None else None
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Convert common JSON boolean forms to bool with a default fallback."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    """Convert optional values to stripped strings, preserving None/empty."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_server_authorization(value: Any) -> str:
+    """Normalize server authorization mode from canonical config values."""
+    if value is None:
+        return DEFAULT_SERVER_AUTHORIZATION
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return DEFAULT_SERVER_AUTHORIZATION
+    if normalized in {
+        SERVER_AUTHORIZATION_NONE,
+        SERVER_AUTHORIZATION_ENV_VAR,
+        SERVER_AUTHORIZATION_CONFIG_VAR,
+        SERVER_AUTHORIZATION_IDP,
+    }:
+        return normalized
+    logging.getLogger(__name__).warning(
+        "invalid %s.%s value %r; defaulting to %s",
+        CFG_CONSUMER,
+        CFG_SERVER_AUTHORIZATION,
+        value,
+        DEFAULT_SERVER_AUTHORIZATION,
+    )
+    return DEFAULT_SERVER_AUTHORIZATION
 
 
 def _validate_heartbeat_frequency(value: Any) -> int:
@@ -277,6 +318,14 @@ def load_config() -> ConsumerConfig:
     service_name = consumer_raw.get(CFG_SERVICE_NAME)
     service_namespace = consumer_raw.get(CFG_SERVICE_NAMESPACE)
     transport = consumer_raw.get(CFG_TRANSPORT, DEFAULT_TRANSPORT)
+    server_authorization_raw = consumer_raw.get(CFG_SERVER_AUTHORIZATION)
+    server_authorization = _normalize_server_authorization(server_authorization_raw)
+    opamp_token = _coerce_optional_str(consumer_raw.get(CFG_OPAMP_TOKEN))
+    idp_token_url = _coerce_optional_str(consumer_raw.get(CFG_IDP_TOKEN_URL))
+    idp_client_id = _coerce_optional_str(consumer_raw.get(CFG_IDP_CLIENT_ID))
+    idp_client_secret = _coerce_optional_str(consumer_raw.get(CFG_IDP_CLIENT_SECRET))
+    idp_scope = _coerce_optional_str(consumer_raw.get(CFG_IDP_SCOPE))
+    idp_grant_type = str(consumer_raw.get(CFG_IDP_GRANT_TYPE) or DEFAULT_IDP_GRANT_TYPE)
     log_agent_api_responses = consumer_raw.get(CFG_LOG_AGENT_API_RESPONSES, False)
     allow_custom_capabilities = bool(
         consumer_raw.get(CFG_ALLOW_CUSTOM_CAPABILITIES, False)
@@ -287,17 +336,11 @@ def load_config() -> ConsumerConfig:
 
     if not server_url:
         logger.warning("%s.%s is required", CFG_CONSUMER, CFG_SERVER_URL)
-    agent_config_path = consumer_raw.get(CFG_AGENT_CONFIG_PATH)
-    if agent_config_path is None:
-        agent_config_path = consumer_raw.get(CFG_FLUENTBIT_CONFIG_PATH, ".")
+    agent_config_path = consumer_raw.get(CFG_AGENT_CONFIG_PATH, ".")
 
     if not agent_config_path:
         logger.warning("%s.%s is expected", CFG_CONSUMER, CFG_AGENT_CONFIG_PATH)
     additional_params = consumer_raw.get(CFG_AGENT_ADDITIONAL_PARAMS)
-    if additional_params is None:
-        additional_params = consumer_raw.get(CFG_ADDITIONAL_AGENT_PARAMS)
-    if additional_params is None:
-        additional_params = consumer_raw.get(CFG_ADDITIONAL_FLUENTBIT_PARAMS)
 
     if additional_params is None:
         logger.info("%s.%s no settings", CFG_CONSUMER, CFG_AGENT_ADDITIONAL_PARAMS)
@@ -331,6 +374,19 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer service_name: %s", service_name)
     logger.info("loaded consumer service_namespace: %s", service_namespace)
     logger.info("loaded consumer transport: %s", transport)
+    logger.info("loaded consumer server_authorization: %s", server_authorization)
+    logger.info(
+        "loaded consumer opamp_token configured: %s",
+        bool(opamp_token),
+    )
+    logger.info("loaded consumer idp_token_url: %s", idp_token_url)
+    logger.info("loaded consumer idp_client_id: %s", idp_client_id)
+    logger.info(
+        "loaded consumer idp_client_secret configured: %s",
+        bool(idp_client_secret),
+    )
+    logger.info("loaded consumer idp_scope: %s", idp_scope)
+    logger.info("loaded consumer idp_grant_type: %s", idp_grant_type)
     logger.info(
         "loaded consumer log_agent_api_responses: %s",
         log_agent_api_responses,
@@ -364,6 +420,13 @@ def load_config() -> ConsumerConfig:
         service_name=service_name,
         service_namespace=service_namespace,
         transport=transport,
+        server_authorization=server_authorization,
+        opamp_token=opamp_token,
+        idp_token_url=idp_token_url,
+        idp_client_id=idp_client_id,
+        idp_client_secret=idp_client_secret,
+        idp_scope=idp_scope,
+        idp_grant_type=idp_grant_type,
         log_agent_api_responses=bool(log_agent_api_responses),
         allow_custom_capabilities=allow_custom_capabilities,
         client_status_port=(
@@ -408,14 +471,12 @@ def load_config_with_overrides(
         key=CFG_AGENT_CONFIG_PATH,
         logger=logger,
         override=agent_config_path,
-        legacy_keys=(CFG_FLUENTBIT_CONFIG_PATH,),
     )
     resolved_additional_params = _resolve_config_value(
         mapping=consumer_raw,
         key=CFG_AGENT_ADDITIONAL_PARAMS,
         logger=logger,
         override=agent_additional_params,
-        legacy_keys=(CFG_ADDITIONAL_AGENT_PARAMS, CFG_ADDITIONAL_FLUENTBIT_PARAMS),
     )
     resolved_heartbeat_frequency = _resolve_config_value(
         mapping=consumer_raw,
@@ -444,6 +505,24 @@ def load_config_with_overrides(
         logger=logger,
         default=DEFAULT_FULL_UPDATE_CONTROLLER_TYPE,
     )
+    resolved_server_authorization = _normalize_server_authorization(
+        _resolve_config_value(
+            mapping=consumer_raw,
+            key=CFG_SERVER_AUTHORIZATION,
+            logger=logger,
+            default=None,
+        )
+    )
+    resolved_opamp_token = _coerce_optional_str(consumer_raw.get(CFG_OPAMP_TOKEN))
+    resolved_idp_token_url = _coerce_optional_str(consumer_raw.get(CFG_IDP_TOKEN_URL))
+    resolved_idp_client_id = _coerce_optional_str(consumer_raw.get(CFG_IDP_CLIENT_ID))
+    resolved_idp_client_secret = _coerce_optional_str(
+        consumer_raw.get(CFG_IDP_CLIENT_SECRET)
+    )
+    resolved_idp_scope = _coerce_optional_str(consumer_raw.get(CFG_IDP_SCOPE))
+    resolved_idp_grant_type = str(
+        consumer_raw.get(CFG_IDP_GRANT_TYPE) or DEFAULT_IDP_GRANT_TYPE
+    )
 
     if not resolved_agent_config_path:
         raise ValueError(f"{CFG_CONSUMER}.{CFG_AGENT_CONFIG_PATH} is required")
@@ -467,6 +546,13 @@ def load_config_with_overrides(
         service_name=consumer_raw.get(CFG_SERVICE_NAME),
         service_namespace=consumer_raw.get(CFG_SERVICE_NAMESPACE),
         transport=consumer_raw.get(CFG_TRANSPORT, DEFAULT_TRANSPORT),
+        server_authorization=resolved_server_authorization,
+        opamp_token=resolved_opamp_token,
+        idp_token_url=resolved_idp_token_url,
+        idp_client_id=resolved_idp_client_id,
+        idp_client_secret=resolved_idp_client_secret,
+        idp_scope=resolved_idp_scope,
+        idp_grant_type=resolved_idp_grant_type,
         log_agent_api_responses=bool(
             consumer_raw.get(CFG_LOG_AGENT_API_RESPONSES, False)
         ),

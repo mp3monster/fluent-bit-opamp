@@ -47,6 +47,11 @@ Here's the markdown table for `ServerToAgent` message fields:
 | `custom_capabilities`  | Development | Done                 | Declares custom/extension capabilities supported by the Server. | This is support the ChatOps concept |
 | `custom_message`       | Development | Done                | An arbitrary custom message sent from the Server to the Agent, scoped to a declared custom capability. | This is support the ChatOps concept |
 
+Connection settings policy note:
+
+- We intentionally do not support `ReportsOwnTraces`, `ReportsOwnMetrics`, or `ReportsOwnLogs` as direct connection-settings management features in this project.
+- See the configuration policy in [consumer/README.md](../consumer/README.md#connection-settings).
+	
 ## Immediate ToDos
 
 ### Client Side

@@ -14,8 +14,9 @@ import logging
 
 import opamp_consumer.fluentbit_client as client
 from opamp_consumer.config import ConsumerConfig
-from opamp_consumer.fluentbit_client import CAPABILITIES_MAP, CONFIG_DOCS_URL
+from opamp_consumer.fluentbit_client import CONFIG_DOCS_URL
 from opamp_consumer.proto import opamp_pb2
+from shared.opamp_config import AGENT_CAPABILITIES_MAP
 
 
 def _set_config(agent_capabilities) -> None:
@@ -41,9 +42,9 @@ def test_get_agent_capabilities_from_names(caplog) -> None:
 
     mask = instance.get_agent_capabilities()
     expected = (
-        CAPABILITIES_MAP["ReportsStatus"]
-        | CAPABILITIES_MAP["AcceptsRestartCommand"]
-        | CAPABILITIES_MAP["ReportsHealth"]
+        AGENT_CAPABILITIES_MAP["ReportsStatus"]
+        | AGENT_CAPABILITIES_MAP["AcceptsRestartCommand"]
+        | AGENT_CAPABILITIES_MAP["ReportsHealth"]
     )
     assert mask == expected
     assert "unknown agent capability" not in caplog.text
@@ -57,9 +58,9 @@ def test_get_agent_capabilities_warns_unknown(caplog) -> None:
 
     mask = instance.get_agent_capabilities()
     assert mask == (
-        CAPABILITIES_MAP["ReportsStatus"]
-        | CAPABILITIES_MAP["AcceptsRestartCommand"]
-        | CAPABILITIES_MAP["ReportsHealth"]
+        AGENT_CAPABILITIES_MAP["ReportsStatus"]
+        | AGENT_CAPABILITIES_MAP["AcceptsRestartCommand"]
+        | AGENT_CAPABILITIES_MAP["ReportsHealth"]
     )
     assert "unknown agent capability" not in caplog.text
 
@@ -105,7 +106,7 @@ def test_handle_flags_logs_names_and_sets_all_for_report_full_state(caplog) -> N
     """handle_flags should decode names and set all flags when ReportFullState is present."""
     _set_config(["ReportsStatus"])
     instance = client.OpAMPClient("http://localhost")
-    instance.data.set_all_flags(False)
+    instance.data.set_all_reporting_flags(False)
     caplog.set_level(logging.INFO)
 
     instance.handle_flags(
@@ -122,7 +123,7 @@ def test_handle_flags_without_report_full_state_does_not_set_all() -> None:
     """handle_flags should not force-enable reporting flags without ReportFullState."""
     _set_config(["ReportsStatus"])
     instance = client.OpAMPClient("http://localhost")
-    instance.data.set_all_flags(False)
+    instance.data.set_all_reporting_flags(False)
 
     instance.handle_flags(
         opamp_pb2.ServerToAgentFlags.ServerToAgentFlags_ReportAvailableComponents

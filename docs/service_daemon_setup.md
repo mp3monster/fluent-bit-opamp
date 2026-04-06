@@ -85,7 +85,7 @@ User=opamp
 Group=opamp
 WorkingDirectory=/opt/opamp
 Environment=OPAMP_CONFIG_PATH=/opt/opamp/config/opamp.json
-ExecStart=/opt/opamp/.venv/bin/opamp-consumer-fluentd --config-path /opt/opamp/config/opamp.json --fluentd-config-path /opt/opamp/consumer/fluentd.conf
+ExecStart=/opt/opamp/.venv/bin/opamp-consumer-fluentd --config-path /opt/opamp/config/opamp.json --agent-config-path /opt/opamp/consumer/fluentd.conf
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:/var/log/opamp/consumer-fluentd.log
@@ -142,7 +142,7 @@ nssm start OpAMPConsumerFluentBit
 ### 4. Consumer service example (Fluentd)
 
 ```powershell
-nssm install OpAMPConsumerFluentd "D:\dev\opamp\.venv\Scripts\python.exe" "-m opamp_consumer.fluentd_client --config-path D:\dev\opamp\config\opamp.json --fluentd-config-path D:\dev\opamp\consumer\fluentd.conf"
+nssm install OpAMPConsumerFluentd "D:\dev\opamp\.venv\Scripts\python.exe" "-m opamp_consumer.fluentd_client --config-path D:\dev\opamp\config\opamp.json --agent-config-path D:\dev\opamp\consumer\fluentd.conf"
 nssm set OpAMPConsumerFluentd AppDirectory "D:\dev\opamp"
 nssm set OpAMPConsumerFluentd AppEnvironmentExtra "OPAMP_CONFIG_PATH=D:\dev\opamp\config\opamp.json"
 nssm start OpAMPConsumerFluentd

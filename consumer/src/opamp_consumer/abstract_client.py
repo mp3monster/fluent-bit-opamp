@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import platform
 import socket
@@ -23,6 +24,8 @@ import threading
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
+
+import httpx
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.client_bootstrap import resolve_service_instance_id_template_with_values
@@ -48,7 +51,6 @@ from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import anyvalue_pb2, opamp_pb2
 from opamp_consumer.reporting_flag import ReportingFlag
 from shared.opamp_config import (
-    AGENT_CAPABILITIES_MAP,
     OPAMP_HTTP_PATH,
     AgentCapabilities,
     parse_capabilities,
@@ -73,11 +75,12 @@ CAPABILITY_PREFIX_REQUEST = "request:"  # Prefix used for custom request capabil
 HOST_META_KEY_OS_TYPE = "os_type"  # Host metadata key for OS type.
 HOST_META_KEY_OS_VERSION = "os_version"  # Host metadata key for OS version.
 HOST_META_KEY_HOSTNAME = "hostname"  # Host metadata key for hostname.
-# Keep a local alias for backward compatibility with existing imports/tests.
-CAPABILITIES_MAP = AGENT_CAPABILITIES_MAP  # Backward-compatible alias to shared capability map.
 CONFIG_DOCS_URL = (
     "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
 )
+ENV_OPAMP_TOKEN = "OpAMP-token"  # Requested env var name for outbound OpAMP token.
+HEADER_AUTHORIZATION = "Authorization"  # HTTP/WebSocket header key for provider auth token.
+AUTH_RETRY_STATUS_CODES = {401, 403}  # Status codes that trigger IDP credential renegotiation.
 
 
 def _config_parameters_payload(config: ConsumerConfig) -> dict[str, object]:
@@ -125,20 +128,6 @@ class OpAMPClientData:
         """
         ReportingFlag.set_all_reporting_flags(self.reporting_flags, value)
 
-    def set_all_flags(self, value: bool = True) -> None:
-        """Backward-compatible alias to set all reporting flags."""
-        self.set_all_reporting_flags(value)
-
-    @property
-    def FullUpdateController(self) -> FullUpdateControllerInterface | None:
-        """Backward-compatible alias for full update controller object."""
-        return self.full_update_controller
-
-    @FullUpdateController.setter
-    def FullUpdateController(self, value: FullUpdateControllerInterface | None) -> None:
-        """Backward-compatible alias setter for full update controller object."""
-        self.full_update_controller = value
-
 
 class AbstractOpAMPClient(
     ClientRuntimeMixin, ServerMessageHandlingMixin, OpAMPClientInterface, ABC
@@ -170,7 +159,7 @@ class AbstractOpAMPClient(
             config=config,
             base_url=base_url.rstrip("/"),
         )
-        self.data.FullUpdateController = self._create_full_update_controller()
+        self.data.full_update_controller = self._create_full_update_controller()
         self._custom_handler_folder = self.get_custom_handler_folder()
         self._custom_handler_lookup = build_factory_lookup(
             self._custom_handler_folder,
@@ -257,12 +246,31 @@ class AbstractOpAMPClient(
         Returns:
             Parsed ServerToAgent reply from the provider.
         """
-        return await send_http_message(
-            msg=msg,
-            base_url=self.data.base_url,
-            opamp_http_path=OPAMP_HTTP_PATH,
-            handle_reply=self._handle_server_to_agent,
-        )
+        authorization_header = await self._resolve_authorization_header_value()
+        try:
+            return await send_http_message(
+                msg=msg,
+                base_url=self.data.base_url,
+                opamp_http_path=OPAMP_HTTP_PATH,
+                handle_reply=self._handle_server_to_agent,
+                authorization_header=authorization_header,
+            )
+        except Exception as err:
+            if not self._should_retry_idp_authorization(err):
+                raise
+            logging.getLogger(__name__).info(
+                "HTTP auth failure detected; renegotiating IDP token and retrying request"
+            )
+            authorization_header = await self._resolve_authorization_header_value(
+                force_refresh=True
+            )
+            return await send_http_message(
+                msg=msg,
+                base_url=self.data.base_url,
+                opamp_http_path=OPAMP_HTTP_PATH,
+                handle_reply=self._handle_server_to_agent,
+                authorization_header=authorization_header,
+            )
 
     def _populate_agent_to_server_health(
         self, msg: opamp_pb2.AgentToServer
@@ -375,12 +383,189 @@ class AbstractOpAMPClient(
         Returns:
             Parsed ServerToAgent reply from the provider.
         """
-        return await send_websocket_message(
-            msg=msg,
-            base_url=self.data.base_url,
-            opamp_http_path=OPAMP_HTTP_PATH,
-            handle_reply=self._handle_server_to_agent,
+        authorization_header = await self._resolve_authorization_header_value()
+        try:
+            return await send_websocket_message(
+                msg=msg,
+                base_url=self.data.base_url,
+                opamp_http_path=OPAMP_HTTP_PATH,
+                handle_reply=self._handle_server_to_agent,
+                authorization_header=authorization_header,
+            )
+        except Exception as err:
+            if not self._should_retry_idp_authorization(err):
+                raise
+            logging.getLogger(__name__).info(
+                "WebSocket auth failure detected; renegotiating IDP token and retrying request"
+            )
+            authorization_header = await self._resolve_authorization_header_value(
+                force_refresh=True
+            )
+            return await send_websocket_message(
+                msg=msg,
+                base_url=self.data.base_url,
+                opamp_http_path=OPAMP_HTTP_PATH,
+                handle_reply=self._handle_server_to_agent,
+                authorization_header=authorization_header,
+            )
+
+    def _server_authorization_mode(self) -> str:
+        """Return normalized configured server authorization mode."""
+        raw_mode = str(
+            self.config.server_authorization or consumer_config.DEFAULT_SERVER_AUTHORIZATION
+        ).strip().lower()
+        if raw_mode in (
+            consumer_config.SERVER_AUTHORIZATION_NONE,
+            consumer_config.SERVER_AUTHORIZATION_ENV_VAR,
+            consumer_config.SERVER_AUTHORIZATION_CONFIG_VAR,
+            consumer_config.SERVER_AUTHORIZATION_IDP,
+        ):
+            return raw_mode
+        return consumer_config.DEFAULT_SERVER_AUTHORIZATION
+
+    def _record_authorization_header(
+        self,
+        *,
+        header_name: str,
+        header_value: str | None,
+    ) -> None:
+        """Persist active outbound authorization header details onto client config."""
+        self.config.server_authorization_header_name = str(header_name or HEADER_AUTHORIZATION)
+        self.config.server_authorization_header_value = (
+            str(header_value).strip() if header_value else None
         )
+
+    def _status_code_from_exception(self, err: Exception) -> int | None:
+        """Extract HTTP status code from transport-layer exceptions when available."""
+        direct_status = getattr(err, "status_code", None)
+        if isinstance(direct_status, int):
+            return direct_status
+        response = getattr(err, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+        return None
+
+    def _should_retry_idp_authorization(self, err: Exception) -> bool:
+        """Return True when IDP mode should renegotiate credentials and retry once."""
+        if self._server_authorization_mode() != consumer_config.SERVER_AUTHORIZATION_IDP:
+            return False
+        status_code = self._status_code_from_exception(err)
+        return status_code in AUTH_RETRY_STATUS_CODES
+
+    def _normalize_header_value(self, raw_value: str) -> str:
+        """Normalize raw token/header value into a bearer Authorization header value."""
+        value = str(raw_value or "").strip()
+        if not value:
+            raise ValueError("authorization token value is empty")
+        if value.lower().startswith("bearer "):
+            return value
+        return f"Bearer {value}"
+
+    def _token_from_env(self) -> str:
+        """Resolve outbound OpAMP token from environment."""
+        token = os.environ.get(ENV_OPAMP_TOKEN) or ""
+        token = str(token).strip()
+        if not token:
+            raise ValueError(
+                "consumer.server-authorization=env-var but no token is set in OpAMP-token"
+            )
+        return token
+
+    async def _refresh_idp_authorization_header(self) -> str:
+        """Obtain fresh bearer credentials from the configured IdP token endpoint."""
+        token_url = str(self.config.idp_token_url or "").strip()
+        if not token_url:
+            raise ValueError(
+                "consumer.server-authorization=idp requires consumer.idp-token-url"
+            )
+        client_id = str(self.config.idp_client_id or "").strip()
+        client_secret = str(self.config.idp_client_secret or "").strip()
+        if not client_id or not client_secret:
+            raise ValueError(
+                "consumer.server-authorization=idp requires consumer.idp-client-id and "
+                "consumer.idp-client-secret"
+            )
+        grant_type = str(
+            self.config.idp_grant_type or consumer_config.DEFAULT_IDP_GRANT_TYPE
+        ).strip()
+        scope = str(self.config.idp_scope or "").strip()
+        form_payload = {
+            "grant_type": grant_type or consumer_config.DEFAULT_IDP_GRANT_TYPE,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if scope:
+            form_payload["scope"] = scope
+        async with httpx.AsyncClient() as http_client:
+            response = await http_client.post(token_url, data=form_payload)
+            response.raise_for_status()
+            payload = response.json()
+        access_token = str(payload.get("access_token", "")).strip()
+        if not access_token:
+            raise ValueError("idp token response missing access_token")
+        token_type = str(payload.get("token_type", "Bearer")).strip() or "Bearer"
+        header_value = (
+            f"{token_type} {access_token}"
+            if not access_token.lower().startswith("bearer ")
+            else access_token
+        )
+        self._record_authorization_header(
+            header_name=HEADER_AUTHORIZATION,
+            header_value=header_value,
+        )
+        return header_value
+
+    async def _resolve_authorization_header_value(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> str | None:
+        """Return outbound Authorization header value for configured mode."""
+        mode = self._server_authorization_mode()
+        if mode == consumer_config.SERVER_AUTHORIZATION_NONE:
+            self._record_authorization_header(
+                header_name=HEADER_AUTHORIZATION,
+                header_value=None,
+            )
+            return None
+
+        if mode == consumer_config.SERVER_AUTHORIZATION_ENV_VAR:
+            header_value = self._normalize_header_value(self._token_from_env())
+            self._record_authorization_header(
+                header_name=HEADER_AUTHORIZATION,
+                header_value=header_value,
+            )
+            return header_value
+
+        if mode == consumer_config.SERVER_AUTHORIZATION_CONFIG_VAR:
+            token = str(self.config.opamp_token or "").strip()
+            if not token:
+                raise ValueError(
+                    "consumer.server-authorization=config-var requires consumer.OpAMP-token"
+                )
+            header_value = self._normalize_header_value(token)
+            self._record_authorization_header(
+                header_name=HEADER_AUTHORIZATION,
+                header_value=header_value,
+            )
+            return header_value
+
+        if mode == consumer_config.SERVER_AUTHORIZATION_IDP:
+            cached_value = str(self.config.server_authorization_header_value or "").strip()
+            if cached_value and not force_refresh:
+                self._record_authorization_header(
+                    header_name=HEADER_AUTHORIZATION,
+                    header_value=cached_value,
+                )
+                return cached_value
+            return await self._refresh_idp_authorization_header()
+
+        self._record_authorization_header(
+            header_name=HEADER_AUTHORIZATION,
+            header_value=None,
+        )
+        return None
 
     def get_agent_description(
         self, instance_uid: bytes | str | None = None

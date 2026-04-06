@@ -22,7 +22,6 @@ import uuid
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.abstract_client import (
-    CAPABILITIES_MAP,
     CAPABILITY_PREFIX_REQUEST,
     CONFIG_DOCS_URL,
     ERR_PREFIX,
@@ -70,7 +69,6 @@ CONFIG = consumer_config.CONFIG
 __all__ = [
     "AbstractOpAMPClient",
     "CAPABILITY_PREFIX_REQUEST",
-    "CAPABILITIES_MAP",
     "CONFIG_DOCS_URL",
     "ERR_PREFIX",
     "HOST_META_KEY_HOSTNAME",

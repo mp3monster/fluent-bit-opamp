@@ -40,6 +40,8 @@ CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"  # Provider JSON key for Retry-Aft
 CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"  # Provider JSON key for per-client event history length.
 CFG_LOG_LEVEL = "log_level"  # Provider JSON key for logging level override.
 CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"  # Provider JSON key for default client heartbeat interval.
+CFG_HUMAN_IN_LOOP_APPROVAL = "human_in_loop_approval"  # Provider JSON key toggling manual agent approval workflow.
+CFG_OPAMP_USE_AUTHORIZATION = "opamp-use-authorization"  # Provider JSON key controlling OpAMP transport bearer authorization mode.
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60  # Default delayed comms threshold in seconds.
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300  # Default significant comms threshold in seconds.
@@ -49,6 +51,15 @@ DEFAULT_RETRY_AFTER_SECONDS = 30  # Default Retry-After duration in seconds.
 DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50  # Default maximum number of retained client events.
 DEFAULT_LOG_LEVEL = "INFO"  # Default provider log level.
 DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default heartbeat frequency assigned to new clients.
+DEFAULT_HUMAN_IN_LOOP_APPROVAL = False  # Default behavior leaves human approval workflow disabled.
+OPAMP_USE_AUTHORIZATION_NONE = "none"  # Disable OpAMP endpoint bearer auth checks.
+OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN = (
+    "config-token"  # Validate OpAMP bearer token against OPAMP_AUTH_STATIC_TOKEN.
+)
+OPAMP_USE_AUTHORIZATION_IDP = (
+    "idp"  # Validate OpAMP bearer token via IdP JWT verification settings.
+)
+DEFAULT_OPAMP_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default OpAMP auth mode.
 
 
 @dataclass(frozen=True)
@@ -61,6 +72,8 @@ class ProviderConfig:
     client_event_history_size: int
     log_level: str
     default_heartbeat_frequency: int = DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY
+    human_in_loop_approval: bool = DEFAULT_HUMAN_IN_LOOP_APPROVAL
+    opamp_use_authorization: str = DEFAULT_OPAMP_USE_AUTHORIZATION
 
 
 def resolve_log_level(log_level: str | None) -> int:
@@ -106,6 +119,41 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding=UTF8_ENCODING))
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    """Coerce common JSON/env boolean forms while preserving explicit defaults."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default if value is None else bool(value)
+
+
+def _normalize_opamp_use_authorization(value: Any) -> str:
+    """Normalize OpAMP authorization mode from canonical config values."""
+    if value is None:
+        return DEFAULT_OPAMP_USE_AUTHORIZATION
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return DEFAULT_OPAMP_USE_AUTHORIZATION
+    if normalized in {
+        OPAMP_USE_AUTHORIZATION_NONE,
+        OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN,
+        OPAMP_USE_AUTHORIZATION_IDP,
+    }:
+        return normalized
+    logging.getLogger(__name__).warning(
+        "invalid provider %s value %r; defaulting to %s",
+        CFG_OPAMP_USE_AUTHORIZATION,
+        value,
+        DEFAULT_OPAMP_USE_AUTHORIZATION,
+    )
+    return DEFAULT_OPAMP_USE_AUTHORIZATION
+
+
 def load_config() -> ProviderConfig:
     """Load provider config from disk."""
     raw = _load_json(_config_path())
@@ -114,6 +162,7 @@ def load_config() -> ProviderConfig:
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
+    opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -142,6 +191,16 @@ def load_config() -> ProviderConfig:
                 )
             ),
         ),
+        human_in_loop_approval=_as_bool(
+            provider_raw.get(
+                CFG_HUMAN_IN_LOOP_APPROVAL,
+                DEFAULT_HUMAN_IN_LOOP_APPROVAL,
+            ),
+            DEFAULT_HUMAN_IN_LOOP_APPROVAL,
+        ),
+        opamp_use_authorization=_normalize_opamp_use_authorization(
+            opamp_use_authorization_raw
+        ),
     )
 
 
@@ -157,6 +216,7 @@ def load_config_with_overrides(
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
+    opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -187,6 +247,16 @@ def load_config_with_overrides(
                 )
             ),
         ),
+        human_in_loop_approval=_as_bool(
+            provider_raw.get(
+                CFG_HUMAN_IN_LOOP_APPROVAL,
+                DEFAULT_HUMAN_IN_LOOP_APPROVAL,
+            ),
+            DEFAULT_HUMAN_IN_LOOP_APPROVAL,
+        ),
+        opamp_use_authorization=_normalize_opamp_use_authorization(
+            opamp_use_authorization_raw
+        ),
     )
 
 
@@ -201,12 +271,18 @@ def update_comms_thresholds(
     delayed: int,
     significant: int,
     client_event_history_size: int | None = None,
+    human_in_loop_approval: bool | None = None,
 ) -> ProviderConfig:
     """Return a new config with updated server comm settings and set it."""
     history_size = (
         CONFIG.client_event_history_size
         if client_event_history_size is None
         else max(1, int(client_event_history_size))
+    )
+    effective_human_in_loop_approval = (
+        CONFIG.human_in_loop_approval
+        if human_in_loop_approval is None
+        else bool(human_in_loop_approval)
     )
     config = ProviderConfig(
         delayed_comms_seconds=delayed,
@@ -217,6 +293,8 @@ def update_comms_thresholds(
         client_event_history_size=history_size,
         log_level=CONFIG.log_level,
         default_heartbeat_frequency=CONFIG.default_heartbeat_frequency,
+        human_in_loop_approval=effective_human_in_loop_approval,
+        opamp_use_authorization=CONFIG.opamp_use_authorization,
     )
     set_config(config)
     return config
@@ -233,6 +311,8 @@ def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> P
         client_event_history_size=CONFIG.client_event_history_size,
         log_level=CONFIG.log_level,
         default_heartbeat_frequency=max(1, int(default_heartbeat_frequency)),
+        human_in_loop_approval=CONFIG.human_in_loop_approval,
+        opamp_use_authorization=CONFIG.opamp_use_authorization,
     )
     set_config(config)
     return config
@@ -266,6 +346,8 @@ def persist_provider_config(
     provider_raw[CFG_DEFAULT_HEARTBEAT_FREQUENCY] = int(
         effective.default_heartbeat_frequency
     )
+    provider_raw[CFG_HUMAN_IN_LOOP_APPROVAL] = bool(effective.human_in_loop_approval)
+    provider_raw[CFG_OPAMP_USE_AUTHORIZATION] = str(effective.opamp_use_authorization)
 
     backup_path = _build_backup_path(resolved_path)
     logging.getLogger(__name__).info(

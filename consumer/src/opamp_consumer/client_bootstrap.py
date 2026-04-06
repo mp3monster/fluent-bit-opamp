@@ -26,6 +26,7 @@ import threading
 import tracemalloc
 import uuid
 from collections.abc import Callable
+from urllib.parse import urlsplit, urlunsplit
 
 from opamp_consumer import config as consumer_config
 from opamp_consumer.config import CFG_AGENT_CONFIG_PATH, ConsumerConfig
@@ -53,21 +54,12 @@ _AGENT_CONFIG_KV = re.compile(
     re.IGNORECASE,
 )
 
-# Supported CLI aliases for the consumer config path.
+# Supported CLI option names for the consumer config path.
 DEFAULT_CONFIG_PATH_ARGS = ("--config-path",)
-# Supported CLI aliases for the launched-agent config path.
-DEFAULT_AGENT_CONFIG_PATH_ARGS = (
-    "--agent-config-path",
-    "--fluentbit-config-path",
-    "--fluentd-config-path",
-)
-# Supported CLI aliases for additional launched-agent command parameters.
-DEFAULT_AGENT_ADDITIONAL_ARGS = (
-    "--agent-additional-params",
-    "--additional-agent-params",
-    "--additional-fluent-bit-params",
-    "--additional-fluentd-params",
-)
+# Supported CLI option names for the launched-agent config path.
+DEFAULT_AGENT_CONFIG_PATH_ARGS = ("--agent-config-path",)
+# Supported CLI option names for additional launched-agent command parameters.
+DEFAULT_AGENT_ADDITIONAL_ARGS = ("--agent-additional-params",)
 
 
 def build_common_cli_parser(
@@ -76,7 +68,7 @@ def build_common_cli_parser(
     agent_config_path_args: tuple[str, ...] = DEFAULT_AGENT_CONFIG_PATH_ARGS,
     agent_additional_args: tuple[str, ...] = DEFAULT_AGENT_ADDITIONAL_ARGS,
 ) -> argparse.ArgumentParser:
-    """Build the shared consumer CLI parser with configurable option aliases."""
+    """Build the shared consumer CLI parser."""
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument(*config_path_args, dest="config_path", type=str)
@@ -181,6 +173,24 @@ def validate_runtime_server_config(
         raise ValueError(missing_status_port_error)
     if config.server_url is None and config.server_port is not None:
         config.server_url = f"{localhost_base}:{config.server_port}"
+    if config.server_url is not None and config.server_port is not None:
+        split_url = urlsplit(config.server_url)
+        if split_url.netloc and split_url.port is None:
+            auth_prefix = ""
+            if "@" in split_url.netloc:
+                auth_prefix = f"{split_url.netloc.rsplit('@', 1)[0]}@"
+            host_token = split_url.hostname or ""
+            if ":" in host_token and not host_token.startswith("["):
+                host_token = f"[{host_token}]"
+            config.server_url = urlunsplit(
+                (
+                    split_url.scheme,
+                    f"{auth_prefix}{host_token}:{int(config.server_port)}",
+                    split_url.path,
+                    split_url.query,
+                    split_url.fragment,
+                )
+            )
     if config.server_url is None:
         raise ValueError("server_url is not configured")
     return config

@@ -26,6 +26,7 @@ def test_server_main_invokes_app(monkeypatch) -> None:
         called["port"] = port
 
     def fake_load_config_with_overrides(*, config_path, log_level):
+        called["log_level_override"] = log_level
         return ProviderConfig(
             delayed_comms_seconds=60,
             significant_comms_seconds=300,
@@ -53,3 +54,50 @@ def test_server_main_invokes_app(monkeypatch) -> None:
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 9999
     assert isinstance(called["config"], ProviderConfig)
+    assert called["log_level_override"] is None
+    assert provider_server.app.config["DIAGNOSTIC_MODE"] is False
+
+
+def test_server_main_diagnostic_forces_debug_log_level(monkeypatch) -> None:
+    """Verify `--diagnostic` forces DEBUG log-level override and enables diagnostic mode."""
+    called = {}
+
+    def fake_run(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+
+    def fake_load_config_with_overrides(*, config_path, log_level):
+        called["log_level_override"] = log_level
+        return ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level=str(log_level or "INFO"),
+        )
+
+    def fake_set_config(config):
+        called["config"] = config
+
+    monkeypatch.setattr(provider_server.app, "run", fake_run)
+    monkeypatch.setattr(
+        provider_config,
+        "load_config_with_overrides",
+        fake_load_config_with_overrides,
+    )
+    monkeypatch.setattr(provider_config, "set_config", fake_set_config)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py", "--diagnostic", "--log-level", "WARNING"],
+    )
+
+    provider_server.main()
+
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 8080
+    assert isinstance(called["config"], ProviderConfig)
+    assert called["log_level_override"] == "DEBUG"
+    assert provider_server.app.config["DIAGNOSTIC_MODE"] is True

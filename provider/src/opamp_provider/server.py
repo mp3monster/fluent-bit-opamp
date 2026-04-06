@@ -27,6 +27,8 @@ def main() -> None:
     """Load config overrides and start the Quart app."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-path", type=str)
+    # Intentionally omitted from CLI help/documentation.
+    parser.add_argument("--diagnostic", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     parser.add_argument(
         "--port",
@@ -45,10 +47,11 @@ def main() -> None:
         effective_config_path,
     )
     os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(effective_config_path)
+    log_level_override = "DEBUG" if args.diagnostic else args.log_level
 
     config = provider_config.load_config_with_overrides(
         config_path=effective_config_path,
-        log_level=args.log_level,
+        log_level=log_level_override,
     )
     provider_config.set_config(config)
     STORE.set_default_heartbeat_frequency(
@@ -64,6 +67,7 @@ def main() -> None:
         logging.basicConfig(level=resolved_log_level)
     else:
         root_logger.setLevel(resolved_log_level)
+    app.config["DIAGNOSTIC_MODE"] = bool(args.diagnostic)
     port = args.port if args.port is not None else config.webui_port
     app.run(host=args.host, port=port)
 

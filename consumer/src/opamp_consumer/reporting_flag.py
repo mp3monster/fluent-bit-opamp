@@ -16,15 +16,8 @@ from __future__ import annotations
 
 from enum import Enum
 
-try:
-    from enum import StrEnum
-except ImportError:  # pragma: no cover - Python <3.11 fallback
 
-    class StrEnum(str, Enum):
-        """Compatibility fallback for Python versions without enum.StrEnum."""
-
-
-class ReportingFlag(StrEnum):
+class ReportingFlag(str, Enum):
     """Enumeration of provider-directed reporting controls."""
 
     REPORT_HEALTH = "reportHealth"  # Toggle sending component/top-level health payloads.

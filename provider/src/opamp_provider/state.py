@@ -20,7 +20,7 @@ import re
 import sys
 from enum import Enum
 from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from google.protobuf import text_format
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -38,6 +38,8 @@ FORCE_RESYNC_EVENT_DESCRIPTION = "Force Resync"  # User-visible description for 
 DEFAULT_HISTORY_MAX_EVENTS = 50  # Default per-client event history length when none configured.
 DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default expected heartbeat interval assigned to a client.
 HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION = "send heartbeatfrequency event"  # User-visible event text for heartbeat updates.
+AUTH_MECHANISM_MTLS = "mtls"  # Client auth mechanism value for mutual TLS identities.
+AUTH_MECHANISM_JWT = "jwt"  # Client auth mechanism value for JWT-based identities.
 
 
 def _utc_now() -> datetime:
@@ -99,6 +101,13 @@ class ClientChannel(str, Enum):
     WEBSOCKET = "websocket"  # Message arrived over WebSocket transport.
 
 
+class AgentAuthMechanism(str, Enum):
+    """Allowed per-agent authentication mechanism values."""
+
+    MTLS = AUTH_MECHANISM_MTLS
+    JWT = AUTH_MECHANISM_JWT
+
+
 class ClientRecord(BaseModel):
     """Snapshot of provider-side state for one connected (or known) client."""
 
@@ -128,6 +137,10 @@ class ClientRecord(BaseModel):
     last_channel: Optional[ClientChannel] = Field(
         default=None,
         description="Last transport channel used by this client (for example HTTP or WebSocket).",
+    )
+    remote_addr: Optional[str] = Field(
+        default=None,
+        description="Last known source IP address for this client.",
     )
     current_config: Optional[str] = Field(
         default=None,
@@ -203,6 +216,15 @@ class ClientRecord(BaseModel):
         default=None,
         description="Queued replacement instance UID to send in AgentIdentification.",
     )
+    auth_mechanism: Optional[AgentAuthMechanism] = Field(
+        default=None,
+        description="Configured client auth mechanism used when agent authentication checks are enabled.",
+    )
+    auth_value: Optional[bytes] = Field(
+        default=None,
+        exclude=True,
+        description="Opaque auth material associated with auth_mechanism.",
+    )
     message_id: int = Field(
         default=MIN_INTEGER,
         description=(
@@ -226,6 +248,8 @@ class ClientStore:
         """Initialize the in-memory client store."""
         self._lock = threading.Lock()
         self._clients: dict[str, ClientRecord] = {}
+        self._pending_approvals: dict[str, ClientRecord] = {}
+        self._blocked_agents: dict[str, dict[str, Any]] = {}
         self._pending_instance_uid_replacements: dict[str, str] = {}
         self._default_heartbeat_frequency = DEFAULT_HEARTBEAT_FREQUENCY
 
@@ -240,14 +264,17 @@ class ClientStore:
             return list(self._clients.values())
 
     def upsert_from_agent_msg(
-        self, agent_msg: opamp_pb2.AgentToServer, *, channel: Optional[str] = None
+        self,
+        agent_msg: opamp_pb2.AgentToServer,
+        *,
+        channel: Optional[str] = None,
+        remote_addr: Optional[str] = None,
     ) -> ClientRecord:
         """Create or update a client record from an AgentToServer message."""
         client_id = (
             agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
         )
         now = _utc_now()
-        incoming_message_id = int(agent_msg.sequence_num)
         with self._lock:
             record = self._clients.get(client_id)
             if record is None:
@@ -258,15 +285,49 @@ class ClientStore:
                     heartbeat_frequency=self._default_heartbeat_frequency,
                 )
                 self._clients[client_id] = record
-            self.check_sequence_num(record, incoming_message_id)
-            self._apply_comm_metadata(record, now, channel)
-            self._apply_capabilities(record, agent_msg)
-            self._apply_custom_capabilities(record, agent_msg)
-            self._apply_client_version(record, agent_msg)
-            self._apply_health(record, agent_msg)
-            self._apply_agent_description(record, agent_msg)
-            self._apply_disconnect(record, agent_msg, now)
+            self._update_record_from_agent_msg_locked(
+                record,
+                agent_msg,
+                now=now,
+                channel=channel,
+                remote_addr=remote_addr,
+                check_sequence_num=True,
+            )
         return record
+
+    def add_pending_approval_from_agent_msg(
+        self,
+        agent_msg: opamp_pb2.AgentToServer,
+        *,
+        channel: Optional[str] = None,
+        remote_addr: Optional[str] = None,
+    ) -> ClientRecord:
+        """Capture first-seen client details in the pending-approval store."""
+        client_id = (
+            agent_msg.instance_uid.hex() if agent_msg.instance_uid else "unknown"
+        )
+        now = _utc_now()
+        with self._lock:
+            existing_client = self._clients.get(client_id)
+            if existing_client is not None:
+                return existing_client
+            existing_pending = self._pending_approvals.get(client_id)
+            if existing_pending is not None:
+                return existing_pending
+            record = ClientRecord(
+                client_id=client_id,
+                heartbeat_frequency=self._default_heartbeat_frequency,
+            )
+            self._update_record_from_agent_msg_locked(
+                record,
+                agent_msg,
+                now=now,
+                channel=channel,
+                remote_addr=remote_addr,
+                check_sequence_num=False,
+            )
+            self._pending_approvals[client_id] = record
+            return record
 
     def _rekey_client_record_for_reissued_uid_locked(
         self, new_client_id: str
@@ -294,6 +355,30 @@ class ClientStore:
             new_client_id,
         )
         return record
+
+    def _update_record_from_agent_msg_locked(
+        self,
+        record: ClientRecord,
+        agent_msg: opamp_pb2.AgentToServer,
+        *,
+        now: datetime,
+        channel: Optional[str],
+        remote_addr: Optional[str],
+        check_sequence_num: bool,
+    ) -> None:
+        """Apply AgentToServer message data to an existing in-memory record."""
+        incoming_message_id = int(agent_msg.sequence_num)
+        if check_sequence_num:
+            self.check_sequence_num(record, incoming_message_id)
+        else:
+            record.message_id = incoming_message_id
+        self._apply_comm_metadata(record, now, channel, remote_addr=remote_addr)
+        self._apply_capabilities(record, agent_msg)
+        self._apply_custom_capabilities(record, agent_msg)
+        self._apply_client_version(record, agent_msg)
+        self._apply_health(record, agent_msg)
+        self._apply_agent_description(record, agent_msg)
+        self._apply_disconnect(record, agent_msg, now)
 
     def _queue_force_resync_if_missing_locked(self, record: ClientRecord) -> bool:
         """Queue one unsent force-resync command when none is pending."""
@@ -364,10 +449,17 @@ class ClientStore:
         record.message_id = message_id
 
     def _apply_comm_metadata(
-        self, record: ClientRecord, now: datetime, channel: Optional[str]
+        self,
+        record: ClientRecord,
+        now: datetime,
+        channel: Optional[str],
+        *,
+        remote_addr: Optional[str] = None,
     ) -> None:
         """Apply last communication metadata to the client record."""
         record.last_communication = now
+        if remote_addr:
+            record.remote_addr = remote_addr
         if channel:
             normalized = channel.strip().lower()
             if normalized == ClientChannel.HTTP.value.lower():
@@ -632,6 +724,7 @@ class ClientStore:
         """Remove and return a client record by ID if it exists."""
         with self._lock:
             record = self._clients.pop(client_id, None)
+            self._pending_approvals.pop(client_id, None)
             pending_targets = [
                 target_id
                 for target_id, source_id in self._pending_instance_uid_replacements.items()
@@ -640,6 +733,62 @@ class ClientStore:
             for target_id in pending_targets:
                 self._pending_instance_uid_replacements.pop(target_id, None)
             return record
+
+    def known_client(self, client_id: str) -> bool:
+        """Return whether a client ID is currently approved/known."""
+        with self._lock:
+            return client_id in self._clients
+
+    def get_pending_approval(self, client_id: str) -> Optional[ClientRecord]:
+        """Return one pending-approval record when it exists."""
+        with self._lock:
+            return self._pending_approvals.get(client_id)
+
+    def list_pending_approvals(self) -> list[ClientRecord]:
+        """Return a snapshot list of all pending-approval records."""
+        with self._lock:
+            return list(self._pending_approvals.values())
+
+    def pending_approval_count(self) -> int:
+        """Return the current pending-approval count."""
+        with self._lock:
+            return len(self._pending_approvals)
+
+    def approve_pending_approval(self, client_id: str) -> Optional[ClientRecord]:
+        """Move a pending-approval record into the active client store."""
+        with self._lock:
+            pending = self._pending_approvals.pop(client_id, None)
+            if pending is None:
+                return None
+            self._clients[client_id] = pending
+            return pending
+
+    def block_agent(
+        self,
+        client_id: str,
+        *,
+        reason: str,
+        headers: Optional[dict[str, str]] = None,
+    ) -> None:
+        """Add a client to the blocked list and clear pending approval state."""
+        with self._lock:
+            if client_id:
+                self._pending_approvals.pop(client_id, None)
+                self._blocked_agents[client_id] = {
+                    "blocked_at": _utc_now().isoformat(),
+                    "reason": reason,
+                    "headers": dict(headers or {}),
+                }
+
+    def is_blocked_agent(self, client_id: str) -> bool:
+        """Return whether the client ID is currently blocked."""
+        with self._lock:
+            return bool(client_id) and client_id in self._blocked_agents
+
+    def list_blocked_agents(self) -> list[str]:
+        """Return blocked agent IDs."""
+        with self._lock:
+            return sorted(self._blocked_agents.keys())
 
     def set_agent_identification(
         self, client_id: str, new_instance_uid: bytes

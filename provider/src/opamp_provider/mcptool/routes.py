@@ -10,7 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint routes for /tool endpoints."""
+"""Blueprint routes for /tool endpoints.
+
+References:
+- FastMCP tool decorator documentation (`@mcp.tool` / `@mcpserver.tool`):
+  https://gofastmcp.com/servers/tools
+"""
 
 from __future__ import annotations
 
@@ -19,29 +24,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from fastmcp import FastMCP
 from quart import Blueprint, Response, jsonify
 
 from opamp_provider.commands import get_command_metadata
 from opamp_provider.state import STORE
 
-try:
-    from fastmcp import FastMCP
-except ModuleNotFoundError:  # pragma: no cover - dependency may be optional in tests
-    class FastMCP:  # type: ignore[override]
-        """Fallback shim when fastmcp is unavailable."""
-
-        def __init__(self, _name: str) -> None:
-            pass
-
-        def tool(self, *args: Any, **kwargs: Any):  # noqa: ANN002, ANN003
-            def _decorator(func):  # noqa: ANN001
-                return func
-
-            return _decorator
-
 mcptool_blueprint = Blueprint("mcptool", __name__)
 mcpserver = FastMCP("OpAMP Server")
 MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for MCP/HTTP JSON responses.
+# MCP tool decorators below register Python callables as MCP-invocable tools.
 
 
 def _list_connected_otel_agents_payload() -> dict[str, Any]:

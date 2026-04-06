@@ -15,6 +15,7 @@ Default protected prefixes are:
 - `/sse`
 - `/messages`
 - `/mcp`
+- `/api`
 
 Important behavior details:
 
@@ -51,9 +52,11 @@ When bearer auth is enabled (`OPAMP_AUTH_MODE=static` or `jwt`) and `/tool` is i
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/clients` | List tracked clients. |
+| GET | `/api/clients` | List tracked clients (`pending_approval_total` included). |
 | GET | `/api/clients/<client_id>` | Get one client record. |
 | DELETE | `/api/clients/<client_id>` | Remove a client record. |
+| GET | `/api/approvals/pending` | List pending-approval agents. |
+| POST | `/api/approvals/pending` | Apply approve/block decisions for pending agents. |
 | POST | `/api/clients/<client_id>/commands` | Queue command/custom command. |
 | POST | `/api/clients/<client_id>/actions` | Set next actions for a client. |
 | PUT | `/api/clients/<client_id>/heartbeat-frequency` | Set heartbeat frequency for one client. |
@@ -74,11 +77,20 @@ When bearer auth is enabled (`OPAMP_AUTH_MODE=static` or `jwt`) and `/tool` is i
 | POST | `/v1/opamp` | OpAMP HTTP transport endpoint (AgentToServer/ServerToAgent). |
 | WEBSOCKET | `/v1/opamp` | OpAMP WebSocket transport endpoint. |
 
+Human-in-loop behavior notes:
+
+- When `provider.human_in_loop_approval=true`, unknown agent UIDs are staged into pending approval and rejected until explicitly approved.
+- Blocked agent UIDs are rejected for both HTTP and WebSocket traffic.
+- `provider.opamp-use-authorization` controls `/v1/opamp` auth mode:
+  - `none` (default): no OpAMP bearer-token enforcement.
+  - `config-token`: compare bearer token to `OPAMP_AUTH_STATIC_TOKEN`.
+  - `idp`: validate bearer JWT using `OPAMP_AUTH_JWT_*` settings.
+
 Bearer protection notes:
 
 - `POST /v1/opamp` is protectable by adding `/v1/opamp` to
   `OPAMP_AUTH_PROTECTED_PATH_PREFIXES`.
-- `WEBSOCKET /v1/opamp` is not currently bearer-protected by that setting.
+- `WEBSOCKET /v1/opamp` is bearer-protected through `provider.opamp-use-authorization`.
 
 ## MCP Transport Endpoints
 

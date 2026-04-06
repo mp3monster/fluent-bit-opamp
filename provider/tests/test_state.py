@@ -206,3 +206,55 @@ def test_identification_rekeys_existing_client_record() -> None:
     assert rekeyed.client_version == "9.9.9"
     assert store.get(old_client_id) is None
     assert store.get(new_uid.hex()) is rekeyed
+
+
+def test_pending_approval_capture_and_approve_flow() -> None:
+    """Verify pending-approval records capture first payload details and can be approved."""
+    store = ClientStore()
+    uid = bytes.fromhex("0102030405060708090a0b0c0d0e0f10")
+    msg = opamp_pb2.AgentToServer(instance_uid=uid)
+    msg.sequence_num = 17
+    instance_id = msg.agent_description.identifying_attributes.add()
+    instance_id.key = "service.instance.id"
+    instance_id.value.string_value = "agent-17"
+    version = msg.agent_description.identifying_attributes.add()
+    version.key = "service.version"
+    version.value.string_value = "1.2.3"
+
+    pending = store.add_pending_approval_from_agent_msg(
+        msg,
+        channel="HTTP",
+        remote_addr="10.0.0.10",
+    )
+
+    assert pending.client_id == uid.hex()
+    assert pending.message_id == 17
+    assert pending.client_version == "1.2.3"
+    assert pending.remote_addr == "10.0.0.10"
+    assert store.pending_approval_count() == 1
+    assert store.known_client(uid.hex()) is False
+
+    approved = store.approve_pending_approval(uid.hex())
+    assert approved is not None
+    assert approved.client_id == uid.hex()
+    assert store.pending_approval_count() == 0
+    assert store.known_client(uid.hex()) is True
+
+
+def test_block_agent_clears_pending_and_marks_blocked() -> None:
+    """Verify blocking an agent removes pending approval state and marks blocked membership."""
+    store = ClientStore()
+    uid = bytes.fromhex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+    msg = opamp_pb2.AgentToServer(instance_uid=uid)
+    msg.sequence_num = 1
+    store.add_pending_approval_from_agent_msg(msg, channel="HTTP")
+
+    store.block_agent(
+        uid.hex(),
+        reason="manual block",
+        headers={"x-test": "blocked"},
+    )
+
+    assert store.pending_approval_count() == 0
+    assert store.is_blocked_agent(uid.hex()) is True
+    assert uid.hex() in store.list_blocked_agents()

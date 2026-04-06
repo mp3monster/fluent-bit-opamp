@@ -317,12 +317,21 @@ def test_launch_agent_process_uses_fluentd_command(monkeypatch) -> None:
     config = _test_config(agent_config_path="/tmp/fluentd.conf")
     config.agent_additional_params = ["-q"]
     instance = fluentd_client.FluentdOpAMPClient("http://localhost", config)
+    monkeypatch.setattr(
+        client_mixins.shutil,
+        "which",
+        lambda executable: (
+            "/usr/bin/fluentd"
+            if executable == "fluentd"
+            else None
+        ),
+    )
     monkeypatch.setattr(client_mixins.subprocess, "Popen", _fake_popen)
 
     launched = instance.launch_agent_process()
 
     assert launched is True
-    assert captured["command"] == ["fluentd", "-q", "-c", "/tmp/fluentd.conf"]
+    assert captured["command"] == ["/usr/bin/fluentd", "-q", "-c", "/tmp/fluentd.conf"]
 
 
 def test_launch_agent_process_returns_false_when_command_not_found(
@@ -332,15 +341,61 @@ def test_launch_agent_process_returns_false_when_command_not_found(
     config = _test_config(agent_config_path="/tmp/fluentd.conf")
     instance = fluentd_client.FluentdOpAMPClient("http://localhost", config)
 
-    def _raise_not_found(_command: list[str]) -> None:
-        raise FileNotFoundError("fluentd")
+    monkeypatch.setattr(
+        client_mixins.shutil,
+        "which",
+        lambda _executable: None,
+    )
 
-    monkeypatch.setattr(client_mixins.subprocess, "Popen", _raise_not_found)
+    def _unexpected_popen(_command: list[str]) -> None:
+        raise AssertionError("Popen should not be called when executable is unresolved")
+
+    monkeypatch.setattr(client_mixins.subprocess, "Popen", _unexpected_popen)
 
     launched = instance.launch_agent_process()
 
     assert launched is False
     assert instance.data.agent_process is None
+
+
+def test_launch_agent_process_wraps_batch_command_on_windows(monkeypatch) -> None:
+    """Fluentd launch should wrap .bat executables with cmd /c on Windows."""
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def terminate(self) -> None:
+            return None
+
+    def _fake_popen(command: list[str]) -> FakeProcess:
+        captured["command"] = command
+        return FakeProcess()
+
+    config = _test_config(agent_config_path=r"C:\tmp\fluentd.conf")
+    config.agent_additional_params = ["-q"]
+    instance = fluentd_client.FluentdOpAMPClient("http://localhost", config)
+    monkeypatch.setattr(
+        client_mixins.shutil,
+        "which",
+        lambda executable: (
+            r"C:\Ruby34-x64\bin\fluentd.bat"
+            if executable == "fluentd"
+            else None
+        ),
+    )
+    monkeypatch.setattr(client_mixins.os, "name", "nt")
+    monkeypatch.setattr(client_mixins.subprocess, "Popen", _fake_popen)
+
+    launched = instance.launch_agent_process()
+
+    assert launched is True
+    assert captured["command"] == [
+        "cmd",
+        "/c",
+        r"C:\Ruby34-x64\bin\fluentd.bat",
+        "-q",
+        "-c",
+        r"C:\tmp\fluentd.conf",
+    ]
 
 
 def test_add_agent_version_uses_bind_host_for_monitor_agent_api(monkeypatch) -> None:

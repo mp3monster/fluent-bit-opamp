@@ -52,17 +52,17 @@ def test_main_help_prints_config_parameters_and_skips_client(
     assert payload["documentation_url"] == CONFIG_DOCS_URL
 
 
-def test_common_parser_accepts_fluentd_aliases() -> None:
-    """Shared parser should accept Fluentd-specific argument aliases."""
+def test_common_parser_accepts_canonical_agent_args() -> None:
+    """Shared parser should accept canonical agent argument names."""
     parser = client_bootstrap.build_common_cli_parser()
 
     parsed = parser.parse_args(
         [
             "--config-path",
             "consumer/opamp-fluentd.json",
-            "--fluentd-config-path",
+            "--agent-config-path",
             "consumer/fluentd.conf",
-            "--additional-fluentd-params",
+            "--agent-additional-params",
             "quiet-mode",
         ]
     )
@@ -134,3 +134,37 @@ def test_load_config_from_cli_args_maps_overrides(monkeypatch) -> None:
         "log_level": "info",
         "full_update_controller": '{"fullResendAfter":10}',
     }
+
+
+def test_validate_runtime_server_config_applies_server_port_when_url_has_no_port() -> None:
+    """Runtime normalization should apply server_port to host-only server_url values."""
+    config = ConsumerConfig(
+        server_url="http://127.0.0.1",
+        server_port=4320,
+        client_status_port=2020,
+    )
+
+    loaded = client_bootstrap.validate_runtime_server_config(
+        config=config,
+        localhost_base="http://localhost",
+        missing_status_port_error="missing status",
+    )
+
+    assert loaded.server_url == "http://127.0.0.1:4320"
+
+
+def test_validate_runtime_server_config_keeps_existing_server_url_port() -> None:
+    """Runtime normalization should preserve explicit port already present in server_url."""
+    config = ConsumerConfig(
+        server_url="http://127.0.0.1:8080/path?x=1",
+        server_port=4320,
+        client_status_port=2020,
+    )
+
+    loaded = client_bootstrap.validate_runtime_server_config(
+        config=config,
+        localhost_base="http://localhost",
+        missing_status_port_error="missing status",
+    )
+
+    assert loaded.server_url == "http://127.0.0.1:8080/path?x=1"

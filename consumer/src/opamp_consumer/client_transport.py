@@ -26,6 +26,7 @@ from shared.opamp_config import OPAMP_TRANSPORT_HEADER_NONE, UTF8_ENCODING
 
 CONTENT_TYPE_PROTO = "application/x-protobuf"  # MIME type for protobuf HTTP payloads.
 HEADER_CONTENT_TYPE = "Content-Type"  # HTTP header key used for request content type.
+HEADER_AUTHORIZATION = "Authorization"  # HTTP/WebSocket header key for bearer authentication.
 ERR_UNSUPPORTED_HEADER = "unsupported transport header"  # Error for unknown OpAMP framing header.
 
 
@@ -35,16 +36,20 @@ async def send_http_message(
     base_url: str,
     opamp_http_path: str,
     handle_reply: Callable[[opamp_pb2.ServerToAgent], bool],
+    authorization_header: str | None = None,
 ) -> opamp_pb2.ServerToAgent:
     """Send AgentToServer via HTTP and parse ServerToAgent response."""
     url = f"{base_url}{opamp_http_path}"
     logging.getLogger(__name__).debug("Calling REST endpoint at %s", url)
     payload = msg.SerializeToString()
+    headers: dict[str, str] = {HEADER_CONTENT_TYPE: CONTENT_TYPE_PROTO}
+    if authorization_header:
+        headers[HEADER_AUTHORIZATION] = authorization_header
     async with httpx.AsyncClient() as client:
         response = await client.post(
             url,
             content=payload,
-            headers={HEADER_CONTENT_TYPE: CONTENT_TYPE_PROTO},
+            headers=headers,
         )
         response.raise_for_status()
         reply = opamp_pb2.ServerToAgent()
@@ -59,16 +64,28 @@ async def send_websocket_message(
     base_url: str,
     opamp_http_path: str,
     handle_reply: Callable[[opamp_pb2.ServerToAgent], bool],
+    authorization_header: str | None = None,
 ) -> opamp_pb2.ServerToAgent:
     """Send AgentToServer via WebSocket and parse ServerToAgent response."""
     url = f"{base_url}{opamp_http_path}"
     logging.getLogger(__name__).debug("Calling web socket at %s", url)
 
-    async with websockets.connect(url) as web_socket:
-        await web_socket.send(encode_message(msg.SerializeToString()))
-        data = await web_socket.recv()
-        await web_socket.close(code=1000)
-        await web_socket.wait_closed()
+    async def _send_and_receive(**connect_kwargs):
+        async with websockets.connect(url, **connect_kwargs) as web_socket:
+            await web_socket.send(encode_message(msg.SerializeToString()))
+            response_data = await web_socket.recv()
+            await web_socket.close(code=1000)
+            await web_socket.wait_closed()
+            return response_data
+
+    connect_kwargs: dict[str, object] = {}
+    if authorization_header:
+        connect_kwargs["additional_headers"] = {
+            HEADER_AUTHORIZATION: authorization_header
+        }
+
+    data = await _send_and_receive(**connect_kwargs)
+
     if isinstance(data, str):
         data = data.encode(UTF8_ENCODING)
     header, payload = decode_message(data)

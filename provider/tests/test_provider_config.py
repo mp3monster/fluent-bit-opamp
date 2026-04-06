@@ -22,3 +22,12 @@ def test_minutes_keep_disconnected_default() -> None:
     os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(root / "tests" / "opamp.json")
     config = provider_config.load_config()
     assert config.minutes_keep_disconnected == provider_config.DEFAULT_MINUTES_KEEP_DISCONNECTED
+
+
+def test_human_in_loop_and_opamp_authorization_defaults_are_disabled() -> None:
+    """Verify approval/auth settings default to disabled/none when omitted."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(root / "tests" / "opamp.json")
+    config = provider_config.load_config()
+    assert config.human_in_loop_approval is False
+    assert config.opamp_use_authorization == provider_config.OPAMP_USE_AUTHORIZATION_NONE

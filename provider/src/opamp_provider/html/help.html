@@ -121,7 +121,7 @@
         The dialog has two tabs: <strong>ServerSettings</strong> and <strong>ClientSettings</strong>.
       </p>
       <ul class="command-list">
-        <li><strong>ServerSettings tab:</strong> Communication thresholds and provider event-history size.</li>
+        <li><strong>ServerSettings tab:</strong> Communication thresholds, provider event-history size, and human approval mode.</li>
         <li><strong>ClientSettings tab:</strong> Default client heartbeat frequency managed by the provider.</li>
       </ul>
     </section>
@@ -131,6 +131,7 @@
         <li><strong>delayed_comms_seconds</strong><br>__HELP_DELAYED_COMMS_SECONDS__</li>
         <li><strong>significant_comms_seconds</strong><br>__HELP_SIGNIFICANT_COMMS_SECONDS__</li>
         <li><strong>client_event_history_size</strong><br>__HELP_CLIENT_EVENT_HISTORY_SIZE__</li>
+        <li><strong>human_in_loop_approval</strong><br>__HELP_HUMAN_IN_LOOP_APPROVAL__</li>
         <li><strong>default_heartbeat_frequency</strong><br>__HELP_DEFAULT_HEARTBEAT_FREQUENCY__</li>
       </ul>
     </section>
@@ -158,6 +159,7 @@
         <li><strong>delayed_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>significant_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>client_event_history_size</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>human_in_loop_approval</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>default_heartbeat_frequency</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>webui_port</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
         <li><strong>minutes_keep_disconnected</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
@@ -207,7 +209,7 @@
         const resp = await apiFetch("/api/commands/custom");
         if (!resp.ok) {
           if (resp.status === 401 || resp.status === 403) {
-            list.innerHTML = "<li>Authorization required. Set a bearer token in the main UI.</li>";
+            list.innerHTML = "<li>Authorization required. Set a bearer token in Global Settings → ServerSettings.</li>";
             return;
           }
           list.innerHTML = "<li>Failed to load custom commands.</li>";

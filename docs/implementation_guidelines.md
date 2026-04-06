@@ -7,7 +7,8 @@ Use this file as the default implementation contract for contributors and coding
 - Keep changes focused: only modify files needed for the requested behavior.
 - Do not revert or rewrite unrelated local changes.
 - Avoid destructive repo commands unless explicitly requested.
-- Preserve backwards compatibility unless the task explicitly approves a breaking change.
+- Before version `1.0`, compatibility shims are not required and should not be added by default.
+- After version `1.0`, preserve backwards compatibility unless the task explicitly approves a breaking change.
 - In sandboxed Codex runs, do not pause to ask in chat before using elevated permissions; request escalation directly through the command/tool approval flow when required.
 
 ## Code standards
@@ -68,7 +69,8 @@ Paste this into future coding requests:
 ```text
 Follow docs/implementation_guidelines.md.
 Only change files required for this task.
-Preserve backwards compatibility unless I explicitly allow a breaking change.
+Before version 1.0, do not add compatibility shims unless I explicitly request them.
+After version 1.0, preserve backwards compatibility unless I explicitly allow a breaking change.
 Add/adjust tests for behavior changes and run the relevant pytest suites.
 Run Ruff/pre-commit on changed files before finalizing.
 ```

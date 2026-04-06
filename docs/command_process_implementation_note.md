@@ -39,18 +39,11 @@ Required keys:
 - `classifier`
 - `action`
 
-Compatibility behavior:
-
-- The endpoint still accepts legacy payloads such as `{ "command": "restart" }`.
-- Legacy payloads are normalized to:
-  - `classifier=command`
-  - `action=<command value>`
-
 ## Queue And State Model
 
 `CommandRecord` stores normalized intent data:
 
-- `command` (currently mirrors `action` for compatibility/readability)
+- `command` (currently mirrors `action`)
 - `classifier`
 - `action`
 - `key_value_pairs`

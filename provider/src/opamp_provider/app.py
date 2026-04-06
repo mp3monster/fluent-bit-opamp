@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Callable
 import logging
 import os
@@ -53,6 +54,7 @@ from shared.opamp_config import (
 )
 
 app = Quart(__name__)
+app.config.setdefault("DIAGNOSTIC_MODE", False)
 register_tool_routes(app)
 register_mcp_transport(app)
 logger = logging.getLogger(__name__)
@@ -115,6 +117,13 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
             "Older events are dropped when this limit is exceeded."
         ),
     },
+    "human_in_loop_approval": {
+        "label": "Human In Loop Approval",
+        "tooltip": (
+            "When enabled, unknown agents are staged for manual review and remain "
+            "blocked from normal processing until approved."
+        ),
+    },
     "default_heartbeat_frequency": {
         "label": "Default Heartbeat Frequency (seconds)",
         "tooltip": (
@@ -125,6 +134,11 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
 _SHUTDOWN_REQUESTED = False  # Guard to prevent duplicate shutdown scheduling.
 _LAST_DISCONNECT_PURGE: datetime | None = None  # Timestamp of last disconnected-client purge pass.
 _WEBSOCKET_CLIENTS: dict[object, str | None] = {}  # Active websocket -> client_id mapping.
+ERR_AGENT_PENDING_APPROVAL = "agent pending approval"
+ERR_AGENT_BLOCKED = "agent is blocked"
+ERR_AGENT_AUTH_FAILED = "agent authentication failed"
+ERR_OPAMP_AUTH_CONFIG_INVALID = "invalid opamp-use-authorization configuration"
+UI_AUTH_REDIRECT_PATHS = {"/", "/ui", "/help"}  # Browser app routes redirected to IdP login in JWT mode.
 
 # Keep in-memory client heartbeat defaults aligned with loaded provider config.
 STORE.set_default_heartbeat_frequency(
@@ -159,6 +173,23 @@ async def handle_unexpected_error(error: Exception) -> Response:
 @app.before_request
 async def enforce_bearer_auth() -> Response | None:
     """Apply optional bearer-token auth to configured protected paths."""
+    if (
+        request.method.upper() == "GET"
+        and request.path in UI_AUTH_REDIRECT_PATHS
+        and provider_auth.AUTH_SETTINGS.mode == provider_auth.AUTH_MODE_JWT
+    ):
+        ui_decision = provider_auth.evaluate_required_bearer_auth(
+            mode=provider_auth.AUTH_MODE_JWT,
+            path=request.path,
+            method=request.method,
+            authorization_header=request.headers.get("Authorization"),
+            remote_addr=request.remote_addr,
+        )
+        if not ui_decision.allowed and ui_decision.error == "missing bearer token":
+            login_url = provider_auth.build_idp_login_redirect_url(return_to=request.url)
+            if login_url:
+                return redirect(login_url)
+
     decision = provider_auth.evaluate_bearer_auth(
         path=request.path,
         method=request.method,
@@ -171,6 +202,167 @@ async def enforce_bearer_auth() -> Response | None:
     if decision.status_code == HTTPStatus.UNAUTHORIZED:
         response.headers["WWW-Authenticate"] = provider_auth.WWW_AUTHENTICATE_BEARER
     return response, decision.status_code
+
+
+def _extract_client_id(agent_msg: opamp_pb2.AgentToServer) -> str:
+    """Return hex-encoded instance UID when present; otherwise an empty string."""
+    if not agent_msg.instance_uid:
+        return ""
+    return agent_msg.instance_uid.hex()
+
+
+def _request_header_map() -> dict[str, str]:
+    """Return request headers as a plain dictionary for audit logging/auth checks."""
+    return {str(key): str(value) for key, value in request.headers.items()}
+
+
+def _websocket_header_map() -> dict[str, str]:
+    """Return websocket handshake headers as a plain dictionary."""
+    return {str(key): str(value) for key, value in websocket.headers.items()}
+
+
+def _websocket_remote_addr() -> str | None:
+    """Return websocket remote address when available."""
+    client_info = getattr(websocket, "client", None)
+    if isinstance(client_info, tuple) and client_info:
+        return str(client_info[0])
+    return None
+
+
+def _diagnostic_mode_enabled() -> bool:
+    """Return whether server diagnostic mode is enabled."""
+    return bool(app.config.get("DIAGNOSTIC_MODE", False))
+
+
+def _coerce_bool_setting(value: object, *, key: str) -> bool:
+    """Coerce UI/API boolean payload values for settings endpoints."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{key} must be a boolean")
+
+
+def _header_value(
+    *,
+    headers: dict[str, str],
+    name: str,
+) -> str | None:
+    """Return a case-insensitive header value from a plain header dictionary."""
+    for key, value in headers.items():
+        if str(key).strip().lower() == name.lower():
+            return str(value)
+    return None
+
+
+def _opamp_authorization_mode_to_auth_mode(
+    opamp_mode: str,
+) -> str | None:
+    """Map provider opamp-use-authorization value to auth module mode."""
+    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_NONE:
+        return provider_auth.AUTH_MODE_DISABLED
+    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN:
+        return provider_auth.AUTH_MODE_STATIC
+    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_IDP:
+        return provider_auth.AUTH_MODE_JWT
+    return None
+
+
+def _evaluate_opamp_transport_auth(
+    *,
+    headers: dict[str, str],
+    remote_addr: str | None,
+    channel: str,
+) -> provider_auth.AuthDecision:
+    """Authorize OpAMP transport requests using provider config mode."""
+    opamp_mode = str(provider_config.CONFIG.opamp_use_authorization).strip().lower()
+    mapped_mode = _opamp_authorization_mode_to_auth_mode(opamp_mode)
+    if mapped_mode is None:
+        logger.error(
+            "unsupported provider.%s value=%s",
+            provider_config.CFG_OPAMP_USE_AUTHORIZATION,
+            opamp_mode,
+        )
+        return provider_auth.AuthDecision(
+            allowed=False,
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            error=ERR_OPAMP_AUTH_CONFIG_INVALID,
+            reason=f"unsupported mode {opamp_mode}",
+        )
+    authorization_header = _header_value(headers=headers, name="Authorization")
+    method = "POST" if channel == CHANNEL_HTTP else "WEBSOCKET"
+    return provider_auth.evaluate_required_bearer_auth(
+        mode=mapped_mode,
+        path=OPAMP_HTTP_PATH,
+        method=method,
+        authorization_header=authorization_header,
+        remote_addr=remote_addr,
+    )
+
+
+def _build_error_message(
+    *,
+    instance_uid: bytes | None,
+    error_message: str,
+    error_type: opamp_pb2.ServerErrorResponseType = (
+        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+    ),
+) -> opamp_pb2.ServerToAgent:
+    """Build a ServerToAgent error payload without requiring prior response state."""
+    response = opamp_pb2.ServerToAgent()
+    if instance_uid:
+        response.instance_uid = instance_uid
+    response.error_response.type = error_type
+    response.error_response.error_message = error_message
+    return response
+
+
+def _build_opamp_http_error_response(
+    *,
+    instance_uid: bytes | None,
+    status_code: int,
+    error_message: str,
+    headers: dict[str, str] | None = None,
+    error_type: opamp_pb2.ServerErrorResponseType = (
+        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+    ),
+) -> Response:
+    """Build a protobuf HTTP response carrying a ServerToAgent error payload."""
+    payload = _build_error_message(
+        instance_uid=instance_uid,
+        error_message=error_message,
+        error_type=error_type,
+    ).SerializeToString()
+    response = Response(
+        payload,
+        content_type=CONTENT_TYPE_PROTO,
+        status=status_code,
+    )
+    if headers:
+        for key, value in headers.items():
+            response.headers[key] = value
+    return response
+
+
+def _log_blocked_agent_attempt(
+    *,
+    client_id: str,
+    channel: str,
+    headers: dict[str, str],
+    remote_addr: str | None,
+) -> None:
+    """Log one blocked-agent request with headers for audit visibility."""
+    logger.warning(
+        "blocked agent rejected client_id=%s channel=%s remote_addr=%s headers=%s",
+        client_id or "missing",
+        channel,
+        remote_addr or "unknown",
+        headers,
+    )
 
 
 def _build_apply_config(response: opamp_pb2.ServerToAgent) -> opamp_pb2.ServerToAgent:
@@ -499,6 +691,95 @@ async def opamp_http() -> Response:
             agent_msg.ParseFromString(data)
 
         logger.info(LOG_HTTP_MSG, text_format.MessageToString(agent_msg))
+        client_id = _extract_client_id(agent_msg)
+        request_headers = _request_header_map()
+        remote_addr = request.remote_addr
+
+        if client_id and STORE.is_blocked_agent(client_id):
+            _log_blocked_agent_attempt(
+                client_id=client_id,
+                channel=CHANNEL_HTTP,
+                headers=request_headers,
+                remote_addr=remote_addr,
+            )
+            return _build_opamp_http_error_response(
+                instance_uid=agent_msg.instance_uid if agent_msg.instance_uid else None,
+                status_code=HTTPStatus.FORBIDDEN,
+                error_message=ERR_AGENT_BLOCKED,
+                error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+            )
+
+        opamp_auth_decision = _evaluate_opamp_transport_auth(
+            headers=request_headers,
+            remote_addr=remote_addr,
+            channel=CHANNEL_HTTP,
+        )
+        if not opamp_auth_decision.allowed:
+            response_headers: dict[str, str] = {}
+            if opamp_auth_decision.status_code == HTTPStatus.UNAUTHORIZED:
+                response_headers["WWW-Authenticate"] = (
+                    provider_auth.WWW_AUTHENTICATE_BEARER
+                )
+            error_type = (
+                opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable
+                if opamp_auth_decision.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
+                else opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+            )
+            return _build_opamp_http_error_response(
+                instance_uid=agent_msg.instance_uid if agent_msg.instance_uid else None,
+                status_code=opamp_auth_decision.status_code,
+                error_message=opamp_auth_decision.error or ERR_AGENT_AUTH_FAILED,
+                headers=response_headers,
+                error_type=error_type,
+            )
+
+        known_client = STORE.get(client_id) if client_id else None
+        if provider_config.CONFIG.human_in_loop_approval:
+            if not client_id:
+                return _build_opamp_http_error_response(
+                    instance_uid=None,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    error_message="instance_uid is required when human_in_loop_approval is enabled",
+                )
+            if known_client is None:
+                if STORE.get_pending_approval(client_id) is None:
+                    try:
+                        STORE.add_pending_approval_from_agent_msg(
+                            agent_msg,
+                            channel=CHANNEL_HTTP,
+                            remote_addr=remote_addr,
+                        )
+                        logger.info(
+                            "agent moved to pending approval client_id=%s remote_addr=%s",
+                            client_id,
+                            remote_addr or "unknown",
+                        )
+                    except Exception as approval_error:
+                        STORE.block_agent(
+                            client_id,
+                            reason=f"failed pending approval payload transformation: {approval_error}",
+                            headers=request_headers,
+                        )
+                        logger.exception(
+                            "failed to transform pending approval payload; client blocked client_id=%s",
+                            client_id,
+                            exc_info=approval_error,
+                        )
+                        return _build_opamp_http_error_response(
+                            instance_uid=(
+                                agent_msg.instance_uid if agent_msg.instance_uid else None
+                            ),
+                            status_code=HTTPStatus.FORBIDDEN,
+                            error_message=ERR_AGENT_BLOCKED,
+                            error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                        )
+                return _build_opamp_http_error_response(
+                    instance_uid=agent_msg.instance_uid if agent_msg.instance_uid else None,
+                    status_code=HTTPStatus.FORBIDDEN,
+                    error_message=ERR_AGENT_PENDING_APPROVAL,
+                    error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                )
+
         unsupported = []
         if agent_msg.HasField(PB_FIELD_PACKAGE_STATUSES):
             unsupported.append(PB_FIELD_PACKAGE_STATUSES)
@@ -518,7 +799,11 @@ async def opamp_http() -> Response:
                 content_type=CONTENT_TYPE_PROTO,
                 status=HTTPStatus.BAD_REQUEST,
             )
-        client = STORE.upsert_from_agent_msg(agent_msg, channel=CHANNEL_HTTP)
+        client = STORE.upsert_from_agent_msg(
+            agent_msg,
+            channel=CHANNEL_HTTP,
+            remote_addr=remote_addr,
+        )
         pending_command = STORE.next_pending_command(client.client_id)
         response_msg = _build_response(
             agent_msg,
@@ -535,9 +820,10 @@ async def opamp_http() -> Response:
         return Response(payload, content_type=CONTENT_TYPE_PROTO)
     except Exception as exc:
         logger.exception("Unhandled HTTP error - %s", exc_info=exc)
-        response_msg = _build_error(
-            opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
-            "internal server error",
+        response_msg = _build_error_message(
+            instance_uid=None,
+            error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
+            error_message="internal server error",
         )
         payload = response_msg.SerializeToString()
         return Response(
@@ -551,49 +837,166 @@ async def opamp_http() -> Response:
 async def opamp_websocket() -> None:
     """Handle OpAMP WebSocket connections."""
     _WEBSOCKET_CLIENTS[websocket] = None
+    ws_headers = _websocket_header_map()
+    remote_addr = _websocket_remote_addr()
     try:
+        opamp_auth_decision = _evaluate_opamp_transport_auth(
+            headers=ws_headers,
+            remote_addr=remote_addr,
+            channel=CHANNEL_WEBSOCKET,
+        )
+        if not opamp_auth_decision.allowed:
+            error_type = (
+                opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable
+                if opamp_auth_decision.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
+                else opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest
+            )
+            response_msg = _build_error_message(
+                instance_uid=None,
+                error_type=error_type,
+                error_message=opamp_auth_decision.error or ERR_AGENT_AUTH_FAILED,
+            )
+            await websocket.send(encode_message(response_msg.SerializeToString()))
+            await websocket.close(code=1008)
+            return
+
         while True:
             pending_command = None
+            client = None
+            close_after_send = False
             data = await websocket.receive()
             if isinstance(data, str):
                 data = data.encode(UTF8_ENCODING)
             try:
                 header, payload = decode_message(data)
                 if header != OPAMP_HEADER_NONE:
-                    response_msg = _build_error(
-                        opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
-                        ERR_UNSUPPORTED_HEADER,
-                        agent_msg.instance_uid if "agent_msg" in locals() else None,
+                    response_msg = _build_error_message(
+                        instance_uid=None,
+                        error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                        error_message=ERR_UNSUPPORTED_HEADER,
                     )
                 else:
                     agent_msg = opamp_pb2.AgentToServer()
                     if payload:
                         agent_msg.ParseFromString(payload)
                     logger.info(LOG_WS_MSG, text_format.MessageToString(agent_msg))
-                    client = STORE.upsert_from_agent_msg(
-                        agent_msg, channel=CHANNEL_WEBSOCKET
-                    )
-                    _WEBSOCKET_CLIENTS[websocket] = client.client_id
-                    pending_command = STORE.next_pending_command(client.client_id)
-                    response_msg = _build_response(
-                        agent_msg,
-                        pending_command,
-                        client=client,
-                        channel=CHANNEL_WEBSOCKET,
-                    )
+                    client_id = _extract_client_id(agent_msg)
+
+                    if client_id and STORE.is_blocked_agent(client_id):
+                        _log_blocked_agent_attempt(
+                            client_id=client_id,
+                            channel=CHANNEL_WEBSOCKET,
+                            headers=ws_headers,
+                            remote_addr=remote_addr,
+                        )
+                        response_msg = _build_error_message(
+                            instance_uid=(
+                                agent_msg.instance_uid if agent_msg.instance_uid else None
+                            ),
+                            error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                            error_message=ERR_AGENT_BLOCKED,
+                        )
+                        close_after_send = True
+                    else:
+                        known_client = STORE.get(client_id) if client_id else None
+                        if provider_config.CONFIG.human_in_loop_approval:
+                            if not client_id:
+                                response_msg = _build_error_message(
+                                    instance_uid=None,
+                                    error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                                    error_message=(
+                                        "instance_uid is required when "
+                                        "human_in_loop_approval is enabled"
+                                    ),
+                                )
+                                close_after_send = True
+                            elif known_client is None:
+                                if STORE.get_pending_approval(client_id) is None:
+                                    try:
+                                        STORE.add_pending_approval_from_agent_msg(
+                                            agent_msg,
+                                            channel=CHANNEL_WEBSOCKET,
+                                            remote_addr=remote_addr,
+                                        )
+                                        logger.info(
+                                            "agent moved to pending approval client_id=%s remote_addr=%s",
+                                            client_id,
+                                            remote_addr or "unknown",
+                                        )
+                                    except Exception as approval_error:
+                                        STORE.block_agent(
+                                            client_id,
+                                            reason=(
+                                                "failed pending approval payload "
+                                                f"transformation: {approval_error}"
+                                            ),
+                                            headers=ws_headers,
+                                        )
+                                        logger.exception(
+                                            (
+                                                "failed to transform pending approval payload; "
+                                                "client blocked client_id=%s"
+                                            ),
+                                            client_id,
+                                            exc_info=approval_error,
+                                        )
+                                        response_msg = _build_error_message(
+                                            instance_uid=(
+                                                agent_msg.instance_uid
+                                                if agent_msg.instance_uid
+                                                else None
+                                            ),
+                                            error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                                            error_message=ERR_AGENT_BLOCKED,
+                                        )
+                                        close_after_send = True
+                                if not close_after_send:
+                                    response_msg = _build_error_message(
+                                        instance_uid=(
+                                            agent_msg.instance_uid
+                                            if agent_msg.instance_uid
+                                            else None
+                                        ),
+                                        error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                                        error_message=ERR_AGENT_PENDING_APPROVAL,
+                                    )
+                                    close_after_send = True
+
+                        if not close_after_send:
+                            client = STORE.upsert_from_agent_msg(
+                                agent_msg,
+                                channel=CHANNEL_WEBSOCKET,
+                                remote_addr=remote_addr,
+                            )
+                            _WEBSOCKET_CLIENTS[websocket] = client.client_id
+                            pending_command = STORE.next_pending_command(client.client_id)
+                            response_msg = _build_response(
+                                agent_msg,
+                                pending_command,
+                                client=client,
+                                channel=CHANNEL_WEBSOCKET,
+                            )
             except ValueError as exc:
                 logger.warning("OpAMP websocket value error: %s", exc)
-                response_msg = _build_error(
-                    opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
-                    str(exc),
-                    agent_msg.instance_uid if "agent_msg" in locals() else None,
+                response_msg = _build_error_message(
+                    instance_uid=(
+                        agent_msg.instance_uid
+                        if "agent_msg" in locals() and agent_msg.instance_uid
+                        else None
+                    ),
+                    error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_BadRequest,
+                    error_message=str(exc),
                 )
             except Exception as exc:
                 logger.exception("Unhandled websocket error", exc_info=exc)
-                response_msg = _build_error(
-                    opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
-                    "internal server error",
-                    agent_msg.instance_uid if "agent_msg" in locals() else None,
+                response_msg = _build_error_message(
+                    instance_uid=(
+                        agent_msg.instance_uid
+                        if "agent_msg" in locals() and agent_msg.instance_uid
+                        else None
+                    ),
+                    error_type=opamp_pb2.ServerErrorResponseType.ServerErrorResponseType_Unavailable,
+                    error_message="internal server error",
                 )
 
             out_payload = response_msg.SerializeToString()
@@ -601,10 +1004,14 @@ async def opamp_websocket() -> None:
             if pending_command is not None and _has_dispatched_command_payload(
                 response_msg
             ):
-                STORE.mark_command_sent(client.client_id, pending_command)
-                logger.info(
-                    LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc)
-                )
+                if client is not None:
+                    STORE.mark_command_sent(client.client_id, pending_command)
+                    logger.info(
+                        LOG_SEND_COMMAND, client.client_id, datetime.now(timezone.utc)
+                    )
+            if close_after_send:
+                await websocket.close(code=1008)
+                break
     finally:
         _WEBSOCKET_CLIENTS.pop(websocket, None)
 
@@ -656,7 +1063,64 @@ async def list_clients() -> Response:
             logger.info("purged %s disconnected clients", len(removed))
         _LAST_DISCONNECT_PURGE = now
     clients = [client.model_dump(mode=MODEL_DUMP_MODE) for client in STORE.list()]
-    return jsonify({"clients": clients, "total": len(clients)})
+    return jsonify(
+        {
+            "clients": clients,
+            "total": len(clients),
+            "pending_approval_total": STORE.pending_approval_count(),
+        }
+    )
+
+
+@app.get("/api/approvals/pending")
+async def list_pending_approvals() -> Response:
+    """List agents currently waiting for human approval."""
+    pending = [
+        client.model_dump(mode=MODEL_DUMP_MODE)
+        for client in STORE.list_pending_approvals()
+    ]
+    return jsonify({"clients": pending, "total": len(pending)})
+
+
+@app.post("/api/approvals/pending")
+async def apply_pending_approval_decisions() -> Response:
+    """Apply approve/block decisions for pending agents."""
+    payload = await request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "payload is required"}), HTTPStatus.BAD_REQUEST
+    decisions_raw = payload.get("decisions")
+    if not isinstance(decisions_raw, list) or not decisions_raw:
+        return jsonify({"error": "decisions array is required"}), HTTPStatus.BAD_REQUEST
+
+    approved = 0
+    blocked = 0
+    for item in decisions_raw:
+        if not isinstance(item, dict):
+            continue
+        client_id = str(item.get("client_id", "")).strip()
+        decision = str(item.get("decision", "")).strip().lower()
+        if not client_id:
+            continue
+        if decision == "approve":
+            moved = STORE.approve_pending_approval(client_id)
+            if moved is not None:
+                approved += 1
+            continue
+        if decision == "block":
+            STORE.block_agent(
+                client_id,
+                reason="blocked via pending approval workflow",
+                headers=_request_header_map(),
+            )
+            blocked += 1
+
+    return jsonify(
+        {
+            "approved": approved,
+            "blocked": blocked,
+            "pending_approval_total": STORE.pending_approval_count(),
+        }
+    )
 
 
 @app.get("/api/commands/custom")
@@ -716,12 +1180,6 @@ async def queue_command(client_id: str) -> Response:
     elif isinstance(payload, dict):
         if isinstance(payload.get("pairs"), list):
             pairs = payload["pairs"]
-        elif "command" in payload:
-            legacy_action = str(payload["command"]).strip()
-            pairs = [
-                {"key": "classifier", "value": CLASSIFIER_COMMAND},
-                {"key": "action", "value": legacy_action},
-            ]
     if not isinstance(pairs, list) or not pairs:
         return (
             jsonify({"error": "pairs array is required"}),
@@ -951,6 +1409,53 @@ async def get_comms_settings() -> Response:
             "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
             "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
             "client_event_history_size": provider_config.CONFIG.client_event_history_size,
+            "human_in_loop_approval": provider_config.CONFIG.human_in_loop_approval,
+        }
+    )
+
+
+@app.get("/api/settings/diagnostic")
+async def get_diagnostic_settings() -> Response:
+    """Return diagnostic-mode status used by UI feature gating."""
+    return jsonify({"diagnostic_enabled": _diagnostic_mode_enabled()})
+
+
+@app.get("/api/settings/server-opamp-config")
+async def get_server_opamp_config() -> Response:
+    """Return provider config file content for diagnostic UI view."""
+    if not _diagnostic_mode_enabled():
+        return (
+            jsonify({"error": "diagnostic mode is disabled"}),
+            HTTPStatus.FORBIDDEN,
+        )
+
+    config_path = provider_config.get_effective_config_path().resolve()
+    if not config_path.exists() or not config_path.is_file():
+        return (
+            jsonify({"error": "provider config file not found"}),
+            HTTPStatus.NOT_FOUND,
+        )
+    if config_path.suffix.lower() != ".json":
+        return (
+            jsonify({"error": "provider config path must be a JSON file"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        config_raw = config_path.read_text(encoding=UTF8_ENCODING)
+        config_json = json.loads(config_raw)
+    except Exception as exc:
+        logger.exception("failed to read provider config file", exc_info=exc)
+        return (
+            jsonify({"error": "failed to read provider config file"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    return jsonify(
+        {
+            "diagnostic_enabled": True,
+            "config_path": str(config_path),
+            "config_text": json.dumps(config_json, indent=2),
         }
     )
 
@@ -979,8 +1484,22 @@ async def update_comms_settings() -> Response:
                 provider_config.CONFIG.client_event_history_size,
             )
         )
+        human_in_loop_approval = _coerce_bool_setting(
+            payload.get(
+                "human_in_loop_approval",
+                provider_config.CONFIG.human_in_loop_approval,
+            ),
+            key="human_in_loop_approval",
+        )
     except (TypeError, ValueError):
-        return jsonify({"error": "thresholds must be integers"}), HTTPStatus.BAD_REQUEST
+        return (
+            jsonify(
+                {
+                    "error": "thresholds must be integers and human_in_loop_approval must be boolean"
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
     if delayed <= 0 or significant <= 0 or client_event_history_size <= 0:
         return jsonify({"error": "thresholds must be positive"}), HTTPStatus.BAD_REQUEST
     if delayed >= significant:
@@ -992,6 +1511,7 @@ async def update_comms_settings() -> Response:
         delayed=delayed,
         significant=significant,
         client_event_history_size=client_event_history_size,
+        human_in_loop_approval=human_in_loop_approval,
     )
     try:
         provider_config.persist_provider_config(config)
@@ -1006,6 +1526,7 @@ async def update_comms_settings() -> Response:
             "delayed_comms_seconds": config.delayed_comms_seconds,
             "significant_comms_seconds": config.significant_comms_seconds,
             "client_event_history_size": config.client_event_history_size,
+            "human_in_loop_approval": config.human_in_loop_approval,
         }
     )
 
@@ -1107,6 +1628,42 @@ async def web_ui() -> Response:
     return Response(html, content_type="text/html; charset=utf-8")
 
 
+@app.get("/web_ui.css")
+async def web_ui_css() -> Response:
+    """Serve the provider web UI stylesheet."""
+    return Response(
+        _WEB_UI_CSS,
+        content_type="text/css; charset=utf-8",
+    )
+
+
+@app.get("/web_ui_state.js")
+async def web_ui_state_js() -> Response:
+    """Serve the provider web UI state/bootstrap JavaScript."""
+    return Response(
+        _WEB_UI_STATE_JS,
+        content_type="application/javascript; charset=utf-8",
+    )
+
+
+@app.get("/web_ui_functions.js")
+async def web_ui_functions_js() -> Response:
+    """Serve the provider web UI function library JavaScript."""
+    return Response(
+        _WEB_UI_FUNCTIONS_JS,
+        content_type="application/javascript; charset=utf-8",
+    )
+
+
+@app.get("/web_ui_bindings.js")
+async def web_ui_bindings_js() -> Response:
+    """Serve the provider web UI event-binding JavaScript."""
+    return Response(
+        _WEB_UI_BINDINGS_JS,
+        content_type="application/javascript; charset=utf-8",
+    )
+
+
 @app.get("/help")
 async def help_page() -> Response:
     """Serve a simple help page."""
@@ -1129,6 +1686,10 @@ async def help_page() -> Response:
         .replace(
             "__HELP_CLIENT_EVENT_HISTORY_SIZE__",
             GLOBAL_SETTINGS_HELP["client_event_history_size"]["tooltip"],
+        )
+        .replace(
+            "__HELP_HUMAN_IN_LOOP_APPROVAL__",
+            GLOBAL_SETTINGS_HELP["human_in_loop_approval"]["tooltip"],
         )
         .replace(
             "__HELP_DEFAULT_HEARTBEAT_FREQUENCY__",
@@ -1174,6 +1735,14 @@ async def shutdown_server() -> Response:
 _HTML_DIR = pathlib.Path(__file__).with_name("html")
 _WEB_UI_PATH = _HTML_DIR / "web_ui.html"
 _WEB_UI_HTML = _WEB_UI_PATH.read_text(encoding=UTF8_ENCODING)
+_WEB_UI_CSS_PATH = _HTML_DIR / "web_ui.css"
+_WEB_UI_CSS = _WEB_UI_CSS_PATH.read_text(encoding=UTF8_ENCODING)
+_WEB_UI_STATE_JS_PATH = _HTML_DIR / "web_ui_state.js"
+_WEB_UI_STATE_JS = _WEB_UI_STATE_JS_PATH.read_text(encoding=UTF8_ENCODING)
+_WEB_UI_FUNCTIONS_JS_PATH = _HTML_DIR / "web_ui_functions.js"
+_WEB_UI_FUNCTIONS_JS = _WEB_UI_FUNCTIONS_JS_PATH.read_text(encoding=UTF8_ENCODING)
+_WEB_UI_BINDINGS_JS_PATH = _HTML_DIR / "web_ui_bindings.js"
+_WEB_UI_BINDINGS_JS = _WEB_UI_BINDINGS_JS_PATH.read_text(encoding=UTF8_ENCODING)
 
 _HELP_PATH = _HTML_DIR / "help.html"
 _HELP_HTML = _HELP_PATH.read_text(encoding=UTF8_ENCODING)

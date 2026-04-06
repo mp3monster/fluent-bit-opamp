@@ -21,6 +21,7 @@ import logging
 import os
 from http import HTTPStatus
 from typing import Iterable, Optional
+from urllib.parse import quote, urlencode
 
 try:
     import jwt
@@ -31,7 +32,13 @@ AUTH_MODE_DISABLED = "disabled"  # Auth mode that bypasses bearer validation che
 AUTH_MODE_STATIC = "static"  # Auth mode using a single configured static bearer token.
 AUTH_MODE_JWT = "jwt"  # Auth mode validating JWT bearer tokens against JWKS.
 DEFAULT_AUTH_MODE = AUTH_MODE_DISABLED  # Default auth mode when none is configured.
-DEFAULT_PROTECTED_PATH_PREFIXES = ("/tool", "/sse", "/messages", "/mcp")  # Default route prefixes protected by bearer auth.
+DEFAULT_PROTECTED_PATH_PREFIXES = (
+    "/tool",
+    "/sse",
+    "/messages",
+    "/mcp",
+    "/api",
+)  # Default route prefixes protected by bearer auth.
 
 ENV_AUTH_MODE = "OPAMP_AUTH_MODE"  # Environment variable selecting auth mode.
 ENV_AUTH_PROTECTED_PATH_PREFIXES = "OPAMP_AUTH_PROTECTED_PATH_PREFIXES"  # Environment variable listing protected path prefixes.
@@ -40,6 +47,8 @@ ENV_AUTH_JWT_ISSUER = "OPAMP_AUTH_JWT_ISSUER"  # Environment variable for expect
 ENV_AUTH_JWT_AUDIENCE = "OPAMP_AUTH_JWT_AUDIENCE"  # Environment variable for expected JWT audience claim.
 ENV_AUTH_JWT_JWKS_URL = "OPAMP_AUTH_JWT_JWKS_URL"  # Environment variable for JWKS endpoint URL.
 ENV_AUTH_JWT_LEEWAY_SECONDS = "OPAMP_AUTH_JWT_LEEWAY_SECONDS"  # Environment variable for JWT clock-skew leeway.
+ENV_AUTH_IDP_LOGIN_URL = "OPAMP_AUTH_IDP_LOGIN_URL"  # Optional explicit IdP login URL used for browser redirects.
+ENV_AUTH_IDP_CLIENT_ID = "OPAMP_AUTH_IDP_CLIENT_ID"  # Optional IdP client id used when deriving login URL from issuer.
 
 WWW_AUTHENTICATE_BEARER = 'Bearer realm="opamp-provider"'  # WWW-Authenticate challenge for bearer-protected endpoints.
 
@@ -55,6 +64,8 @@ class AuthSettings:
     jwt_audience: str | None
     jwt_jwks_url: str | None
     jwt_leeway_seconds: int
+    idp_login_url: str | None
+    idp_client_id: str | None
 
 
 @dataclass(frozen=True)
@@ -125,6 +136,8 @@ def _load_auth_settings_from_env() -> AuthSettings:
         jwt_audience=str(os.environ.get(ENV_AUTH_JWT_AUDIENCE, "")).strip() or None,
         jwt_jwks_url=jwt_jwks_url,
         jwt_leeway_seconds=jwt_leeway_seconds,
+        idp_login_url=str(os.environ.get(ENV_AUTH_IDP_LOGIN_URL, "")).strip() or None,
+        idp_client_id=str(os.environ.get(ENV_AUTH_IDP_CLIENT_ID, "")).strip() or None,
     )
 
 
@@ -231,13 +244,36 @@ def evaluate_bearer_auth(
     authorization_header: str | None,
     remote_addr: str | None,
 ) -> AuthDecision:
-    """Authorize a request based on current mode and bearer token header."""
+    """Authorize a request based on current mode and protected-path gating."""
     settings = AUTH_SETTINGS
     if not _is_protected_path(path, settings):
         return AuthDecision(allowed=True)
+    return evaluate_required_bearer_auth(
+        mode=settings.mode,
+        path=path,
+        method=method,
+        authorization_header=authorization_header,
+        remote_addr=remote_addr,
+        static_token=settings.static_token,
+        jwt_settings=settings,
+    )
+
+
+def evaluate_required_bearer_auth(
+    *,
+    mode: str,
+    path: str,
+    method: str,
+    authorization_header: str | None,
+    remote_addr: str | None,
+    static_token: str | None = None,
+    jwt_settings: AuthSettings | None = None,
+) -> AuthDecision:
+    """Authorize a request using bearer validation without protected-path gating."""
+    settings = jwt_settings or AUTH_SETTINGS
     if method.upper() == "OPTIONS":
         return AuthDecision(allowed=True)
-    if settings.mode == AUTH_MODE_DISABLED:
+    if mode == AUTH_MODE_DISABLED:
         return AuthDecision(allowed=True)
 
     token = _extract_bearer_token(authorization_header)
@@ -249,11 +285,12 @@ def evaluate_bearer_auth(
             path=path,
             method=method,
             remote_addr=str(remote_addr or ""),
-            mode=settings.mode,
+            mode=mode,
         )
 
-    if settings.mode == AUTH_MODE_STATIC:
-        if not settings.static_token:
+    if mode == AUTH_MODE_STATIC:
+        expected_token = static_token if static_token is not None else settings.static_token
+        if not expected_token:
             return _reject(
                 status_code=HTTPStatus.SERVICE_UNAVAILABLE,
                 error="static auth token is not configured",
@@ -261,9 +298,9 @@ def evaluate_bearer_auth(
                 path=path,
                 method=method,
                 remote_addr=str(remote_addr or ""),
-                mode=settings.mode,
+                mode=mode,
             )
-        if not hmac.compare_digest(token, settings.static_token):
+        if not hmac.compare_digest(token, expected_token):
             return _reject(
                 status_code=HTTPStatus.UNAUTHORIZED,
                 error="invalid bearer token",
@@ -271,11 +308,11 @@ def evaluate_bearer_auth(
                 path=path,
                 method=method,
                 remote_addr=str(remote_addr or ""),
-                mode=settings.mode,
+                mode=mode,
             )
         return AuthDecision(allowed=True)
 
-    if settings.mode == AUTH_MODE_JWT:
+    if mode == AUTH_MODE_JWT:
         validation_error = _validate_jwt_token(token, settings)
         if validation_error:
             return _reject(
@@ -285,18 +322,45 @@ def evaluate_bearer_auth(
                 path=path,
                 method=method,
                 remote_addr=str(remote_addr or ""),
-                mode=settings.mode,
+                mode=mode,
             )
         return AuthDecision(allowed=True)
 
     return _reject(
         status_code=HTTPStatus.SERVICE_UNAVAILABLE,
         error="invalid auth mode configuration",
-        reason=f"unsupported auth mode: {settings.mode}",
+        reason=f"unsupported auth mode: {mode}",
         path=path,
         method=method,
         remote_addr=str(remote_addr or ""),
-        mode=settings.mode,
+        mode=mode,
+    )
+
+
+def build_idp_login_redirect_url(*, return_to: str | None = None) -> str | None:
+    """Return an IdP login URL suitable for redirecting browser users."""
+    settings = AUTH_SETTINGS
+    explicit = settings.idp_login_url
+    if explicit:
+        if return_to and "redirect_uri=" not in explicit:
+            separator = "&" if "?" in explicit else "?"
+            return f"{explicit}{separator}redirect_uri={quote(return_to, safe='')}"
+        return explicit
+    if not settings.jwt_issuer:
+        return None
+    client_id = settings.idp_client_id or settings.jwt_audience
+    if not client_id:
+        return None
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "scope": "openid",
+    }
+    if return_to:
+        params["redirect_uri"] = return_to
+    return (
+        f"{settings.jwt_issuer.rstrip('/')}/protocol/openid-connect/auth"
+        f"?{urlencode(params)}"
     )
 
 
