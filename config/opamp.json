@@ -4,9 +4,10 @@
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
+    "server-authorization": "none",
     "log_agent_api_responses": false,
-    "fluentbit_config_path": "./fluent-bit.conf",
-    "additional_fluent_bit_params": [],
+    "agent_config_path": "./fluent-bit.conf",
+    "agent_additional_params": [],
     "heartbeat_frequency": 30,
     "full_update_controller": {
       "fullResendAfter": 1
@@ -24,12 +25,14 @@
   },
   "provider": {
     "delayed_comms_seconds": 60,
-    "significant_comms_seconds": 300,
+    "significant_comms_seconds": 120,
     "webui_port": 8080,
     "minutes_keep_disconnected": 5,
     "retryAfterSeconds": 30,
     "client_event_history_size": 50,
-    "log_level": "INFO",
-    "default_heartbeat_frequency": 30
+    "log_level": "DEBUG",
+    "default_heartbeat_frequency": 30,
+    "human_in_loop_approval": true,
+    "opamp-use-authorization": "none"
   }
 }
