@@ -18,7 +18,10 @@ Example `opamp.json`:
     "minutes_keep_disconnected": 5,
     "retryAfterSeconds": 30,
     "client_event_history_size": 50,
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "default_heartbeat_frequency": 30,
+    "human_in_loop_approval": false,
+    "opamp-use-authorization": "none"
   }
 }
 ```
@@ -41,6 +44,43 @@ Example `opamp.json`:
 - `provider.log_level` (string, optional, default `INFO`)
   Provider log level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
   Level names are resolved via Python `logging`.
+- `provider.default_heartbeat_frequency` (integer, optional, default `30`)
+  Default heartbeat interval assigned to clients.
+- `provider.human_in_loop_approval` (boolean, optional, default `false`)
+  Requires unknown agents to be reviewed in the Pending Approval workflow before they are accepted.
+  This setting can be updated in the UI via Global Settings -> ServerSettings.
+- `provider.opamp-use-authorization` (string, optional, default `"none"`)
+  OpAMP transport authorization mode for `/v1/opamp` HTTP and WebSocket:
+  - `none`: no OpAMP bearer-token enforcement.
+  - `config-token`: require `Authorization: Bearer <token>` and compare against `OPAMP_AUTH_STATIC_TOKEN`.
+  - `idp`: require bearer token and validate as JWT using IdP settings (`OPAMP_AUTH_JWT_*`).
+  This uses the same token/JWT settings as UI/API auth.
+
+## Human-In-Loop Approval Workflow
+
+When `provider.human_in_loop_approval` is enabled:
+
+- Unknown agents are not added directly to the active client list.
+- Their first payload is translated into a pending client record and stored in a pending-approval list.
+- If payload-to-client transformation fails, the agent UID is added to a blocked list.
+- Blocked agents are rejected on both HTTP and WebSocket transports.
+
+The web UI displays a `Pending Approval` count in the top metadata bar.
+Selecting it opens an approval dialog with:
+
+- UID
+- instance ID
+- IP
+- agent type/version
+- host type
+- accept/block decision per row (default `block`) and set-all controls
+
+Submitting `OK` moves accepted agents into the active client list and adds blocked entries to the blocked list.
+
+Related API endpoints:
+
+- `GET /api/approvals/pending`
+- `POST /api/approvals/pending`
 
 ## CLI Overrides
 
@@ -105,6 +145,7 @@ Provider bearer auth is environment-controlled and defaults to disabled.
 - `OPAMP_AUTH_MODE=disabled` (default) for local development/tests.
 - `OPAMP_AUTH_MODE=static` with `OPAMP_AUTH_STATIC_TOKEN=<secret>`.
 - `OPAMP_AUTH_MODE=jwt` with JWT settings (for example Keycloak issuer/audience).
+- In `jwt` mode, browser app URLs (`/`, `/ui`, `/help`) redirect to IdP login when no bearer token is provided.
 
 Protected path prefixes default to:
 
@@ -112,6 +153,7 @@ Protected path prefixes default to:
 - `/sse`
 - `/messages`
 - `/mcp`
+- `/api`
 
 See [docs/authentication.md](../docs/authentication.md) for full setup, Keycloak Docker script usage, and MCP token examples.
 
