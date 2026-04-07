@@ -2,6 +2,23 @@
 
 This document consolidates all consumer configuration options and their CLI override support.
 
+## Table of Contents
+
+- [Config Source](#config-source)
+- [Override Precedence](#override-precedence)
+- [Quick Start Minimal Config](#quick-start-minimal-config)
+- [Run Scripts](#run-scripts)
+- [Example `opamp.json`](#example-opampjson)
+- [Consumer Config Keys](#consumer-config-keys)
+- [Hardwired Capabilities](#hardwired-capabilities)
+- [Connection Settings](#connection-settings)
+- [Fluent Bit Comment Metadata](#fluent-bit-comment-metadata)
+- [CLI Example](#cli-example)
+- [Running As A Service/Daemon](#running-as-a-servicedaemon)
+- [Installed CLI Commands](#installed-cli-commands)
+- [Fluentd Consumer](#fluentd-consumer)
+- [Required Fluentd Monitor Source](#required-fluentd-monitor-source)
+
 ## Config Source
 
 The consumer reads `opamp.json` from the current working directory by default.
@@ -45,6 +62,26 @@ Use this minimal config for a fast local startup:
   }
 }
 ```
+
+## Run Scripts
+
+Helper scripts in repo root:
+- `scripts/run_fluentbit_supervisor.cmd`
+- `scripts/run_fluentbit_supervisor.sh`
+- `scripts/run_fluentd_supervisor.cmd`
+- `scripts/run_fluentd_supervisor.sh`
+- `scripts/run_all_supervisors.cmd`
+- `scripts/run_all_supervisors.sh`
+
+Fluent Bit writes to `logs/supervisor_fluentbit.log` and Fluentd writes to
+`logs/supervisor_fluentd.log` (each rotates on startup).
+
+Default config resolution:
+- Fluent Bit supervisor: `tests/opamp.json` -> `config/opamp.json`
+- Fluentd supervisor: `consumer/opamp-fluentd.json` -> `tests/opamp.json` -> `config/opamp.json`
+- Fluentd runtime config path: `consumer/fluentd.conf`
+
+Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directory.
 
 ## Example `opamp.json`
 
@@ -177,26 +214,6 @@ python -m opamp_consumer.fluentbit_client \
   --log-level INFO \
   --full-update-controller '{"fullResendAfter":1}'
 ```
-
-## Run Scripts
-
-Helper scripts in repo root:
-- `scripts/run_fluentbit_supervisor.cmd`
-- `scripts/run_fluentbit_supervisor.sh`
-- `scripts/run_fluentd_supervisor.cmd`
-- `scripts/run_fluentd_supervisor.sh`
-- `scripts/run_all_supervisors.cmd`
-- `scripts/run_all_supervisors.sh`
-
-Fluent Bit writes to `logs/supervisor_fluentbit.log` and Fluentd writes to
-`logs/supervisor_fluentd.log` (each rotates on startup).
-
-Default config resolution:
-- Fluent Bit supervisor: `tests/opamp.json` -> `config/opamp.json`
-- Fluentd supervisor: `consumer/opamp-fluentd.json` -> `tests/opamp.json` -> `config/opamp.json`
-- Fluentd runtime config path: `consumer/fluentd.conf`
-
-Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directory.
 
 ## Running As A Service/Daemon
 
