@@ -26,7 +26,7 @@ from opamp_provider.proto import opamp_pb2
 CHATOPCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.chatopcommand"  # Capability FQDN routed to ChatOps handlers on the client.
 CHATOPCOMMAND_TYPE = "request"  # CustomMessage.type value for chatops requests.
 COMMAND_CLASSIFIER = "custom"  # Command classifier for provider routing.
-COMMAND_DESCRIPTION = "custom chatopcommand queued"  # Event/queue description text.
+COMMAND_DESCRIPTION = "Uses the chat ops strategy to provide a dynamic means to get the agent to perform a task based on its existing configuration."  # Event/queue description text.
 COMMAND_DISPLAY_NAME = "ChatOps Command"  # Display name presented in UI metadata.
 COMMAND_ACTION = "chatopcommand"  # Action name used for command dispatch and filtering.
 PARAMETER_ACTION_NAME = "tag"  # User parameter name that selects ChatOps operation.

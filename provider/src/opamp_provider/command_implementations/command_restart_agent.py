@@ -82,7 +82,7 @@ class RestartAgent(CommandObjectInterface, CommandParameterSchemaInterface):
         Implements:
             CommandObjectInterface.get_command_description.
         """
-        return "Restart Agent"
+        return "Restarts Agent"
 
     def getdisplayname(self) -> str:
         """Return display label used in UI/API metadata.

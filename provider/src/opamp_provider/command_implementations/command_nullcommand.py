@@ -96,7 +96,7 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         Implements:
             CommandObjectInterface.get_command_description.
         """
-        return "custom nullcommand queued"
+        return "Null command provides a means to check the custom command configuration without impact"
 
     def getdisplayname(self) -> str:
         """Return display label used in UI/API metadata.

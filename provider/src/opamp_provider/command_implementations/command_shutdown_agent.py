@@ -89,7 +89,7 @@ class CommandShutdownAgent(CommandObjectInterface, CommandParameterSchemaInterfa
         Implements:
             CommandObjectInterface.get_command_description.
         """
-        return "custom shutdownagent queued"
+        return "Instruction for telling an agent to shutdown"
 
     def getdisplayname(self) -> str:
         """Return display label used in UI/API metadata.
