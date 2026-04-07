@@ -40,15 +40,36 @@ DEFAULT_PROTECTED_PATH_PREFIXES = (
     "/api",
 )  # Default route prefixes protected by bearer auth.
 
-ENV_AUTH_MODE = "OPAMP_AUTH_MODE"  # Environment variable selecting auth mode.
-ENV_AUTH_PROTECTED_PATH_PREFIXES = "OPAMP_AUTH_PROTECTED_PATH_PREFIXES"  # Environment variable listing protected path prefixes.
-ENV_AUTH_STATIC_TOKEN = "OPAMP_AUTH_STATIC_TOKEN"  # Environment variable holding static bearer token value.
-ENV_AUTH_JWT_ISSUER = "OPAMP_AUTH_JWT_ISSUER"  # Environment variable for expected JWT issuer claim.
-ENV_AUTH_JWT_AUDIENCE = "OPAMP_AUTH_JWT_AUDIENCE"  # Environment variable for expected JWT audience claim.
-ENV_AUTH_JWT_JWKS_URL = "OPAMP_AUTH_JWT_JWKS_URL"  # Environment variable for JWKS endpoint URL.
-ENV_AUTH_JWT_LEEWAY_SECONDS = "OPAMP_AUTH_JWT_LEEWAY_SECONDS"  # Environment variable for JWT clock-skew leeway.
-ENV_AUTH_IDP_LOGIN_URL = "OPAMP_AUTH_IDP_LOGIN_URL"  # Optional explicit IdP login URL used for browser redirects.
-ENV_AUTH_IDP_CLIENT_ID = "OPAMP_AUTH_IDP_CLIENT_ID"  # Optional IdP client id used when deriving login URL from issuer.
+ENV_OPAMP_AUTH_MODE = "OPAMP_AUTH_MODE"  # Environment variable selecting OpAMP auth mode.
+ENV_OPAMP_AUTH_PROTECTED_PATH_PREFIXES = "OPAMP_AUTH_PROTECTED_PATH_PREFIXES"  # Environment variable listing OpAMP protected path prefixes.
+ENV_OPAMP_AUTH_STATIC_TOKEN = "OPAMP_AUTH_STATIC_TOKEN"  # Environment variable holding OpAMP static bearer token value.
+ENV_OPAMP_AUTH_JWT_ISSUER = "OPAMP_AUTH_JWT_ISSUER"  # Environment variable for expected OpAMP JWT issuer claim.
+ENV_OPAMP_AUTH_JWT_AUDIENCE = "OPAMP_AUTH_JWT_AUDIENCE"  # Environment variable for expected OpAMP JWT audience claim.
+ENV_OPAMP_AUTH_JWT_JWKS_URL = "OPAMP_AUTH_JWT_JWKS_URL"  # Environment variable for OpAMP JWKS endpoint URL.
+ENV_OPAMP_AUTH_JWT_LEEWAY_SECONDS = "OPAMP_AUTH_JWT_LEEWAY_SECONDS"  # Environment variable for OpAMP JWT clock-skew leeway.
+ENV_OPAMP_AUTH_IDP_LOGIN_URL = "OPAMP_AUTH_IDP_LOGIN_URL"  # Optional explicit OpAMP IdP login URL used for browser redirects.
+ENV_OPAMP_AUTH_IDP_CLIENT_ID = "OPAMP_AUTH_IDP_CLIENT_ID"  # Optional OpAMP IdP client id used when deriving login URL from issuer.
+
+ENV_UI_AUTH_MODE = "UI_AUTH_MODE"  # Environment variable selecting non-OpAMP auth mode.
+ENV_UI_AUTH_PROTECTED_PATH_PREFIXES = "UI_AUTH_PROTECTED_PATH_PREFIXES"  # Environment variable listing non-OpAMP protected path prefixes.
+ENV_UI_AUTH_STATIC_TOKEN = "UI_AUTH_STATIC_TOKEN"  # Environment variable holding non-OpAMP static bearer token value.
+ENV_UI_AUTH_JWT_ISSUER = "UI_AUTH_JWT_ISSUER"  # Environment variable for expected non-OpAMP JWT issuer claim.
+ENV_UI_AUTH_JWT_AUDIENCE = "UI_AUTH_JWT_AUDIENCE"  # Environment variable for expected non-OpAMP JWT audience claim.
+ENV_UI_AUTH_JWT_JWKS_URL = "UI_AUTH_JWT_JWKS_URL"  # Environment variable for non-OpAMP JWKS endpoint URL.
+ENV_UI_AUTH_JWT_LEEWAY_SECONDS = "UI_AUTH_JWT_LEEWAY_SECONDS"  # Environment variable for non-OpAMP JWT clock-skew leeway.
+ENV_UI_AUTH_IDP_LOGIN_URL = "UI_AUTH_IDP_LOGIN_URL"  # Optional explicit non-OpAMP IdP login URL.
+ENV_UI_AUTH_IDP_CLIENT_ID = "UI_AUTH_IDP_CLIENT_ID"  # Optional non-OpAMP IdP client id used when deriving login URL from issuer.
+
+# Backward-compatible aliases preserved for existing callers/tests.
+ENV_AUTH_MODE = ENV_OPAMP_AUTH_MODE
+ENV_AUTH_PROTECTED_PATH_PREFIXES = ENV_OPAMP_AUTH_PROTECTED_PATH_PREFIXES
+ENV_AUTH_STATIC_TOKEN = ENV_OPAMP_AUTH_STATIC_TOKEN
+ENV_AUTH_JWT_ISSUER = ENV_OPAMP_AUTH_JWT_ISSUER
+ENV_AUTH_JWT_AUDIENCE = ENV_OPAMP_AUTH_JWT_AUDIENCE
+ENV_AUTH_JWT_JWKS_URL = ENV_OPAMP_AUTH_JWT_JWKS_URL
+ENV_AUTH_JWT_LEEWAY_SECONDS = ENV_OPAMP_AUTH_JWT_LEEWAY_SECONDS
+ENV_AUTH_IDP_LOGIN_URL = ENV_OPAMP_AUTH_IDP_LOGIN_URL
+ENV_AUTH_IDP_CLIENT_ID = ENV_OPAMP_AUTH_IDP_CLIENT_ID
 
 WWW_AUTHENTICATE_BEARER = 'Bearer realm="opamp-provider"'  # WWW-Authenticate challenge for bearer-protected endpoints.
 
@@ -66,6 +87,9 @@ class AuthSettings:
     jwt_leeway_seconds: int
     idp_login_url: str | None
     idp_client_id: str | None
+    static_token_env_var: str = ENV_OPAMP_AUTH_STATIC_TOKEN
+    jwt_issuer_env_var: str = ENV_OPAMP_AUTH_JWT_ISSUER
+    jwt_jwks_url_env_var: str = ENV_OPAMP_AUTH_JWT_JWKS_URL
 
 
 @dataclass(frozen=True)
@@ -104,51 +128,122 @@ def _derive_default_jwks_url(jwt_issuer: str | None) -> str | None:
     return f"{jwt_issuer.rstrip('/')}/protocol/openid-connect/certs"
 
 
-def _load_auth_settings_from_env() -> AuthSettings:
-    """Load auth settings from environment variables."""
-    raw_mode = str(os.environ.get(ENV_AUTH_MODE, DEFAULT_AUTH_MODE)).strip().lower()
+def _load_auth_settings_from_env(
+    *,
+    mode_env_var: str,
+    protected_prefixes_env_var: str,
+    static_token_env_var: str,
+    jwt_issuer_env_var: str,
+    jwt_audience_env_var: str,
+    jwt_jwks_url_env_var: str,
+    jwt_leeway_env_var: str,
+    idp_login_url_env_var: str,
+    idp_client_id_env_var: str,
+) -> AuthSettings:
+    """Load auth settings from a configured environment-variable namespace."""
+    raw_mode = str(os.environ.get(mode_env_var, DEFAULT_AUTH_MODE)).strip().lower()
     mode = (
         raw_mode
         if raw_mode in {AUTH_MODE_DISABLED, AUTH_MODE_STATIC, AUTH_MODE_JWT}
         else DEFAULT_AUTH_MODE
     )
-    raw_prefixes = os.environ.get(ENV_AUTH_PROTECTED_PATH_PREFIXES, "")
+    raw_prefixes = os.environ.get(protected_prefixes_env_var, "")
     if raw_prefixes.strip():
         protected_path_prefixes = _normalize_prefixes(raw_prefixes.split(","))
     else:
         protected_path_prefixes = DEFAULT_PROTECTED_PATH_PREFIXES
-    jwt_issuer = str(os.environ.get(ENV_AUTH_JWT_ISSUER, "")).strip() or None
-    jwt_jwks_url = str(os.environ.get(ENV_AUTH_JWT_JWKS_URL, "")).strip() or None
+    jwt_issuer = str(os.environ.get(jwt_issuer_env_var, "")).strip() or None
+    jwt_jwks_url = str(os.environ.get(jwt_jwks_url_env_var, "")).strip() or None
     if jwt_jwks_url is None:
         jwt_jwks_url = _derive_default_jwks_url(jwt_issuer)
     try:
         jwt_leeway_seconds = max(
             0,
-            int(os.environ.get(ENV_AUTH_JWT_LEEWAY_SECONDS, "30")),
+            int(os.environ.get(jwt_leeway_env_var, "30")),
         )
     except ValueError:
         jwt_leeway_seconds = 30
     return AuthSettings(
         mode=mode,
         protected_path_prefixes=protected_path_prefixes,
-        static_token=str(os.environ.get(ENV_AUTH_STATIC_TOKEN, "")).strip() or None,
+        static_token=str(os.environ.get(static_token_env_var, "")).strip() or None,
         jwt_issuer=jwt_issuer,
-        jwt_audience=str(os.environ.get(ENV_AUTH_JWT_AUDIENCE, "")).strip() or None,
+        jwt_audience=str(os.environ.get(jwt_audience_env_var, "")).strip() or None,
         jwt_jwks_url=jwt_jwks_url,
         jwt_leeway_seconds=jwt_leeway_seconds,
-        idp_login_url=str(os.environ.get(ENV_AUTH_IDP_LOGIN_URL, "")).strip() or None,
-        idp_client_id=str(os.environ.get(ENV_AUTH_IDP_CLIENT_ID, "")).strip() or None,
+        idp_login_url=str(os.environ.get(idp_login_url_env_var, "")).strip() or None,
+        idp_client_id=str(os.environ.get(idp_client_id_env_var, "")).strip() or None,
+        static_token_env_var=static_token_env_var,
+        jwt_issuer_env_var=jwt_issuer_env_var,
+        jwt_jwks_url_env_var=jwt_jwks_url_env_var,
     )
 
 
-AUTH_SETTINGS = _load_auth_settings_from_env()  # Module-level auth settings singleton loaded from environment.
+OPAMP_AUTH_SETTINGS = _load_auth_settings_from_env(
+    mode_env_var=ENV_OPAMP_AUTH_MODE,
+    protected_prefixes_env_var=ENV_OPAMP_AUTH_PROTECTED_PATH_PREFIXES,
+    static_token_env_var=ENV_OPAMP_AUTH_STATIC_TOKEN,
+    jwt_issuer_env_var=ENV_OPAMP_AUTH_JWT_ISSUER,
+    jwt_audience_env_var=ENV_OPAMP_AUTH_JWT_AUDIENCE,
+    jwt_jwks_url_env_var=ENV_OPAMP_AUTH_JWT_JWKS_URL,
+    jwt_leeway_env_var=ENV_OPAMP_AUTH_JWT_LEEWAY_SECONDS,
+    idp_login_url_env_var=ENV_OPAMP_AUTH_IDP_LOGIN_URL,
+    idp_client_id_env_var=ENV_OPAMP_AUTH_IDP_CLIENT_ID,
+)  # Module-level OpAMP auth settings singleton loaded from environment.
+UI_AUTH_SETTINGS = _load_auth_settings_from_env(
+    mode_env_var=ENV_UI_AUTH_MODE,
+    protected_prefixes_env_var=ENV_UI_AUTH_PROTECTED_PATH_PREFIXES,
+    static_token_env_var=ENV_UI_AUTH_STATIC_TOKEN,
+    jwt_issuer_env_var=ENV_UI_AUTH_JWT_ISSUER,
+    jwt_audience_env_var=ENV_UI_AUTH_JWT_AUDIENCE,
+    jwt_jwks_url_env_var=ENV_UI_AUTH_JWT_JWKS_URL,
+    jwt_leeway_env_var=ENV_UI_AUTH_JWT_LEEWAY_SECONDS,
+    idp_login_url_env_var=ENV_UI_AUTH_IDP_LOGIN_URL,
+    idp_client_id_env_var=ENV_UI_AUTH_IDP_CLIENT_ID,
+)  # Module-level UI auth settings singleton loaded from environment.
+AUTH_SETTINGS = OPAMP_AUTH_SETTINGS  # Backward-compatible alias for legacy callers.
+
+
+def reload_opamp_auth_settings() -> AuthSettings:
+    """Reload environment-backed OpAMP auth settings."""
+    global OPAMP_AUTH_SETTINGS, AUTH_SETTINGS
+    OPAMP_AUTH_SETTINGS = _load_auth_settings_from_env(
+        mode_env_var=ENV_OPAMP_AUTH_MODE,
+        protected_prefixes_env_var=ENV_OPAMP_AUTH_PROTECTED_PATH_PREFIXES,
+        static_token_env_var=ENV_OPAMP_AUTH_STATIC_TOKEN,
+        jwt_issuer_env_var=ENV_OPAMP_AUTH_JWT_ISSUER,
+        jwt_audience_env_var=ENV_OPAMP_AUTH_JWT_AUDIENCE,
+        jwt_jwks_url_env_var=ENV_OPAMP_AUTH_JWT_JWKS_URL,
+        jwt_leeway_env_var=ENV_OPAMP_AUTH_JWT_LEEWAY_SECONDS,
+        idp_login_url_env_var=ENV_OPAMP_AUTH_IDP_LOGIN_URL,
+        idp_client_id_env_var=ENV_OPAMP_AUTH_IDP_CLIENT_ID,
+    )
+    AUTH_SETTINGS = OPAMP_AUTH_SETTINGS
+    return OPAMP_AUTH_SETTINGS
+
+
+def reload_ui_auth_settings() -> AuthSettings:
+    """Reload environment-backed UI auth settings."""
+    global UI_AUTH_SETTINGS
+    UI_AUTH_SETTINGS = _load_auth_settings_from_env(
+        mode_env_var=ENV_UI_AUTH_MODE,
+        protected_prefixes_env_var=ENV_UI_AUTH_PROTECTED_PATH_PREFIXES,
+        static_token_env_var=ENV_UI_AUTH_STATIC_TOKEN,
+        jwt_issuer_env_var=ENV_UI_AUTH_JWT_ISSUER,
+        jwt_audience_env_var=ENV_UI_AUTH_JWT_AUDIENCE,
+        jwt_jwks_url_env_var=ENV_UI_AUTH_JWT_JWKS_URL,
+        jwt_leeway_env_var=ENV_UI_AUTH_JWT_LEEWAY_SECONDS,
+        idp_login_url_env_var=ENV_UI_AUTH_IDP_LOGIN_URL,
+        idp_client_id_env_var=ENV_UI_AUTH_IDP_CLIENT_ID,
+    )
+    return UI_AUTH_SETTINGS
 
 
 def reload_auth_settings() -> AuthSettings:
-    """Reload environment-backed auth settings (used by tests and runtime tweaks)."""
-    global AUTH_SETTINGS
-    AUTH_SETTINGS = _load_auth_settings_from_env()  # Refreshed module-level auth settings singleton.
-    return AUTH_SETTINGS
+    """Reload both OpAMP and UI environment-backed auth settings."""
+    reload_opamp_auth_settings()
+    reload_ui_auth_settings()
+    return OPAMP_AUTH_SETTINGS
 
 
 def _is_protected_path(path: str, settings: AuthSettings) -> bool:
@@ -216,7 +311,10 @@ def _validate_jwt_token(token: str, settings: AuthSettings) -> Optional[str]:
     if jwt is None:
         return "jwt mode requires PyJWT dependency"
     if not settings.jwt_jwks_url:
-        return "jwt mode requires OPAMP_AUTH_JWT_JWKS_URL or OPAMP_AUTH_JWT_ISSUER"
+        return (
+            f"jwt mode requires {settings.jwt_jwks_url_env_var} "
+            f"or {settings.jwt_issuer_env_var}"
+        )
     try:
         signing_key = _jwks_client(settings.jwt_jwks_url).get_signing_key_from_jwt(token)
         decode_options = {
@@ -294,7 +392,7 @@ def evaluate_required_bearer_auth(
             return _reject(
                 status_code=HTTPStatus.SERVICE_UNAVAILABLE,
                 error="static auth token is not configured",
-                reason="OPAMP_AUTH_STATIC_TOKEN not set",
+                reason=f"{settings.static_token_env_var} not set",
                 path=path,
                 method=method,
                 remote_addr=str(remote_addr or ""),
@@ -337,18 +435,22 @@ def evaluate_required_bearer_auth(
     )
 
 
-def build_idp_login_redirect_url(*, return_to: str | None = None) -> str | None:
+def build_idp_login_redirect_url(
+    *,
+    return_to: str | None = None,
+    settings: AuthSettings | None = None,
+) -> str | None:
     """Return an IdP login URL suitable for redirecting browser users."""
-    settings = AUTH_SETTINGS
-    explicit = settings.idp_login_url
+    effective = settings or AUTH_SETTINGS
+    explicit = effective.idp_login_url
     if explicit:
         if return_to and "redirect_uri=" not in explicit:
             separator = "&" if "?" in explicit else "?"
             return f"{explicit}{separator}redirect_uri={quote(return_to, safe='')}"
         return explicit
-    if not settings.jwt_issuer:
+    if not effective.jwt_issuer:
         return None
-    client_id = settings.idp_client_id or settings.jwt_audience
+    client_id = effective.idp_client_id or effective.jwt_audience
     if not client_id:
         return None
     params = {
@@ -359,15 +461,17 @@ def build_idp_login_redirect_url(*, return_to: str | None = None) -> str | None:
     if return_to:
         params["redirect_uri"] = return_to
     return (
-        f"{settings.jwt_issuer.rstrip('/')}/protocol/openid-connect/auth"
+        f"{effective.jwt_issuer.rstrip('/')}/protocol/openid-connect/auth"
         f"?{urlencode(params)}"
     )
 
 
-def evaluate_asgi_scope_auth(scope: dict) -> AuthDecision:
-    """Authorize MCP ASGI scope requests."""
+def _scope_auth_inputs(scope: dict) -> tuple[str, str, str | None, str]:
+    """Extract auth-relevant ASGI scope values (path, method, auth header, remote addr)."""
     path = str(scope.get("path", "/"))
-    method = str(scope.get("method", "GET"))
+    scope_type = str(scope.get("type", "")).strip().lower()
+    default_method = "WEBSOCKET" if scope_type == "websocket" else "GET"
+    method = str(scope.get("method", default_method))
     raw_headers = scope.get("headers") or []
     authorization_header = None
     for key, value in raw_headers:
@@ -378,6 +482,32 @@ def evaluate_asgi_scope_auth(scope: dict) -> AuthDecision:
     client = scope.get("client")
     if isinstance(client, tuple) and client:
         remote_addr = str(client[0])
+    return path, method, authorization_header, remote_addr
+
+
+def evaluate_required_asgi_scope_auth(
+    scope: dict,
+    *,
+    mode: str,
+    static_token: str | None = None,
+    jwt_settings: AuthSettings | None = None,
+) -> AuthDecision:
+    """Authorize an ASGI scope using required bearer validation (no path-prefix gating)."""
+    path, method, authorization_header, remote_addr = _scope_auth_inputs(scope)
+    return evaluate_required_bearer_auth(
+        mode=mode,
+        path=path,
+        method=method,
+        authorization_header=authorization_header,
+        remote_addr=remote_addr,
+        static_token=static_token,
+        jwt_settings=jwt_settings,
+    )
+
+
+def evaluate_asgi_scope_auth(scope: dict) -> AuthDecision:
+    """Authorize MCP ASGI scope requests using legacy OPAMP_AUTH_* protected-path gating."""
+    path, method, authorization_header, remote_addr = _scope_auth_inputs(scope)
     return evaluate_bearer_auth(
         path=path,
         method=method,

@@ -138,7 +138,7 @@ ERR_AGENT_PENDING_APPROVAL = "agent pending approval"
 ERR_AGENT_BLOCKED = "agent is blocked"
 ERR_AGENT_AUTH_FAILED = "agent authentication failed"
 ERR_OPAMP_AUTH_CONFIG_INVALID = "invalid opamp-use-authorization configuration"
-UI_AUTH_REDIRECT_PATHS = {"/", "/ui", "/help"}  # Browser app routes redirected to IdP login in JWT mode.
+ERR_UI0_AUTH_CONFIG_INVALID = "invalid ui0use-authorization configuration"
 
 # Keep in-memory client heartbeat defaults aligned with loaded provider config.
 STORE.set_default_heartbeat_frequency(
@@ -172,25 +172,10 @@ async def handle_unexpected_error(error: Exception) -> Response:
 
 @app.before_request
 async def enforce_bearer_auth() -> Response | None:
-    """Apply optional bearer-token auth to configured protected paths."""
-    if (
-        request.method.upper() == "GET"
-        and request.path in UI_AUTH_REDIRECT_PATHS
-        and provider_auth.AUTH_SETTINGS.mode == provider_auth.AUTH_MODE_JWT
-    ):
-        ui_decision = provider_auth.evaluate_required_bearer_auth(
-            mode=provider_auth.AUTH_MODE_JWT,
-            path=request.path,
-            method=request.method,
-            authorization_header=request.headers.get("Authorization"),
-            remote_addr=request.remote_addr,
-        )
-        if not ui_decision.allowed and ui_decision.error == "missing bearer token":
-            login_url = provider_auth.build_idp_login_redirect_url(return_to=request.url)
-            if login_url:
-                return redirect(login_url)
-
-    decision = provider_auth.evaluate_bearer_auth(
+    """Apply non-OpAMP bearer-token auth using provider.ui0use-authorization."""
+    if request.path == OPAMP_HTTP_PATH:
+        return None
+    decision = _evaluate_non_opamp_http_auth(
         path=request.path,
         method=request.method,
         authorization_header=request.headers.get("Authorization"),
@@ -259,15 +244,15 @@ def _header_value(
     return None
 
 
-def _opamp_authorization_mode_to_auth_mode(
-    opamp_mode: str,
+def _provider_authorization_mode_to_auth_mode(
+    provider_mode: str,
 ) -> str | None:
-    """Map provider opamp-use-authorization value to auth module mode."""
-    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_NONE:
+    """Map provider config authorization values to auth module mode."""
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_NONE:
         return provider_auth.AUTH_MODE_DISABLED
-    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN:
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN:
         return provider_auth.AUTH_MODE_STATIC
-    if opamp_mode == provider_config.OPAMP_USE_AUTHORIZATION_IDP:
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_IDP:
         return provider_auth.AUTH_MODE_JWT
     return None
 
@@ -280,7 +265,7 @@ def _evaluate_opamp_transport_auth(
 ) -> provider_auth.AuthDecision:
     """Authorize OpAMP transport requests using provider config mode."""
     opamp_mode = str(provider_config.CONFIG.opamp_use_authorization).strip().lower()
-    mapped_mode = _opamp_authorization_mode_to_auth_mode(opamp_mode)
+    mapped_mode = _provider_authorization_mode_to_auth_mode(opamp_mode)
     if mapped_mode is None:
         logger.error(
             "unsupported provider.%s value=%s",
@@ -301,6 +286,41 @@ def _evaluate_opamp_transport_auth(
         method=method,
         authorization_header=authorization_header,
         remote_addr=remote_addr,
+        static_token=provider_auth.OPAMP_AUTH_SETTINGS.static_token,
+        jwt_settings=provider_auth.OPAMP_AUTH_SETTINGS,
+    )
+
+
+def _evaluate_non_opamp_http_auth(
+    *,
+    path: str,
+    method: str,
+    authorization_header: str | None,
+    remote_addr: str | None,
+) -> provider_auth.AuthDecision:
+    """Authorize non-OpAMP HTTP requests using provider.ui0use-authorization."""
+    ui_mode = str(provider_config.CONFIG.ui0use_authorization).strip().lower()
+    mapped_mode = _provider_authorization_mode_to_auth_mode(ui_mode)
+    if mapped_mode is None:
+        logger.error(
+            "unsupported provider.%s value=%s",
+            provider_config.CFG_UI0USE_AUTHORIZATION,
+            ui_mode,
+        )
+        return provider_auth.AuthDecision(
+            allowed=False,
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            error=ERR_UI0_AUTH_CONFIG_INVALID,
+            reason=f"unsupported mode {ui_mode}",
+        )
+    return provider_auth.evaluate_required_bearer_auth(
+        mode=mapped_mode,
+        path=path,
+        method=method,
+        authorization_header=authorization_header,
+        remote_addr=remote_addr,
+        static_token=provider_auth.UI_AUTH_SETTINGS.static_token,
+        jwt_settings=provider_auth.UI_AUTH_SETTINGS,
     )
 
 

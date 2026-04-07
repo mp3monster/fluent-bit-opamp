@@ -36,9 +36,11 @@ from typing import Any, Awaitable, Callable, Literal
 from quart import Quart
 
 from opamp_provider import auth as provider_auth
+from opamp_provider import config as provider_config
 from opamp_provider.mcptool.routes import mcpserver, mcptool_blueprint
 
 logger = logging.getLogger(__name__)
+ERR_UI0_AUTH_CONFIG_INVALID = "invalid ui0use-authorization configuration"
 
 
 def register_tool_routes(app: Quart) -> None:
@@ -54,6 +56,41 @@ def _normalize_path(path: str) -> str:
 def _path_matches_prefix(path: str, prefix: str) -> bool:
     """Return whether request path targets a prefix or one of its descendants."""
     return path == prefix or path.startswith(f"{prefix}/")
+
+
+def _provider_authorization_mode_to_auth_mode(provider_mode: str) -> str | None:
+    """Map provider config authorization values to auth module mode."""
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_NONE:
+        return provider_auth.AUTH_MODE_DISABLED
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN:
+        return provider_auth.AUTH_MODE_STATIC
+    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_IDP:
+        return provider_auth.AUTH_MODE_JWT
+    return None
+
+
+def _evaluate_ui_scope_auth(scope: dict[str, Any]) -> provider_auth.AuthDecision:
+    """Authorize non-OpAMP ASGI scopes using provider.ui0use-authorization."""
+    ui_mode = str(provider_config.CONFIG.ui0use_authorization).strip().lower()
+    mapped_mode = _provider_authorization_mode_to_auth_mode(ui_mode)
+    if mapped_mode is None:
+        logger.error(
+            "unsupported provider.%s value=%s",
+            provider_config.CFG_UI0USE_AUTHORIZATION,
+            ui_mode,
+        )
+        return provider_auth.AuthDecision(
+            allowed=False,
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            error=ERR_UI0_AUTH_CONFIG_INVALID,
+            reason=f"unsupported mode {ui_mode}",
+        )
+    return provider_auth.evaluate_required_asgi_scope_auth(
+        scope,
+        mode=mapped_mode,
+        static_token=provider_auth.UI_AUTH_SETTINGS.static_token,
+        jwt_settings=provider_auth.UI_AUTH_SETTINGS,
+    )
 
 
 def register_mcp_transport(
@@ -139,6 +176,11 @@ def register_mcp_transport(
             }
         )
 
+    async def _send_websocket_auth_rejection(
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        await send({"type": "websocket.close", "code": 1008})
+
     async def _dispatch(  # type: ignore[override]
         scope: dict[str, Any],
         receive: Callable[[], Awaitable[dict[str, Any]]],
@@ -152,19 +194,23 @@ def register_mcp_transport(
                 if mode == "sse" and any(
                     _path_matches_prefix(path, prefix) for prefix in sse_prefixes
                 ):
-                    if scope_type == "http":
-                        decision = provider_auth.evaluate_asgi_scope_auth(scope)
-                        if not decision.allowed:
+                    decision = _evaluate_ui_scope_auth(scope)
+                    if not decision.allowed:
+                        if scope_type == "websocket":
+                            await _send_websocket_auth_rejection(send)
+                        else:
                             await _send_auth_rejection(send, decision)
-                            return
+                        return
                     await mcp_asgi_app(scope, receive, send)
                     return
                 if mode == "streamable-http" and _path_matches_prefix(path, normalized_streamable):
-                    if scope_type == "http":
-                        decision = provider_auth.evaluate_asgi_scope_auth(scope)
-                        if not decision.allowed:
+                    decision = _evaluate_ui_scope_auth(scope)
+                    if not decision.allowed:
+                        if scope_type == "websocket":
+                            await _send_websocket_auth_rejection(send)
+                        else:
                             await _send_auth_rejection(send, decision)
-                            return
+                        return
                     await mcp_asgi_app(scope, receive, send)
                     return
 

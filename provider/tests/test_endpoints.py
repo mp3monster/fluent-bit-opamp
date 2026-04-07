@@ -64,6 +64,7 @@ def _test_provider_config(
     *,
     human_in_loop_approval: bool = False,
     opamp_use_authorization: str = provider_config.OPAMP_USE_AUTHORIZATION_NONE,
+    ui0use_authorization: str = provider_config.DEFAULT_UI0USE_AUTHORIZATION,
 ) -> ProviderConfig:
     """Build a ProviderConfig suitable for endpoint tests."""
     return ProviderConfig(
@@ -77,6 +78,7 @@ def _test_provider_config(
         default_heartbeat_frequency=30,
         human_in_loop_approval=human_in_loop_approval,
         opamp_use_authorization=opamp_use_authorization,
+        ui0use_authorization=ui0use_authorization,
     )
 
 
@@ -250,7 +252,7 @@ async def test_opamp_config_token_rejects_http_without_bearer(monkeypatch) -> No
             opamp_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    monkeypatch.setenv(provider_auth.ENV_OPAMP_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex("dddd" * 8))
@@ -276,7 +278,7 @@ async def test_opamp_config_token_accepts_http_with_valid_bearer(monkeypatch) ->
             opamp_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    monkeypatch.setenv(provider_auth.ENV_OPAMP_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     test_uid = b"eeeeeeeeeeeeeeee"
@@ -307,8 +309,10 @@ async def test_opamp_idp_rejects_http_without_bearer(monkeypatch) -> None:
             opamp_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_IDP
         )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_JWT_ISSUER, "http://issuer.example.com/realm")
-    monkeypatch.setenv(provider_auth.ENV_AUTH_JWT_AUDIENCE, "opamp-ui")
+    monkeypatch.setenv(
+        provider_auth.ENV_OPAMP_AUTH_JWT_ISSUER, "http://issuer.example.com/realm"
+    )
+    monkeypatch.setenv(provider_auth.ENV_OPAMP_AUTH_JWT_AUDIENCE, "opamp-ui")
     provider_auth.reload_auth_settings()
 
     agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex("ffff" * 8))
@@ -334,7 +338,7 @@ async def test_opamp_config_token_rejects_websocket_without_bearer(monkeypatch) 
             opamp_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    monkeypatch.setenv(provider_auth.ENV_OPAMP_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
@@ -356,7 +360,7 @@ async def test_opamp_config_token_accepts_websocket_with_valid_bearer(monkeypatc
             opamp_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    monkeypatch.setenv(provider_auth.ENV_OPAMP_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     test_uid = b"aaaaaaaa11111111"
@@ -883,8 +887,12 @@ async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
 @pytest.mark.asyncio
 async def test_tool_auth_static_mode_rejects_missing_bearer_token(monkeypatch) -> None:
     """Verify static auth mode rejects unauthenticated `/tool` requests with HTTP 401."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+        )
+    )
+    monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
@@ -899,35 +907,37 @@ async def test_tool_auth_static_mode_rejects_missing_bearer_token(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_ui_redirects_to_idp_login_when_jwt_mode_and_missing_bearer(
+async def test_ui_requires_bearer_token_when_ui_idp_mode_and_missing_bearer(
     monkeypatch,
 ) -> None:
-    """Verify browser UI paths redirect to IdP login when JWT mode is enabled."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_JWT)
-    monkeypatch.setenv(
-        provider_auth.ENV_AUTH_JWT_ISSUER, "http://127.0.0.1:8081/realms/opamp"
+    """Verify browser UI paths reject missing bearer token when ui0use-authorization=idp."""
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_IDP
+        )
     )
-    monkeypatch.setenv(provider_auth.ENV_AUTH_JWT_AUDIENCE, "opamp-ui")
+    monkeypatch.setenv(
+        provider_auth.ENV_UI_AUTH_JWT_ISSUER, "http://127.0.0.1:8081/realms/opamp"
+    )
+    monkeypatch.setenv(provider_auth.ENV_UI_AUTH_JWT_AUDIENCE, "opamp-ui")
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
         resp = await client.get("/ui")
 
-    assert resp.status_code == 302
-    location = resp.headers.get("Location", "")
-    assert location.startswith(
-        "http://127.0.0.1:8081/realms/opamp/protocol/openid-connect/auth?"
-    )
-    assert "client_id=opamp-ui" in location
-    assert "response_type=code" in location
-    assert "scope=openid" in location
-    assert "redirect_uri=" in location
+    assert resp.status_code == 401
+    payload = await resp.get_json()
+    assert payload == {"error": "missing bearer token"}
 
 
 @pytest.mark.asyncio
 async def test_web_ui_references_external_javascript_bundle(monkeypatch) -> None:
     """Verify `/ui` references external UI assets and each one is served."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_DISABLED)
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_NONE
+        )
+    )
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
@@ -980,8 +990,12 @@ async def test_web_ui_references_external_javascript_bundle(monkeypatch) -> None
 @pytest.mark.asyncio
 async def test_tool_auth_static_mode_accepts_valid_bearer_token(monkeypatch) -> None:
     """Verify static auth mode accepts `/tool` requests when the bearer token matches."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+        )
+    )
+    monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
@@ -995,8 +1009,12 @@ async def test_tool_auth_static_mode_accepts_valid_bearer_token(monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_api_auth_static_mode_protects_ui_api_routes(monkeypatch) -> None:
     """Verify static auth mode protects `/api/*` endpoints by default."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+        )
+    )
+    monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
 
     async with app.test_client() as client:
@@ -1013,8 +1031,12 @@ async def test_api_auth_static_mode_protects_ui_api_routes(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_tool_auth_static_mode_logs_rejection_details(monkeypatch, caplog) -> None:
     """Verify token mismatches are rejected and written to logs for operator visibility."""
-    monkeypatch.setenv(provider_auth.ENV_AUTH_MODE, provider_auth.AUTH_MODE_STATIC)
-    monkeypatch.setenv(provider_auth.ENV_AUTH_STATIC_TOKEN, "local-dev-token")
+    provider_config.set_config(
+        _test_provider_config(
+            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+        )
+    )
+    monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
     provider_auth.reload_auth_settings()
     caplog.set_level("WARNING")
 

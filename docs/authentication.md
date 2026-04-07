@@ -1,6 +1,6 @@
 # Provider Authentication
 
-This project supports optional bearer-token authentication for provider endpoints that are typically used by MCP clients:
+This project supports optional bearer-token authentication for provider endpoints:
 
 - `/tool`
 - `/tool/*`
@@ -10,8 +10,10 @@ This project supports optional bearer-token authentication for provider endpoint
 - `/mcp/*`
 - `/api`
 - `/api/*`
+- `/v1/opamp`
 
-Authentication is controlled by environment variables so it can be switched off quickly for development and unit testing.
+Authentication mode is controlled by provider config keys in `opamp.json`. Static token and JWT
+validation settings are provided by environment variables.
 
 For production-facing deployments fronted by an API gateway, including internal-vs-external client profiles and route policy guidance, see:
 
@@ -20,52 +22,67 @@ For production-facing deployments fronted by an API gateway, including internal-
 
 ## Modes
 
-Set `OPAMP_AUTH_MODE` to one of:
+Both provider auth config keys use the same values:
 
-- `disabled` (default): no auth checks are applied.
-- `static`: compare bearer token against a configured static secret.
-- `jwt`: validate JWT bearer tokens using JWKS (for example Keycloak).
-
-## Environment Variables
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `OPAMP_AUTH_MODE` | Auth mode (`disabled`, `static`, `jwt`) | `disabled` |
-| `OPAMP_AUTH_PROTECTED_PATH_PREFIXES` | Comma-separated protected path prefixes | `/tool,/sse,/messages,/mcp,/api` |
-| `OPAMP_AUTH_STATIC_TOKEN` | Shared secret token used in `static` mode | unset |
-| `OPAMP_AUTH_JWT_ISSUER` | JWT issuer URL (for claim validation; also used to derive JWKS URL) | unset |
-| `OPAMP_AUTH_JWT_AUDIENCE` | Required `aud` claim in JWT mode | unset |
-| `OPAMP_AUTH_JWT_JWKS_URL` | Explicit JWKS URL (overrides issuer-derived JWKS endpoint) | derived from issuer |
-| `OPAMP_AUTH_JWT_LEEWAY_SECONDS` | JWT time-claim leeway | `30` |
-| `OPAMP_AUTH_IDP_LOGIN_URL` | Optional explicit IdP login URL for browser redirects (`/`, `/ui`, `/help`) in JWT mode | derived from issuer |
-| `OPAMP_AUTH_IDP_CLIENT_ID` | Optional client id used for derived IdP login URL (fallback: `OPAMP_AUTH_JWT_AUDIENCE`) | unset |
-
-## Recommended Protected Prefixes (Gateway-Aligned)
-
-When running behind an API gateway, align provider-side checks to protect all sensitive routes by default:
-
-```bash
-export OPAMP_AUTH_PROTECTED_PATH_PREFIXES='/tool,/sse,/messages,/mcp,/api,/v1/opamp'
-```
-
-This keeps provider checks consistent with gateway route protection for both operator and agent traffic.
+- `none` (default): no bearer checks.
+- `config-token`: compare bearer token against a configured static secret.
+- `idp`: validate JWT bearer tokens using JWKS (for example Keycloak).
 
 ## OpAMP Endpoint Authorization Mode
 
-Provider config key `provider.opamp-use-authorization` controls `/v1/opamp` authorization independently of path-prefix protection:
+Provider config key `provider.opamp-use-authorization` controls `/v1/opamp` HTTP and WebSocket:
 
 - `none` (default): no bearer validation on OpAMP transport.
 - `config-token`: require `Authorization: Bearer <token>` and compare with `OPAMP_AUTH_STATIC_TOKEN`.
 - `idp`: require bearer token and validate JWT using `OPAMP_AUTH_JWT_*`.
 
-This intentionally reuses the same static token / IdP JWT settings as UI/API authentication.
+## UI / API / MCP Authorization Mode
+
+Provider config key `provider.ui0use-authorization` controls non-OpAMP HTTP and MCP transport
+routes (including websocket scopes), for example `/tool`, `/sse`, `/messages`, `/mcp`, `/api`,
+`/ui`, `/help`:
+
+- `none` (default): no bearer validation.
+- `config-token`: require `Authorization: Bearer <token>` and compare with `UI_AUTH_STATIC_TOKEN`.
+- `idp`: require bearer token and validate JWT using `UI_AUTH_JWT_*`.
+
+## Environment Variables
+
+OpAMP transport env vars:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OPAMP_AUTH_STATIC_TOKEN` | Shared secret token used when `provider.opamp-use-authorization=config-token` | unset |
+| `OPAMP_AUTH_JWT_ISSUER` | JWT issuer URL (claim validation; also used to derive JWKS URL) | unset |
+| `OPAMP_AUTH_JWT_AUDIENCE` | Required `aud` claim in OpAMP `idp` mode | unset |
+| `OPAMP_AUTH_JWT_JWKS_URL` | Explicit JWKS URL (overrides issuer-derived JWKS endpoint) | derived from issuer |
+| `OPAMP_AUTH_JWT_LEEWAY_SECONDS` | JWT time-claim leeway | `30` |
+| `OPAMP_AUTH_IDP_LOGIN_URL` | Optional explicit IdP login URL | derived from issuer |
+| `OPAMP_AUTH_IDP_CLIENT_ID` | Optional client id for derived IdP login URL | unset |
+
+UI/API/MCP env vars:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `UI_AUTH_STATIC_TOKEN` | Shared secret token used when `provider.ui0use-authorization=config-token` | unset |
+| `UI_AUTH_JWT_ISSUER` | JWT issuer URL (claim validation; also used to derive JWKS URL) | unset |
+| `UI_AUTH_JWT_AUDIENCE` | Required `aud` claim in non-OpAMP `idp` mode | unset |
+| `UI_AUTH_JWT_JWKS_URL` | Explicit JWKS URL (overrides issuer-derived JWKS endpoint) | derived from issuer |
+| `UI_AUTH_JWT_LEEWAY_SECONDS` | JWT time-claim leeway | `30` |
+| `UI_AUTH_IDP_LOGIN_URL` | Optional explicit IdP login URL | derived from issuer |
+| `UI_AUTH_IDP_CLIENT_ID` | Optional client id for derived IdP login URL | unset |
 
 ## Development: Disable Auth
 
 For local endpoint development and unit tests:
 
-```bash
-export OPAMP_AUTH_MODE=disabled
+```json
+{
+  "provider": {
+    "opamp-use-authorization": "none",
+    "ui0use-authorization": "none"
+  }
+}
 ```
 
 ## Static Token Scenario
@@ -73,14 +90,16 @@ export OPAMP_AUTH_MODE=disabled
 Use static mode for lightweight dev/staging auth without an IdP.
 
 ```bash
-export OPAMP_AUTH_MODE=static
+# /v1/opamp endpoints
 export OPAMP_AUTH_STATIC_TOKEN='replace-with-long-random-token'
+# non-OpAMP HTTP + MCP endpoints
+export UI_AUTH_STATIC_TOKEN='replace-with-long-random-token'
 ```
 
 Example request:
 
 ```bash
-curl -H "Authorization: Bearer ${OPAMP_AUTH_STATIC_TOKEN}" http://127.0.0.1:8080/tool
+curl -H "Authorization: Bearer ${UI_AUTH_STATIC_TOKEN}" http://127.0.0.1:8080/tool
 ```
 
 ## Keycloak JWT Scenario (Docker)
@@ -142,9 +161,12 @@ The script prints:
 Configure provider JWT auth:
 
 ```bash
-export OPAMP_AUTH_MODE=jwt
+# /v1/opamp endpoints
 export OPAMP_AUTH_JWT_ISSUER='http://127.0.0.1:8081/realms/opamp'
 export OPAMP_AUTH_JWT_AUDIENCE='opamp-mcp'
+# non-OpAMP HTTP + MCP endpoints
+export UI_AUTH_JWT_ISSUER='http://127.0.0.1:8081/realms/opamp'
+export UI_AUTH_JWT_AUDIENCE='opamp-ui'
 ```
 
 Request a bearer token from Keycloak:
@@ -177,13 +199,6 @@ When your MCP client supports custom headers, pass:
 at connection/request time for `/sse`, `/messages`, or `/mcp` transports.
 
 If auth is enabled and no valid bearer token is provided, provider returns `401`.
-
-## Browser App URL Redirects (JWT/IdP Mode)
-
-When `OPAMP_AUTH_MODE=jwt`, requests to `/`, `/ui`, and `/help` without a bearer token are redirected to the IdP login URL.
-
-- If `OPAMP_AUTH_IDP_LOGIN_URL` is set, that URL is used directly.
-- Otherwise, provider derives Keycloak-compatible login URL from `OPAMP_AUTH_JWT_ISSUER` and client id settings.
 
 ## Authorization Rejection Logging
 
