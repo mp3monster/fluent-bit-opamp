@@ -71,7 +71,7 @@ Example `opamp.json`:
     "default_heartbeat_frequency": 30,
     "human_in_loop_approval": false,
     "opamp-use-authorization": "none",
-    "ui0use-authorization": "none"
+    "ui-use-authorization": "none"
   }
 }
 ```
@@ -107,7 +107,7 @@ Example `opamp.json`:
   - `idp`: require bearer token and validate as JWT using IdP settings
     (`OPAMP_AUTH_JWT_ISSUER`, `OPAMP_AUTH_JWT_AUDIENCE`, optional `OPAMP_AUTH_JWT_JWKS_URL`,
     `OPAMP_AUTH_JWT_LEEWAY_SECONDS`).
-- `provider.ui0use-authorization` (string, optional, default `"none"`)
+- `provider.ui-use-authorization` (string, optional, default `"none"`)
   Non-OpAMP authorization mode for HTTP and MCP transport routes (for example `/tool`, `/sse`,
   `/messages`, `/mcp`, `/api`, `/ui`, `/help`):
   - `none`: no non-OpAMP bearer-token enforcement.
@@ -170,7 +170,7 @@ Authorization mode is config-driven and defaults to disabled (`none`) for both s
 `opamp.json` selects each mode, while secrets/IdP settings are read from environment variables.
 
 - `provider.opamp-use-authorization` controls `/v1/opamp` HTTP and WebSocket auth.
-- `provider.ui0use-authorization` controls non-OpAMP HTTP and MCP/WebSocket auth.
+- `provider.ui-use-authorization` controls non-OpAMP HTTP and MCP/WebSocket auth.
 - `config-token` mode uses static token env vars:
   - OpAMP: `OPAMP_AUTH_STATIC_TOKEN`
   - Non-OpAMP: `UI_AUTH_STATIC_TOKEN`
@@ -186,7 +186,7 @@ Authorization mode is config-driven and defaults to disabled (`none`) for both s
 {
   "provider": {
     "opamp-use-authorization": "idp",
-    "ui0use-authorization": "idp"
+    "ui-use-authorization": "idp"
   }
 }
 ```
@@ -210,7 +210,7 @@ export UI_AUTH_JWT_LEEWAY_SECONDS='30'
 At runtime, provider behavior is:
 
 1. `provider.opamp-use-authorization=idp` enables bearer-token enforcement on `/v1/opamp`.
-2. `provider.ui0use-authorization=idp` enables bearer-token enforcement for non-OpAMP HTTP and MCP/WebSocket routes.
+2. `provider.ui-use-authorization=idp` enables bearer-token enforcement for non-OpAMP HTTP and MCP/WebSocket routes.
 3. `OPAMP_AUTH_JWT_*` defines OpAMP JWT validation; `UI_AUTH_JWT_*` defines non-OpAMP JWT validation.
 4. Requests without a valid token are rejected (`401`/`403`).
 

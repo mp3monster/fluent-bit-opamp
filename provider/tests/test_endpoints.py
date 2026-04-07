@@ -64,7 +64,7 @@ def _test_provider_config(
     *,
     human_in_loop_approval: bool = False,
     opamp_use_authorization: str = provider_config.OPAMP_USE_AUTHORIZATION_NONE,
-    ui0use_authorization: str = provider_config.DEFAULT_UI0USE_AUTHORIZATION,
+    ui_use_authorization: str = provider_config.DEFAULT_UI_USE_AUTHORIZATION,
 ) -> ProviderConfig:
     """Build a ProviderConfig suitable for endpoint tests."""
     return ProviderConfig(
@@ -78,7 +78,7 @@ def _test_provider_config(
         default_heartbeat_frequency=30,
         human_in_loop_approval=human_in_loop_approval,
         opamp_use_authorization=opamp_use_authorization,
-        ui0use_authorization=ui0use_authorization,
+        ui_use_authorization=ui_use_authorization,
     )
 
 
@@ -889,7 +889,7 @@ async def test_tool_auth_static_mode_rejects_missing_bearer_token(monkeypatch) -
     """Verify static auth mode rejects unauthenticated `/tool` requests with HTTP 401."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
@@ -910,10 +910,10 @@ async def test_tool_auth_static_mode_rejects_missing_bearer_token(monkeypatch) -
 async def test_ui_requires_bearer_token_when_ui_idp_mode_and_missing_bearer(
     monkeypatch,
 ) -> None:
-    """Verify browser UI paths reject missing bearer token when ui0use-authorization=idp."""
+    """Verify browser UI paths reject missing bearer token when ui-use-authorization=idp."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_IDP
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_IDP
         )
     )
     monkeypatch.setenv(
@@ -935,7 +935,7 @@ async def test_web_ui_references_external_javascript_bundle(monkeypatch) -> None
     """Verify `/ui` references external UI assets and each one is served."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_NONE
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_NONE
         )
     )
     provider_auth.reload_auth_settings()
@@ -992,7 +992,7 @@ async def test_tool_auth_static_mode_accepts_valid_bearer_token(monkeypatch) -> 
     """Verify static auth mode accepts `/tool` requests when the bearer token matches."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
@@ -1011,7 +1011,7 @@ async def test_api_auth_static_mode_protects_ui_api_routes(monkeypatch) -> None:
     """Verify static auth mode protects `/api/*` endpoints by default."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")
@@ -1033,7 +1033,7 @@ async def test_tool_auth_static_mode_logs_rejection_details(monkeypatch, caplog)
     """Verify token mismatches are rejected and written to logs for operator visibility."""
     provider_config.set_config(
         _test_provider_config(
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "local-dev-token")

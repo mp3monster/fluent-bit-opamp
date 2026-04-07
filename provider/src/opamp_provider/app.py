@@ -138,7 +138,7 @@ ERR_AGENT_PENDING_APPROVAL = "agent pending approval"
 ERR_AGENT_BLOCKED = "agent is blocked"
 ERR_AGENT_AUTH_FAILED = "agent authentication failed"
 ERR_OPAMP_AUTH_CONFIG_INVALID = "invalid opamp-use-authorization configuration"
-ERR_UI0_AUTH_CONFIG_INVALID = "invalid ui0use-authorization configuration"
+ERR_UI_AUTH_CONFIG_INVALID = "invalid ui-use-authorization configuration"
 
 # Keep in-memory client heartbeat defaults aligned with loaded provider config.
 STORE.set_default_heartbeat_frequency(
@@ -172,7 +172,7 @@ async def handle_unexpected_error(error: Exception) -> Response:
 
 @app.before_request
 async def enforce_bearer_auth() -> Response | None:
-    """Apply non-OpAMP bearer-token auth using provider.ui0use-authorization."""
+    """Apply non-OpAMP bearer-token auth using provider.ui-use-authorization."""
     if request.path == OPAMP_HTTP_PATH:
         return None
     decision = _evaluate_non_opamp_http_auth(
@@ -298,19 +298,19 @@ def _evaluate_non_opamp_http_auth(
     authorization_header: str | None,
     remote_addr: str | None,
 ) -> provider_auth.AuthDecision:
-    """Authorize non-OpAMP HTTP requests using provider.ui0use-authorization."""
-    ui_mode = str(provider_config.CONFIG.ui0use_authorization).strip().lower()
+    """Authorize non-OpAMP HTTP requests using provider.ui-use-authorization."""
+    ui_mode = str(provider_config.CONFIG.ui_use_authorization).strip().lower()
     mapped_mode = _provider_authorization_mode_to_auth_mode(ui_mode)
     if mapped_mode is None:
         logger.error(
             "unsupported provider.%s value=%s",
-            provider_config.CFG_UI0USE_AUTHORIZATION,
+            provider_config.CFG_UI_USE_AUTHORIZATION,
             ui_mode,
         )
         return provider_auth.AuthDecision(
             allowed=False,
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            error=ERR_UI0_AUTH_CONFIG_INVALID,
+            error=ERR_UI_AUTH_CONFIG_INVALID,
             reason=f"unsupported mode {ui_mode}",
         )
     return provider_auth.evaluate_required_bearer_auth(

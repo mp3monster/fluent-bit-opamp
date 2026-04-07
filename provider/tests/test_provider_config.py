@@ -31,4 +31,4 @@ def test_human_in_loop_and_authorization_defaults_are_disabled() -> None:
     config = provider_config.load_config()
     assert config.human_in_loop_approval is False
     assert config.opamp_use_authorization == provider_config.OPAMP_USE_AUTHORIZATION_NONE
-    assert config.ui0use_authorization == provider_config.DEFAULT_UI0USE_AUTHORIZATION
+    assert config.ui_use_authorization == provider_config.DEFAULT_UI_USE_AUTHORIZATION

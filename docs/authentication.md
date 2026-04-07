@@ -38,7 +38,7 @@ Provider config key `provider.opamp-use-authorization` controls `/v1/opamp` HTTP
 
 ## UI / API / MCP Authorization Mode
 
-Provider config key `provider.ui0use-authorization` controls non-OpAMP HTTP and MCP transport
+Provider config key `provider.ui-use-authorization` controls non-OpAMP HTTP and MCP transport
 routes (including websocket scopes), for example `/tool`, `/sse`, `/messages`, `/mcp`, `/api`,
 `/ui`, `/help`:
 
@@ -64,7 +64,7 @@ UI/API/MCP env vars:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `UI_AUTH_STATIC_TOKEN` | Shared secret token used when `provider.ui0use-authorization=config-token` | unset |
+| `UI_AUTH_STATIC_TOKEN` | Shared secret token used when `provider.ui-use-authorization=config-token` | unset |
 | `UI_AUTH_JWT_ISSUER` | JWT issuer URL (claim validation; also used to derive JWKS URL) | unset |
 | `UI_AUTH_JWT_AUDIENCE` | Required `aud` claim in non-OpAMP `idp` mode | unset |
 | `UI_AUTH_JWT_JWKS_URL` | Explicit JWKS URL (overrides issuer-derived JWKS endpoint) | derived from issuer |
@@ -80,7 +80,7 @@ For local endpoint development and unit tests:
 {
   "provider": {
     "opamp-use-authorization": "none",
-    "ui0use-authorization": "none"
+    "ui-use-authorization": "none"
   }
 }
 ```

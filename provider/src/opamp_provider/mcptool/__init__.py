@@ -40,7 +40,7 @@ from opamp_provider import config as provider_config
 from opamp_provider.mcptool.routes import mcpserver, mcptool_blueprint
 
 logger = logging.getLogger(__name__)
-ERR_UI0_AUTH_CONFIG_INVALID = "invalid ui0use-authorization configuration"
+ERR_UI_AUTH_CONFIG_INVALID = "invalid ui-use-authorization configuration"
 
 
 def register_tool_routes(app: Quart) -> None:
@@ -70,19 +70,19 @@ def _provider_authorization_mode_to_auth_mode(provider_mode: str) -> str | None:
 
 
 def _evaluate_ui_scope_auth(scope: dict[str, Any]) -> provider_auth.AuthDecision:
-    """Authorize non-OpAMP ASGI scopes using provider.ui0use-authorization."""
-    ui_mode = str(provider_config.CONFIG.ui0use_authorization).strip().lower()
+    """Authorize non-OpAMP ASGI scopes using provider.ui-use-authorization."""
+    ui_mode = str(provider_config.CONFIG.ui_use_authorization).strip().lower()
     mapped_mode = _provider_authorization_mode_to_auth_mode(ui_mode)
     if mapped_mode is None:
         logger.error(
             "unsupported provider.%s value=%s",
-            provider_config.CFG_UI0USE_AUTHORIZATION,
+            provider_config.CFG_UI_USE_AUTHORIZATION,
             ui_mode,
         )
         return provider_auth.AuthDecision(
             allowed=False,
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            error=ERR_UI0_AUTH_CONFIG_INVALID,
+            error=ERR_UI_AUTH_CONFIG_INVALID,
             reason=f"unsupported mode {ui_mode}",
         )
     return provider_auth.evaluate_required_asgi_scope_auth(

@@ -170,7 +170,7 @@ async def test_register_mcp_transport_rejects_unauthorized_streamable_request(
             retry_after_seconds=30,
             client_event_history_size=50,
             log_level="INFO",
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN,
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN,
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "mcp-token")
@@ -241,7 +241,7 @@ async def test_register_mcp_transport_rejects_unauthorized_streamable_websocket(
             retry_after_seconds=30,
             client_event_history_size=50,
             log_level="INFO",
-            ui0use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN,
+            ui_use_authorization=provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN,
         )
     )
     monkeypatch.setenv(provider_auth.ENV_UI_AUTH_STATIC_TOKEN, "mcp-token")

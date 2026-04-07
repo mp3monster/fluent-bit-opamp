@@ -42,7 +42,7 @@ CFG_LOG_LEVEL = "log_level"  # Provider JSON key for logging level override.
 CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"  # Provider JSON key for default client heartbeat interval.
 CFG_HUMAN_IN_LOOP_APPROVAL = "human_in_loop_approval"  # Provider JSON key toggling manual agent approval workflow.
 CFG_OPAMP_USE_AUTHORIZATION = "opamp-use-authorization"  # Provider JSON key controlling OpAMP transport bearer authorization mode.
-CFG_UI0USE_AUTHORIZATION = "ui0use-authorization"  # Provider JSON key controlling non-OpAMP HTTP/WebSocket bearer authorization mode.
+CFG_UI_USE_AUTHORIZATION = "ui-use-authorization"  # Provider JSON key controlling non-OpAMP HTTP/WebSocket bearer authorization mode.
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60  # Default delayed comms threshold in seconds.
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300  # Default significant comms threshold in seconds.
@@ -61,7 +61,7 @@ OPAMP_USE_AUTHORIZATION_IDP = (
     "idp"  # Validate OpAMP bearer token via IdP JWT verification settings.
 )
 DEFAULT_OPAMP_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default OpAMP auth mode.
-DEFAULT_UI0USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default non-OpAMP auth mode.
+DEFAULT_UI_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default non-OpAMP auth mode.
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class ProviderConfig:
     default_heartbeat_frequency: int = DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY
     human_in_loop_approval: bool = DEFAULT_HUMAN_IN_LOOP_APPROVAL
     opamp_use_authorization: str = DEFAULT_OPAMP_USE_AUTHORIZATION
-    ui0use_authorization: str = DEFAULT_UI0USE_AUTHORIZATION
+    ui_use_authorization: str = DEFAULT_UI_USE_AUTHORIZATION
 
 
 def resolve_log_level(log_level: str | None) -> int:
@@ -171,7 +171,7 @@ def load_config() -> ProviderConfig:
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
     opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
-    ui0use_authorization_raw = provider_raw.get(CFG_UI0USE_AUTHORIZATION)
+    ui_use_authorization_raw = provider_raw.get(CFG_UI_USE_AUTHORIZATION)
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -212,10 +212,10 @@ def load_config() -> ProviderConfig:
             cfg_key=CFG_OPAMP_USE_AUTHORIZATION,
             default_mode=DEFAULT_OPAMP_USE_AUTHORIZATION,
         ),
-        ui0use_authorization=_normalize_authorization_mode(
-            ui0use_authorization_raw,
-            cfg_key=CFG_UI0USE_AUTHORIZATION,
-            default_mode=DEFAULT_UI0USE_AUTHORIZATION,
+        ui_use_authorization=_normalize_authorization_mode(
+            ui_use_authorization_raw,
+            cfg_key=CFG_UI_USE_AUTHORIZATION,
+            default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
     )
 
@@ -233,7 +233,7 @@ def load_config_with_overrides(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
     )
     opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
-    ui0use_authorization_raw = provider_raw.get(CFG_UI0USE_AUTHORIZATION)
+    ui_use_authorization_raw = provider_raw.get(CFG_UI_USE_AUTHORIZATION)
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -276,10 +276,10 @@ def load_config_with_overrides(
             cfg_key=CFG_OPAMP_USE_AUTHORIZATION,
             default_mode=DEFAULT_OPAMP_USE_AUTHORIZATION,
         ),
-        ui0use_authorization=_normalize_authorization_mode(
-            ui0use_authorization_raw,
-            cfg_key=CFG_UI0USE_AUTHORIZATION,
-            default_mode=DEFAULT_UI0USE_AUTHORIZATION,
+        ui_use_authorization=_normalize_authorization_mode(
+            ui_use_authorization_raw,
+            cfg_key=CFG_UI_USE_AUTHORIZATION,
+            default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
     )
 
@@ -319,7 +319,7 @@ def update_comms_thresholds(
         default_heartbeat_frequency=CONFIG.default_heartbeat_frequency,
         human_in_loop_approval=effective_human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
-        ui0use_authorization=CONFIG.ui0use_authorization,
+        ui_use_authorization=CONFIG.ui_use_authorization,
     )
     set_config(config)
     return config
@@ -338,7 +338,7 @@ def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> P
         default_heartbeat_frequency=max(1, int(default_heartbeat_frequency)),
         human_in_loop_approval=CONFIG.human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
-        ui0use_authorization=CONFIG.ui0use_authorization,
+        ui_use_authorization=CONFIG.ui_use_authorization,
     )
     set_config(config)
     return config
@@ -374,7 +374,7 @@ def persist_provider_config(
     )
     provider_raw[CFG_HUMAN_IN_LOOP_APPROVAL] = bool(effective.human_in_loop_approval)
     provider_raw[CFG_OPAMP_USE_AUTHORIZATION] = str(effective.opamp_use_authorization)
-    provider_raw[CFG_UI0USE_AUTHORIZATION] = str(effective.ui0use_authorization)
+    provider_raw[CFG_UI_USE_AUTHORIZATION] = str(effective.ui_use_authorization)
 
     backup_path = _build_backup_path(resolved_path)
     logging.getLogger(__name__).info(
