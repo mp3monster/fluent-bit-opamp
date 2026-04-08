@@ -27,6 +27,9 @@ SHUTDOWN_AGENT_CAPABILITY = "org.mp3monster.opamp_provider.command_shutdown_agen
 SHUTDOWN_AGENT_TYPE = "Shutdown Agent"  # CustomMessage.type value for shutdown requests.
 SHUTDOWN_AGENT_CLASSIFIER = "custom"  # Command classifier for provider routing.
 SHUTDOWN_AGENT_ACTION = "shutdownagent"  # Action name used for queueing and dispatch.
+PAYLOAD_KEY_CLASSIFIER = "classifier"  # Payload key used for command classifier metadata.
+PAYLOAD_KEY_ACTION = "action"  # Payload key used for command action metadata.
+ENCODING_UTF8 = "utf-8"  # Text encoding used for serialized custom payload bytes.
 
 
 def _utc_now() -> datetime:
@@ -63,8 +66,8 @@ class CommandShutdownAgent(CommandObjectInterface, CommandParameterSchemaInterfa
     def _default_key_values(self) -> dict[str, str]:
         """Return default classifier/action values for shutdown routing."""
         return {
-            "classifier": SHUTDOWN_AGENT_CLASSIFIER,
-            "action": SHUTDOWN_AGENT_ACTION,
+            PAYLOAD_KEY_CLASSIFIER: SHUTDOWN_AGENT_CLASSIFIER,
+            PAYLOAD_KEY_ACTION: SHUTDOWN_AGENT_ACTION,
         }
 
     def get_command_classifier(self) -> str:
@@ -97,7 +100,7 @@ class CommandShutdownAgent(CommandObjectInterface, CommandParameterSchemaInterfa
         Implements:
             CommandObjectInterface.getdisplayname.
         """
-        return "Shutdown Agent"
+        return SHUTDOWN_AGENT_TYPE
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
         """Replace payload values while preserving command defaults.
@@ -149,5 +152,7 @@ class CommandShutdownAgent(CommandObjectInterface, CommandParameterSchemaInterfa
         payload = opamp_pb2.CustomMessage()
         payload.capability = SHUTDOWN_AGENT_CAPABILITY
         payload.type = SHUTDOWN_AGENT_TYPE
-        payload.data = json.dumps(self._key_values, sort_keys=True).encode("utf-8")
+        payload.data = json.dumps(self._key_values, sort_keys=True).encode(
+            ENCODING_UTF8
+        )
         return payload

@@ -10,9 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import opamp_consumer.abstract_client as abstract_client
 import opamp_consumer.fluentbit_client as client
 from opamp_consumer.config import ConsumerConfig
 from opamp_consumer.fluentbit_client import (
+    HOST_META_KEY_HOSTNAME,
+    HOST_META_KEY_MAC_ADDRESS,
+    HOST_META_KEY_OS_TYPE,
+    HOST_META_KEY_OS_VERSION,
     KEY_FLUENTBIT_VERSION,
     KEY_SERVICE_INSTANCE_ID,
     KEY_SERVICE_NAME,
@@ -96,3 +101,23 @@ def test_get_agent_description_resolves_service_instance_template(monkeypatch) -
         identifying[KEY_SERVICE_INSTANCE_ID]
         == "agent-01-10.0.1.2-a1:b2:c3:d4:e5:f6"
     )
+
+
+def test_get_host_metadata_includes_mac_address(monkeypatch) -> None:
+    """Host metadata should include OS, hostname, and normalized MAC address."""
+    _set_config(["ReportsStatus"])
+    instance = client.OpAMPClient("http://localhost")
+
+    monkeypatch.setattr(abstract_client.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(abstract_client.platform, "version", lambda: "1.2.3")
+    monkeypatch.setattr(abstract_client.socket, "gethostname", lambda: "edge-02")
+    monkeypatch.setattr(abstract_client.uuid, "getnode", lambda: 0xAABBCCDDEEFF)
+
+    metadata = instance.get_host_metadata()
+
+    assert metadata == {
+        HOST_META_KEY_OS_TYPE: "Linux",
+        HOST_META_KEY_OS_VERSION: "1.2.3",
+        HOST_META_KEY_HOSTNAME: "edge-02",
+        HOST_META_KEY_MAC_ADDRESS: "aa:bb:cc:dd:ee:ff",
+    }

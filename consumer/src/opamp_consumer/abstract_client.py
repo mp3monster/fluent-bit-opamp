@@ -75,6 +75,7 @@ CAPABILITY_PREFIX_REQUEST = "request:"  # Prefix used for custom request capabil
 HOST_META_KEY_OS_TYPE = "os_type"  # Host metadata key for OS type.
 HOST_META_KEY_OS_VERSION = "os_version"  # Host metadata key for OS version.
 HOST_META_KEY_HOSTNAME = "hostname"  # Host metadata key for hostname.
+HOST_META_KEY_MAC_ADDRESS = "mac_address"  # Host metadata key for client MAC address.
 CONFIG_DOCS_URL = (
     "https://github.com/mp3monster/fluent-opamp"  # Reference docs for consumer config.
 )
@@ -711,6 +712,7 @@ class AbstractOpAMPClient(
             HOST_META_KEY_OS_TYPE: platform.system(),
             HOST_META_KEY_OS_VERSION: platform.version(),
             HOST_META_KEY_HOSTNAME: socket.gethostname(),
+            HOST_META_KEY_MAC_ADDRESS: _get_local_mac(),
         }
 
 

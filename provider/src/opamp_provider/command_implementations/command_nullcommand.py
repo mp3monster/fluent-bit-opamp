@@ -31,6 +31,9 @@ NULLCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.nullcommand"  # Capabili
 NULLCOMMAND_TYPE = "Null Command"  # CustomMessage.type value for null-command payloads.
 NULLCOMMAND_CLASSIFIER = "custom"  # Command classifier for provider routing.
 NULLCOMMAND_ACTION = "nullcommand"  # Action name used for queueing and dispatch.
+PAYLOAD_KEY_CLASSIFIER = "classifier"  # Payload key used for command classifier metadata.
+PAYLOAD_KEY_ACTION = "action"  # Payload key used for command action metadata.
+ENCODING_UTF8 = "utf-8"  # Text encoding used for serialized custom payload bytes.
 
 
 def _utc_now() -> datetime:
@@ -70,8 +73,8 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
     def _default_key_values(self) -> dict[str, str]:
         """Return default classifier/action values for null-command routing."""
         return {
-            "classifier": NULLCOMMAND_CLASSIFIER,
-            "action": NULLCOMMAND_ACTION,
+            PAYLOAD_KEY_CLASSIFIER: NULLCOMMAND_CLASSIFIER,
+            PAYLOAD_KEY_ACTION: NULLCOMMAND_ACTION,
         }
 
     def get_command_classifier(self) -> str:
@@ -104,7 +107,7 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         Implements:
             CommandObjectInterface.getdisplayname.
         """
-        return "Null Command"
+        return NULLCOMMAND_TYPE
 
     def set_key_value_dictionary(self, key_values: dict[str, str]) -> None:
         """Replace payload values while preserving command defaults.
@@ -156,5 +159,7 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         payload = opamp_pb2.CustomMessage()
         payload.capability = NULLCOMMAND_CAPABILITY
         payload.type = NULLCOMMAND_TYPE
-        payload.data = json.dumps(self._key_values, sort_keys=True).encode("utf-8")
+        payload.data = json.dumps(self._key_values, sort_keys=True).encode(
+            ENCODING_UTF8
+        )
         return payload
