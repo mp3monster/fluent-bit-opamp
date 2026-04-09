@@ -18,7 +18,6 @@ validation settings are provided by environment variables.
 For production-facing deployments fronted by an API gateway, including internal-vs-external client profiles and route policy guidance, see:
 
 - [docs/api_gateway_requirements.md](api_gateway_requirements.md)
-- [TOFU Design for `/v1/opamp`](opamp_tofu_design.md)
 
 ## Modes
 

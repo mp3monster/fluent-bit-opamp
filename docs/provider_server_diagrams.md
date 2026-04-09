@@ -9,7 +9,6 @@ This page explains the rendered provider/server diagrams and links each one back
 - Provider auth setup and token modes: [docs/authentication.md](authentication.md)
 - Command queue and payload internals: [docs/command_process_implementation_note.md](command_process_implementation_note.md)
 - Mixin design reference (consumer-side pattern): [docs/consumer_mixins.md](consumer_mixins.md)
-- TOFU extension design for `/v1/opamp`: [docs/opamp_tofu_design.md](opamp_tofu_design.md)
 
 ## Diagram 1: Class and Module Relationships
 

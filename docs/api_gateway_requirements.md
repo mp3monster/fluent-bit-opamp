@@ -81,13 +81,11 @@ Recommended gateway policy shape:
    - JWT validation and/or mTLS client identity.
    - Apply request limits separately from UI/API traffic.
 
-## Trust On First Use (TOFU) Reference for `/v1/opamp`
+## Trust On First Use (TOFU) for `/v1/opamp`
 
-For environments where pre-provisioned PKI is not available at first startup, review:
-
-- [docs/opamp_tofu_design.md](opamp_tofu_design.md)
-
-TOFU helps bootstrap trust for `/v1/opamp`, then require bearer authentication on subsequent requests. It is not a replacement for mTLS or strict gateway policy, especially for external networks.
+TOFU can help bootstrap trust for `/v1/opamp`, then require bearer authentication on
+subsequent requests. It is not a replacement for mTLS or strict gateway policy,
+especially for external networks.
 
 ## Minimum Checklist Before External Exposure
 

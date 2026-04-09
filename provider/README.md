@@ -75,7 +75,7 @@ Example `opamp.json`:
     "tls": {
       "cert_file": "certs/provider-server.pem",
       "key_file": "certs/provider-server-key.pem",
-      "trust_anchor_mode": "full_chain_to_root"
+      "trust_anchor_mode": "none"
     }
   }
 }
@@ -128,8 +128,9 @@ Example `opamp.json`:
   - `provider.tls.key_file` (string, required when `provider.tls` is present)
     Path to PEM server private key file.
   - `provider.tls.trust_anchor_mode` (string, optional, default `"full_chain_to_root"`)
-    Allowed values: `partial_chain`, `full_chain_to_root`.
+    Allowed values: `none`, `partial_chain`, `full_chain_to_root`.
     This value is validated for config consistency in the current phase.
+    `scripts/run_opamp_server.* --https` sets this to `none` for local self-signed usage.
 
 ## Human-In-Loop Approval Workflow
 
