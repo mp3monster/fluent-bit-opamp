@@ -358,7 +358,11 @@ class AbstractOpAMPClient(
                 response = await self.send_websocket(msg)
             except Exception as err:
                 logging.getLogger(__name__).warning(
-                    "Error sending websocket client-to-server message -- %s", err
+                    "Error sending websocket client-to-server message\n %s",
+                    self._transport_error_details(
+                        transport=TRANSPORT_WEBSOCKET,
+                        err=err,
+                    ),
                 )
         if response is not None:
             if not send_as_is and self.data.full_update_controller is not None:
@@ -373,7 +377,10 @@ class AbstractOpAMPClient(
         except Exception as err:
             logging.getLogger(__name__).warning(
                 "Error sending HTTP client-to-server message\n %s",
-                err,
+                self._transport_error_details(
+                    transport=TRANSPORT_HTTP,
+                    err=err,
+                ),
             )
         return None
 
@@ -454,6 +461,52 @@ class AbstractOpAMPClient(
         if isinstance(response_status, int):
             return response_status
         return None
+
+    def _transport_error_details(self, *, transport: str, err: Exception) -> str:
+        """Build enriched diagnostics for transport send failures."""
+        endpoint = f"{self.data.base_url}{OPAMP_HTTP_PATH}"
+        tls_ca_file = (
+            str(self.config.tls_ca_file).strip()
+            if self.config.tls_ca_file
+            else "system-default"
+        )
+        chain_entries: list[str] = []
+        seen_entries: set[str] = set()
+
+        def _append_exception(exc: Exception) -> None:
+            text = str(exc).strip()
+            entry = f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+            if entry in seen_entries:
+                return
+            seen_entries.add(entry)
+            chain_entries.append(entry)
+
+        current: Exception | None = err
+        depth = 0
+        while current is not None and depth < 8:
+            _append_exception(current)
+            nested = getattr(current, "exceptions", None)
+            if isinstance(nested, (list, tuple)):
+                for nested_err in nested[:3]:
+                    if isinstance(nested_err, Exception):
+                        _append_exception(nested_err)
+            next_exc = (
+                current.__cause__
+                if isinstance(current.__cause__, Exception)
+                else None
+            )
+            if next_exc is None and isinstance(current.__context__, Exception):
+                next_exc = current.__context__
+            current = next_exc
+            depth += 1
+        if not chain_entries:
+            chain_entries.append(repr(err))
+        return (
+            f"transport={transport} endpoint={endpoint} "
+            f"tls_verify={bool(self.config.tls_verify_server)} "
+            f"tls_ca_file={tls_ca_file} "
+            f"error_details={' | '.join(chain_entries)}"
+        )
 
     def _should_retry_idp_authorization(self, err: Exception) -> bool:
         """Return True when IDP mode should renegotiate credentials and retry once."""

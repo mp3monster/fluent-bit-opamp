@@ -85,6 +85,30 @@ def test_send_returns_none_when_websocket_and_http_fail(monkeypatch, caplog) -> 
     assert response is None
     assert "Error sending websocket client-to-server message" in caplog.text
     assert "Error sending HTTP client-to-server message" in caplog.text
+    assert "transport=websocket" in caplog.text
+    assert "transport=http" in caplog.text
+    assert "endpoint=http://localhost/v1/opamp" in caplog.text
+
+
+def test_send_logs_exception_chain_details_for_http_failures(monkeypatch, caplog) -> None:
+    """HTTP failure logs should include nested cause details when available."""
+    instance = client.OpAMPClient("http://localhost")
+    instance.config.transport = "http"
+    caplog.set_level(logging.WARNING)
+
+    async def _fake_send_http(_msg):
+        raise RuntimeError("All connection attempts failed") from OSError(
+            "[Errno 111] Connection refused"
+        )
+
+    monkeypatch.setattr(instance, "send_http", _fake_send_http)
+
+    response = asyncio.run(instance.send(opamp_pb2.AgentToServer(), send_as_is=True))
+
+    assert response is None
+    assert "Error sending HTTP client-to-server message" in caplog.text
+    assert "All connection attempts failed" in caplog.text
+    assert "Connection refused" in caplog.text
 
 
 def test_get_config_value_missing_key_returns_empty_and_logs(caplog) -> None:
