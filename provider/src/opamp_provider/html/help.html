@@ -118,11 +118,11 @@
       <h2>Global Settings Overview</h2>
       <p>
         Use the <strong>Global Settings</strong> button in the main header to open provider-wide settings.
-        The dialog has two tabs: <strong>ServerSettings</strong> and <strong>ClientSettings</strong>.
+        The dialog has two tabs: <strong>Server Settings</strong> and <strong>Client Settings</strong>.
       </p>
       <ul class="command-list">
-        <li><strong>ServerSettings tab:</strong> Communication thresholds, provider event-history size, and human approval mode.</li>
-        <li><strong>ClientSettings tab:</strong> Default client heartbeat frequency managed by the provider.</li>
+        <li><strong>Server Settings tab:</strong> Communication thresholds, human approval mode, and state persistence controls.</li>
+        <li><strong>Client Settings tab:</strong> Default client heartbeat frequency and client event-history size.</li>
       </ul>
     </section>
     <section class="custom-commands">
@@ -132,6 +132,9 @@
         <li><strong>significant_comms_seconds</strong><br>__HELP_SIGNIFICANT_COMMS_SECONDS__</li>
         <li><strong>client_event_history_size</strong><br>__HELP_CLIENT_EVENT_HISTORY_SIZE__</li>
         <li><strong>human_in_loop_approval</strong><br>__HELP_HUMAN_IN_LOOP_APPROVAL__</li>
+        <li><strong>state_save_folder</strong><br>__HELP_STATE_SAVE_FOLDER__</li>
+        <li><strong>retention_count</strong><br>__HELP_RETENTION_COUNT__</li>
+        <li><strong>autosave_interval_seconds_since_change</strong><br>__HELP_AUTOSAVE_INTERVAL_SECONDS_SINCE_CHANGE__</li>
         <li><strong>default_heartbeat_frequency</strong><br>__HELP_DEFAULT_HEARTBEAT_FREQUENCY__</li>
       </ul>
     </section>
@@ -140,6 +143,7 @@
       <ul class="command-list">
         <li><strong>OK:</strong> Applies changes from the active tab to live provider settings.</li>
         <li><strong>OK + Save:</strong> Applies server settings and persists them to <code>opamp.json</code>.</li>
+        <li><strong>Save State Now:</strong> Forces an immediate persisted state snapshot write using current state-persistence settings.</li>
         <li><strong>Cancel:</strong> Closes the dialog without applying pending edits.</li>
       </ul>
       <p>
@@ -160,11 +164,25 @@
         <li><strong>significant_comms_seconds</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>client_event_history_size</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>human_in_loop_approval</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>state_save_folder</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>retention_count</strong> <span class="tag tag-editable">Editable in UI</span></li>
+        <li><strong>autosave_interval_seconds_since_change</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>default_heartbeat_frequency</strong> <span class="tag tag-editable">Editable in UI</span></li>
         <li><strong>webui_port</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
         <li><strong>minutes_keep_disconnected</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
         <li><strong>retryAfterSeconds</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
         <li><strong>log_level</strong> <span class="tag tag-readonly">Not editable in UI</span></li>
+      </ul>
+    </section>
+    <section class="custom-commands">
+      <h2>State Restore and Snapshots</h2>
+      <ul class="command-list">
+        <li><strong>Enable persistence:</strong> Set <code>provider.state_persistence.enabled=true</code> and configure <code>state_file_prefix</code> in <code>opamp.json</code>.</li>
+        <li><strong>Snapshot naming:</strong> Each save writes a new UTC timestamped file, for example <code>runtime/opamp_server_state.20260409T103000Z.json</code>.</li>
+        <li><strong>Retention:</strong> The provider keeps the newest snapshots using <code>retention_count</code> (default <code>5</code>).</li>
+        <li><strong>Auto restore:</strong> Start with <code>--restore</code> to load the latest snapshot for the configured prefix.</li>
+        <li><strong>Explicit restore:</strong> Start with <code>--restore &lt;snapshot_file&gt;</code> to restore from a specific file.</li>
+        <li><strong>Restore fallback behavior:</strong> If restore fails (missing/corrupt/incompatible file), provider logs the error and continues startup with an empty/default in-memory state.</li>
       </ul>
     </section>
     <p>Use the main page to open an agent, paste config/commands, and save. Changes are queued until the next agent check-in.</p>
@@ -209,7 +227,7 @@
         const resp = await apiFetch("/api/commands/custom");
         if (!resp.ok) {
           if (resp.status === 401 || resp.status === 403) {
-            list.innerHTML = "<li>Authorization required. Set a bearer token in Global Settings → ServerSettings.</li>";
+            list.innerHTML = "<li>Authorization required. Set a bearer token in Global Settings → Server Settings.</li>";
             return;
           }
           list.innerHTML = "<li>Failed to load custom commands.</li>";

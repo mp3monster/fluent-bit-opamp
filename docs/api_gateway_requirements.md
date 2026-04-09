@@ -46,16 +46,21 @@ Use this only when all clients run inside a tightly controlled network and direc
 
 Recommended provider settings:
 
-```bash
-export OPAMP_AUTH_MODE=static
-export OPAMP_AUTH_STATIC_TOKEN='replace-with-long-random-token'
-export OPAMP_AUTH_PROTECTED_PATH_PREFIXES='/tool,/sse,/messages,/mcp,/api,/v1/opamp'
+```json
+{
+  "provider": {
+    "opamp-use-authorization": "config-token",
+    "ui-use-authorization": "config-token"
+  }
+}
 ```
 
 Notes:
 
 - `jwt` is still preferred over `static` when an IdP is available.
-- Keep `/api` and `/v1/opamp` in protected prefixes even in internal environments.
+- Set both static token environment variables:
+  - `OPAMP_AUTH_STATIC_TOKEN` for `/v1/opamp`
+  - `UI_AUTH_STATIC_TOKEN` for non-OpAMP routes (`/api`, `/tool`, `/sse`, `/messages`, `/mcp`, `/ui`, `/help`)
 
 ## Profile B: Remote/External or Mixed-Trust Clients
 
@@ -63,12 +68,27 @@ Use this when any client or operator is outside a controlled environment (intern
 
 Recommended provider settings:
 
+```json
+{
+  "provider": {
+    "opamp-use-authorization": "idp",
+    "ui-use-authorization": "idp"
+  }
+}
+```
+
+Recommended environment variables:
+
 ```bash
-export OPAMP_AUTH_MODE=jwt
+# OpAMP transport (/v1/opamp)
 export OPAMP_AUTH_JWT_ISSUER='https://issuer.example.com/realms/opamp'
 export OPAMP_AUTH_JWT_AUDIENCE='opamp-mcp'
 export OPAMP_AUTH_JWT_JWKS_URL='https://issuer.example.com/realms/opamp/protocol/openid-connect/certs'
-export OPAMP_AUTH_PROTECTED_PATH_PREFIXES='/tool,/sse,/messages,/mcp,/api,/v1/opamp'
+
+# Non-OpAMP routes (/api, /tool, /sse, /messages, /mcp, /ui, /help)
+export UI_AUTH_JWT_ISSUER='https://issuer.example.com/realms/opamp'
+export UI_AUTH_JWT_AUDIENCE='opamp-ui'
+export UI_AUTH_JWT_JWKS_URL='https://issuer.example.com/realms/opamp/protocol/openid-connect/certs'
 ```
 
 Recommended gateway policy shape:

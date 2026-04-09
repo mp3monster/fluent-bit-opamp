@@ -11,6 +11,8 @@
 # limitations under the License.
 
 import sys
+import pathlib
+import logging
 
 from opamp_provider import config as provider_config
 from opamp_provider.config import ProviderConfig, ProviderTLSConfig
@@ -149,3 +151,247 @@ def test_server_main_passes_tls_cert_and_key_when_configured(monkeypatch) -> Non
     assert called["port"] == 8443
     assert called["certfile"] == "certs/provider-server.pem"
     assert called["keyfile"] == "certs/provider-server-key.pem"
+
+
+def test_server_main_restore_missing_snapshot_sets_missing_status(monkeypatch, caplog) -> None:
+    """Verify `--restore` missing snapshot path records restore status and still starts app."""
+    called = {}
+    caplog.set_level(logging.INFO)
+
+    def fake_run(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+
+    def fake_load_config_with_overrides(*, config_path, log_level):
+        return ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+            state_persistence=provider_config.ProviderStatePersistenceConfig(
+                enabled=True,
+                state_file_prefix="runtime/opamp_server_state",
+            ),
+        )
+
+    statuses = []
+
+    def fake_set_restore_status(status: str, detail: str = "") -> None:
+        statuses.append((status, detail))
+
+    def fake_resolve_restore_snapshot_path(*, state_file_prefix: str, restore_option: str):
+        raise FileNotFoundError("missing snapshot")
+
+    monkeypatch.setattr(provider_server.app, "run", fake_run)
+    monkeypatch.setattr(
+        provider_config,
+        "load_config_with_overrides",
+        fake_load_config_with_overrides,
+    )
+    monkeypatch.setattr(provider_config, "set_config", lambda _config: None)
+    monkeypatch.setattr(provider_server, "set_state_restore_status", fake_set_restore_status)
+    monkeypatch.setattr(
+        provider_server,
+        "resolve_restore_snapshot_path",
+        fake_resolve_restore_snapshot_path,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py", "--restore"],
+    )
+
+    provider_server.main()
+
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 8080
+    assert statuses
+    assert statuses[-1][0] == "missing"
+    assert "restore requested but snapshot missing" in caplog.text
+    assert (
+        "state restore fallback: no snapshot file available, starting with empty in-memory state"
+        in caplog.text
+    )
+
+
+def test_server_main_restore_explicit_snapshot_path_uses_argument(monkeypatch, caplog) -> None:
+    """Verify `--restore <path>` uses explicit snapshot path and restores before app.run."""
+    called = {"order": []}
+    explicit_snapshot = "/tmp/opamp_server_state.20260409T103000Z.json"
+    caplog.set_level(logging.INFO)
+
+    def fake_run(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+        called["order"].append("run")
+
+    def fake_load_config_with_overrides(*, config_path, log_level):
+        return ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+            state_persistence=provider_config.ProviderStatePersistenceConfig(
+                enabled=True,
+                state_file_prefix="runtime/opamp_server_state",
+            ),
+        )
+
+    statuses = []
+    resolved = {}
+
+    def fake_set_restore_status(status: str, detail: str = "") -> None:
+        statuses.append((status, detail))
+
+    def fake_resolve_restore_snapshot_path(*, state_file_prefix: str, restore_option: str):
+        resolved["state_file_prefix"] = state_file_prefix
+        resolved["restore_option"] = restore_option
+        return pathlib.Path(explicit_snapshot)
+
+    def fake_restore_state_snapshot(*, store, snapshot_path, logger=None):
+        called["order"].append("restore")
+        called["snapshot_path"] = str(snapshot_path)
+        return {
+            "clients": 0,
+            "pending_approvals": 0,
+            "blocked_agents": 0,
+            "pending_instance_uid_replacements": 0,
+            "full_refresh_queued": 0,
+            "unknown_attributes_ignored": 0,
+        }
+
+    monkeypatch.setattr(provider_server.app, "run", fake_run)
+    monkeypatch.setattr(
+        provider_config,
+        "load_config_with_overrides",
+        fake_load_config_with_overrides,
+    )
+    monkeypatch.setattr(provider_config, "set_config", lambda _config: None)
+    monkeypatch.setattr(provider_server, "set_state_restore_status", fake_set_restore_status)
+    monkeypatch.setattr(
+        provider_server,
+        "resolve_restore_snapshot_path",
+        fake_resolve_restore_snapshot_path,
+    )
+    monkeypatch.setattr(
+        provider_server,
+        "restore_state_snapshot",
+        fake_restore_state_snapshot,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py", "--restore", explicit_snapshot],
+    )
+
+    provider_server.main()
+
+    assert resolved["state_file_prefix"] == "runtime/opamp_server_state"
+    assert resolved["restore_option"] == explicit_snapshot
+    assert called["snapshot_path"] == explicit_snapshot
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 8080
+    assert called["order"] == ["restore", "run"]
+    assert statuses
+    assert statuses[-1][0] == "restored"
+    assert f"state restore using snapshot file: {explicit_snapshot}" in caplog.text
+
+
+def test_server_main_restore_invalid_snapshot_sets_failed_status(monkeypatch) -> None:
+    """Verify invalid restore content marks restore as failed and provider still starts."""
+    called = {}
+
+    def fake_run(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+
+    def fake_load_config_with_overrides(*, config_path, log_level):
+        return ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+            state_persistence=provider_config.ProviderStatePersistenceConfig(
+                enabled=True,
+                state_file_prefix="runtime/opamp_server_state",
+            ),
+        )
+
+    statuses = []
+
+    def fake_set_restore_status(status: str, detail: str = "") -> None:
+        statuses.append((status, detail))
+
+    def fake_resolve_restore_snapshot_path(*, state_file_prefix: str, restore_option: str):
+        return pathlib.Path("/tmp/opamp_server_state.20260409T103000Z.json")
+
+    def fake_restore_state_snapshot(*, store, snapshot_path, logger=None):
+        raise ValueError("invalid snapshot payload")
+
+    monkeypatch.setattr(provider_server.app, "run", fake_run)
+    monkeypatch.setattr(
+        provider_config,
+        "load_config_with_overrides",
+        fake_load_config_with_overrides,
+    )
+    monkeypatch.setattr(provider_config, "set_config", lambda _config: None)
+    monkeypatch.setattr(provider_server, "set_state_restore_status", fake_set_restore_status)
+    monkeypatch.setattr(
+        provider_server,
+        "resolve_restore_snapshot_path",
+        fake_resolve_restore_snapshot_path,
+    )
+    monkeypatch.setattr(
+        provider_server,
+        "restore_state_snapshot",
+        fake_restore_state_snapshot,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py", "--restore"],
+    )
+
+    provider_server.main()
+
+    assert called["host"] == "127.0.0.1"
+    assert called["port"] == 8080
+    assert statuses
+    assert statuses[-1][0] == "failed"
+
+
+def test_server_main_logs_warning_when_provider_config_load_fails(monkeypatch, caplog) -> None:
+    """Verify provider config load failures are logged as warnings."""
+    caplog.set_level(logging.WARNING)
+
+    def fake_load_config_with_overrides(*, config_path, log_level):
+        raise ValueError("bad provider config")
+
+    monkeypatch.setattr(
+        provider_config,
+        "load_config_with_overrides",
+        fake_load_config_with_overrides,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["server.py"],
+    )
+
+    try:
+        provider_server.main()
+    except ValueError as err:
+        assert str(err) == "bad provider config"
+    else:
+        raise AssertionError("expected ValueError for config load failure")
+
+    assert "failed loading provider config file path=" in caplog.text

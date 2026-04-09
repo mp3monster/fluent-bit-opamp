@@ -21,7 +21,7 @@ import pathlib
 import shutil
 import sys
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]  # Repository root used for default config path resolution.
@@ -47,6 +47,14 @@ CFG_TLS = "tls"  # Provider JSON key for shared TLS server settings.
 CFG_TLS_CERT_FILE = "cert_file"  # Provider TLS key for server certificate path.
 CFG_TLS_KEY_FILE = "key_file"  # Provider TLS key for server private key path.
 CFG_TLS_TRUST_ANCHOR_MODE = "trust_anchor_mode"  # Provider TLS key for trust-anchor policy mode.
+CFG_STATE_PERSISTENCE = "state_persistence"  # Provider JSON key for runtime state persistence settings.
+CFG_STATE_PERSISTENCE_ENABLED = "enabled"  # Provider state persistence key toggling snapshot persistence.
+CFG_STATE_FILE_PREFIX = "state_file_prefix"  # Provider state persistence key for snapshot path prefix.
+CFG_STATE_RETENTION_COUNT = "retention_count"  # Provider state persistence key for number of retained snapshots.
+CFG_STATE_FLUSH_MODE = "flush_mode"  # Provider state persistence key for flush strategy.
+CFG_STATE_AUTOSAVE_INTERVAL = (
+    "autosave_interval_seconds_since_change"
+)  # Provider state persistence key for autosave interval in seconds.
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60  # Default delayed comms threshold in seconds.
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300  # Default significant comms threshold in seconds.
@@ -70,6 +78,11 @@ TLS_TRUST_ANCHOR_PARTIAL_CHAIN = "partial_chain"  # Trust-anchor mode allowing i
 TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT = "full_chain_to_root"  # Trust-anchor mode requiring root anchors.
 TLS_TRUST_ANCHOR_NONE = "none"  # Trust-anchor mode for local self-signed development without CA-anchor checks.
 DEFAULT_TLS_TRUST_ANCHOR_MODE = TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT  # Default provider trust-anchor mode.
+DEFAULT_STATE_PERSISTENCE_ENABLED = False  # Default persistence behavior remains in-memory only.
+DEFAULT_STATE_FILE_PREFIX = "runtime/opamp_server_state"  # Default snapshot file prefix.
+DEFAULT_STATE_RETENTION_COUNT = 5  # Default retained snapshot count.
+DEFAULT_STATE_FLUSH_MODE = "graceful_shutdown"  # Default persistence flush mode.
+DEFAULT_STATE_AUTOSAVE_INTERVAL = 600  # Default autosave interval in seconds.
 
 
 @dataclass(frozen=True)
@@ -77,6 +90,15 @@ class ProviderTLSConfig:
     cert_file: str
     key_file: str
     trust_anchor_mode: str = DEFAULT_TLS_TRUST_ANCHOR_MODE
+
+
+@dataclass(frozen=True)
+class ProviderStatePersistenceConfig:
+    enabled: bool = DEFAULT_STATE_PERSISTENCE_ENABLED
+    state_file_prefix: str = DEFAULT_STATE_FILE_PREFIX
+    retention_count: int = DEFAULT_STATE_RETENTION_COUNT
+    flush_mode: str = DEFAULT_STATE_FLUSH_MODE
+    autosave_interval_seconds_since_change: int = DEFAULT_STATE_AUTOSAVE_INTERVAL
 
 
 @dataclass(frozen=True)
@@ -93,6 +115,9 @@ class ProviderConfig:
     opamp_use_authorization: str = DEFAULT_OPAMP_USE_AUTHORIZATION
     ui_use_authorization: str = DEFAULT_UI_USE_AUTHORIZATION
     tls: ProviderTLSConfig | None = None
+    state_persistence: ProviderStatePersistenceConfig = field(
+        default_factory=ProviderStatePersistenceConfig
+    )
 
 
 def resolve_log_level(log_level: str | None) -> int:
@@ -232,11 +257,88 @@ def _load_provider_tls_config(provider_raw: dict[str, Any]) -> ProviderTLSConfig
     )
 
 
+def _validate_state_persistence_directory(
+    *,
+    state_file_prefix: str,
+) -> tuple[bool, str]:
+    """Validate state snapshot directory readability/writability; create when missing."""
+    prefix_path = pathlib.Path(str(state_file_prefix).strip() or DEFAULT_STATE_FILE_PREFIX)
+    directory = prefix_path.parent
+    if str(directory).strip() in {"", "."}:
+        directory = pathlib.Path.cwd()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        return False, f"failed to create state persistence directory {directory}: {exc}"
+    if not directory.exists() or not directory.is_dir():
+        return False, f"state persistence directory is not a directory: {directory}"
+    if not os.access(directory, os.R_OK | os.W_OK):
+        return False, f"state persistence directory must be readable and writable: {directory}"
+    return True, str(directory)
+
+
+def _load_state_persistence_config(
+    provider_raw: dict[str, Any],
+) -> ProviderStatePersistenceConfig:
+    """Load and validate provider state persistence settings from config mapping."""
+    raw = provider_raw.get(CFG_STATE_PERSISTENCE)
+    if raw is None:
+        return ProviderStatePersistenceConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"{CFG_PROVIDER}.{CFG_STATE_PERSISTENCE} must be an object")
+    enabled = _as_bool(
+        raw.get(CFG_STATE_PERSISTENCE_ENABLED),
+        DEFAULT_STATE_PERSISTENCE_ENABLED,
+    )
+    state_file_prefix = str(
+        raw.get(CFG_STATE_FILE_PREFIX, DEFAULT_STATE_FILE_PREFIX) or DEFAULT_STATE_FILE_PREFIX
+    ).strip()
+    if not state_file_prefix:
+        state_file_prefix = DEFAULT_STATE_FILE_PREFIX
+    retention_count = max(
+        1,
+        int(raw.get(CFG_STATE_RETENTION_COUNT, DEFAULT_STATE_RETENTION_COUNT)),
+    )
+    autosave_interval_seconds_since_change = max(
+        1,
+        int(raw.get(CFG_STATE_AUTOSAVE_INTERVAL, DEFAULT_STATE_AUTOSAVE_INTERVAL)),
+    )
+    flush_mode = str(raw.get(CFG_STATE_FLUSH_MODE, DEFAULT_STATE_FLUSH_MODE)).strip()
+    if not flush_mode:
+        flush_mode = DEFAULT_STATE_FLUSH_MODE
+    config = ProviderStatePersistenceConfig(
+        enabled=enabled,
+        state_file_prefix=state_file_prefix,
+        retention_count=retention_count,
+        flush_mode=flush_mode,
+        autosave_interval_seconds_since_change=autosave_interval_seconds_since_change,
+    )
+    if not config.enabled:
+        return config
+    valid, reason = _validate_state_persistence_directory(
+        state_file_prefix=config.state_file_prefix
+    )
+    if valid:
+        return config
+    logging.getLogger(__name__).error(
+        "state persistence disabled for this run: %s",
+        reason,
+    )
+    return ProviderStatePersistenceConfig(
+        enabled=False,
+        state_file_prefix=config.state_file_prefix,
+        retention_count=config.retention_count,
+        flush_mode=config.flush_mode,
+        autosave_interval_seconds_since_change=config.autosave_interval_seconds_since_change,
+    )
+
+
 def load_config() -> ProviderConfig:
     """Load provider config from disk."""
     raw = _load_json(_config_path())
     provider_raw = raw.get(CFG_PROVIDER, {})
     tls_config = _load_provider_tls_config(provider_raw)
+    state_persistence_config = _load_state_persistence_config(provider_raw)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
@@ -289,6 +391,7 @@ def load_config() -> ProviderConfig:
             default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
         tls=tls_config,
+        state_persistence=state_persistence_config,
     )
 
 
@@ -301,6 +404,7 @@ def load_config_with_overrides(
     base_raw = _load_json(config_path or _config_path())
     provider_raw = base_raw.get(CFG_PROVIDER, {})
     tls_config = _load_provider_tls_config(provider_raw)
+    state_persistence_config = _load_state_persistence_config(provider_raw)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
@@ -355,6 +459,7 @@ def load_config_with_overrides(
             default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
         tls=tls_config,
+        state_persistence=state_persistence_config,
     )
 
 
@@ -370,6 +475,9 @@ def update_comms_thresholds(
     significant: int,
     client_event_history_size: int | None = None,
     human_in_loop_approval: bool | None = None,
+    state_save_folder: str | None = None,
+    retention_count: int | None = None,
+    autosave_interval_seconds_since_change: int | None = None,
 ) -> ProviderConfig:
     """Return a new config with updated server comm settings and set it."""
     history_size = (
@@ -382,6 +490,52 @@ def update_comms_thresholds(
         if human_in_loop_approval is None
         else bool(human_in_loop_approval)
     )
+    persistence = CONFIG.state_persistence
+    if state_save_folder is not None:
+        folder = str(state_save_folder).strip()
+        if not folder:
+            raise ValueError("state_save_folder must be a non-empty string")
+        current_prefix = pathlib.Path(persistence.state_file_prefix)
+        base_name = current_prefix.name or "opamp_server_state"
+        proposed_prefix = str(pathlib.Path(folder) / base_name)
+        valid, reason = _validate_state_persistence_directory(
+            state_file_prefix=proposed_prefix
+        )
+        if not valid:
+            raise ValueError(reason)
+        persistence = ProviderStatePersistenceConfig(
+            enabled=persistence.enabled,
+            state_file_prefix=proposed_prefix,
+            retention_count=persistence.retention_count,
+            flush_mode=persistence.flush_mode,
+            autosave_interval_seconds_since_change=(
+                persistence.autosave_interval_seconds_since_change
+            ),
+        )
+    if autosave_interval_seconds_since_change is not None:
+        interval = int(autosave_interval_seconds_since_change)
+        if interval <= 0:
+            raise ValueError("autosave_interval_seconds_since_change must be positive")
+        persistence = ProviderStatePersistenceConfig(
+            enabled=persistence.enabled,
+            state_file_prefix=persistence.state_file_prefix,
+            retention_count=persistence.retention_count,
+            flush_mode=persistence.flush_mode,
+            autosave_interval_seconds_since_change=interval,
+        )
+    if retention_count is not None:
+        keep = int(retention_count)
+        if keep <= 0:
+            raise ValueError("retention_count must be positive")
+        persistence = ProviderStatePersistenceConfig(
+            enabled=persistence.enabled,
+            state_file_prefix=persistence.state_file_prefix,
+            retention_count=keep,
+            flush_mode=persistence.flush_mode,
+            autosave_interval_seconds_since_change=(
+                persistence.autosave_interval_seconds_since_change
+            ),
+        )
     config = ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -395,6 +549,7 @@ def update_comms_thresholds(
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
         tls=CONFIG.tls,
+        state_persistence=persistence,
     )
     set_config(config)
     return config
@@ -415,6 +570,7 @@ def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> P
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
         tls=CONFIG.tls,
+        state_persistence=CONFIG.state_persistence,
     )
     set_config(config)
     return config
@@ -451,6 +607,15 @@ def persist_provider_config(
     provider_raw[CFG_HUMAN_IN_LOOP_APPROVAL] = bool(effective.human_in_loop_approval)
     provider_raw[CFG_OPAMP_USE_AUTHORIZATION] = str(effective.opamp_use_authorization)
     provider_raw[CFG_UI_USE_AUTHORIZATION] = str(effective.ui_use_authorization)
+    provider_raw[CFG_STATE_PERSISTENCE] = {
+        CFG_STATE_PERSISTENCE_ENABLED: bool(effective.state_persistence.enabled),
+        CFG_STATE_FILE_PREFIX: str(effective.state_persistence.state_file_prefix),
+        CFG_STATE_RETENTION_COUNT: int(effective.state_persistence.retention_count),
+        CFG_STATE_FLUSH_MODE: str(effective.state_persistence.flush_mode),
+        CFG_STATE_AUTOSAVE_INTERVAL: int(
+            effective.state_persistence.autosave_interval_seconds_since_change
+        ),
+    }
 
     backup_path = _build_backup_path(resolved_path)
     logging.getLogger(__name__).info(

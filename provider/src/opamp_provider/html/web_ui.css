@@ -191,6 +191,10 @@
       color: var(--ok);
     }
 
+    .modal-status {
+      font-weight: 700;
+    }
+
     .dot {
       width: 10px;
       height: 10px;
@@ -324,6 +328,20 @@
       margin-bottom: 12px;
     }
 
+    .settings-group-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #2f3f8f;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .settings-group-rows {
+      display: grid;
+      gap: 10px;
+    }
+
     .settings-group label {
       font-size: 0.75rem;
       color: var(--muted);
@@ -345,6 +363,34 @@
 
     .settings-row-readonly {
       grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr) auto;
+    }
+
+    .settings-row-action {
+      grid-template-columns: minmax(220px, 1fr) auto minmax(180px, 1fr);
+    }
+
+    .settings-row-retention {
+      grid-template-columns: minmax(220px, 1fr) minmax(120px, 220px) minmax(220px, 1fr) auto;
+    }
+
+    .settings-inline-status {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.25;
+    }
+
+    .settings-inline-status strong {
+      color: #2f3f8f;
+    }
+
+    .settings-inline-status.success {
+      color: var(--ok);
+      font-weight: 600;
+    }
+
+    .settings-inline-status.error {
+      color: var(--red);
+      font-weight: 600;
     }
 
     .settings-readonly-value {

@@ -1,5 +1,5 @@
-# OpAMp Feature Completion, ToDos and Future Features
-The following represents a brain dump of things that we want to/need to do.  The ToDos are the primary focus - but may not be delivered immediately as we work to providing a minimal implementation.
+# OpAMP Feature Completion, ToDos and Future Features
+The following represents a brain dump of things that we want to/need to do. The ToDos are the primary focus, but may not be delivered immediately as we work toward a minimal implementation.
 
 ## OpAMP Features
 
@@ -64,6 +64,10 @@ Connection settings policy note:
 
 ## Future Features
 
+### Recently Completed
+* Wheel packaging for provider/server and consumer/agent.
+* SBOM generation (CycloneDX JSON) for deployable wheel artifacts.
+
 ### All
 * GitHub driven test rig
 * Docs on readthedocs
@@ -74,10 +78,6 @@ Connection settings policy note:
 
 * extend so configuration can be classic Fluent Bit
 
-* Certificate management - this is messy to setup and test properly
-
-* wheel package / installation
-
 * configure drive overloading of operations - so process checks can have alternate implementations
 
 * share namespace when running in a K8s deployment
@@ -87,9 +87,7 @@ Connection settings policy note:
   
 
 ### Server Side
-* Implement persistence mechanism
-* UI so that specific nodes and global polling can be set
+* Extend persistence mechanism beyond initial snapshot/restore support
 * send configurations to multiple nodes at once
 * Certificate management - this is messy to setup and test properly
 * code signing
-* wheel package

@@ -11,8 +11,13 @@
       delayed: 60,
       significant: 300,
       clientEventHistorySize: 50,
+      stateSaveFolder: "runtime",
+      retentionCount: 5,
+      stateSnapshotFileCount: 0,
+      autosaveIntervalSecondsSinceChange: 600,
       defaultHeartbeatFrequency: 30,
       diagnosticEnabled: false,
+      statePersistenceEnabled: false,
       humanInLoopApproval: false,
       tlsEnabled: false,
       httpsCertificateExpiryDate: null,
@@ -70,6 +75,7 @@
     const issueIdBtn = document.getElementById("issueIdBtn");
     const globalSettingsBtn = document.getElementById("globalSettingsBtn");
     const globalSettingsModal = document.getElementById("globalSettingsModal");
+    const statePersistenceGroup = document.getElementById("statePersistenceGroup");
     const closeGlobalSettingsBtn = document.getElementById("closeGlobalSettingsBtn");
     const cancelGlobalSettingsBtn = document.getElementById("cancelGlobalSettingsBtn");
     const saveGlobalSettingsBtn = document.getElementById("saveGlobalSettingsBtn");
@@ -92,6 +98,14 @@
     const humanInLoopApprovalInput = document.getElementById(
       "humanInLoopApprovalInput"
     );
+    const stateSaveFolderInput = document.getElementById("stateSaveFolderInput");
+    const retentionCountInput = document.getElementById("retentionCountInput");
+    const stateSnapshotFileCountOutput = document.getElementById(
+      "stateSnapshotFileCountOutput"
+    );
+    const autosaveIntervalInput = document.getElementById("autosaveIntervalInput");
+    const saveStateNowBtn = document.getElementById("saveStateNowBtn");
+    const saveStateNowStatus = document.getElementById("saveStateNowStatus");
     const delayedCommsSecondsLabel = document.getElementById(
       "delayedCommsSecondsLabel"
     );
@@ -104,6 +118,9 @@
     const humanInLoopApprovalLabel = document.getElementById(
       "humanInLoopApprovalLabel"
     );
+    const stateSaveFolderLabel = document.getElementById("stateSaveFolderLabel");
+    const retentionCountLabel = document.getElementById("retentionCountLabel");
+    const autosaveIntervalLabel = document.getElementById("autosaveIntervalLabel");
     const httpsCertificateExpiryGroup = document.getElementById(
       "httpsCertificateExpiryGroup"
     );
@@ -178,6 +195,18 @@
       human_in_loop_approval: {
         label: "Human In Loop Approval",
         tooltip: "When enabled, unknown agents are staged for manual review and remain blocked until approved.",
+      },
+      state_save_folder: {
+        label: "State Save Folder",
+        tooltip: "Folder used for persisted provider state snapshots.",
+      },
+      retention_count: {
+        label: "State Snapshot Retention Count",
+        tooltip: "Number of latest provider state snapshot files to retain.",
+      },
+      autosave_interval_seconds_since_change: {
+        label: "Autosave Interval Since Change (seconds)",
+        tooltip: "Seconds between autosaves after non-heartbeat OpAMP state changes.",
       },
       default_heartbeat_frequency: {
         label: "Default Heartbeat Frequency (seconds)",

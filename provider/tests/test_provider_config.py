@@ -43,6 +43,18 @@ def test_provider_tls_defaults_to_none_when_missing() -> None:
     assert config.tls is None
 
 
+def test_state_persistence_defaults_when_missing() -> None:
+    """Verify state persistence settings fall back to documented defaults when omitted."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(root / "tests" / "opamp.json")
+    config = provider_config.load_config()
+
+    assert config.state_persistence.enabled is False
+    assert config.state_persistence.state_file_prefix == "runtime/opamp_server_state"
+    assert config.state_persistence.retention_count == 5
+    assert config.state_persistence.autosave_interval_seconds_since_change == 600
+
+
 def test_provider_tls_loads_from_config(tmp_path) -> None:
     """Verify provider.tls cert/key/trust mode are parsed from config."""
     cert_file = tmp_path / "provider-server.pem"
@@ -141,3 +153,31 @@ def test_provider_tls_accepts_none_trust_anchor_mode(tmp_path) -> None:
     config = provider_config.load_config()
     assert config.tls is not None
     assert config.tls.trust_anchor_mode == provider_config.TLS_TRUST_ANCHOR_NONE
+
+
+def test_update_comms_thresholds_updates_retention_count() -> None:
+    """Verify update_comms_thresholds applies new state snapshot retention count."""
+    provider_config.set_config(
+        provider_config.ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+            state_persistence=provider_config.ProviderStatePersistenceConfig(
+                enabled=True,
+                state_file_prefix="runtime/opamp_server_state",
+                retention_count=5,
+            ),
+        )
+    )
+
+    updated = provider_config.update_comms_thresholds(
+        delayed=60,
+        significant=300,
+        retention_count=9,
+    )
+
+    assert updated.state_persistence.retention_count == 9

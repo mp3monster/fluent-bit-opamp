@@ -124,7 +124,7 @@ Using [NSSM](https://nssm.cc/) is the simplest approach for Python entrypoints.
 ### 2. Provider service example
 
 ```powershell
-nssm install OpAMPProvider "D:\dev\opamp\.venv\Scripts\python.exe" "-m opamp_provider.app --config-path D:\dev\opamp\config\opamp.json"
+nssm install OpAMPProvider "D:\dev\opamp\.venv\Scripts\opamp-provider.exe" "--config-path D:\dev\opamp\config\opamp.json"
 nssm set OpAMPProvider AppDirectory "D:\dev\opamp"
 nssm set OpAMPProvider AppEnvironmentExtra "OPAMP_CONFIG_PATH=D:\dev\opamp\config\opamp.json"
 nssm start OpAMPProvider

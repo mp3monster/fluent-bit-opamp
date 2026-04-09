@@ -106,6 +106,65 @@ async def test_http_endpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_http_heartbeat_only_message_skips_autosave_evaluation(monkeypatch) -> None:
+    """Verify heartbeat-only OpAMP messages do not trigger autosave interval evaluation."""
+    called = {"count": 0}
+
+    def fake_note() -> None:
+        called["count"] += 1
+
+    monkeypatch.setattr(
+        "opamp_provider.app._note_non_heartbeat_state_change_and_maybe_autosave",
+        fake_note,
+    )
+    agent_msg = opamp_pb2.AgentToServer(
+        instance_uid=bytes.fromhex("01010101010101010101010101010101")
+    )
+    agent_msg.sequence_num = 1
+
+    async with app.test_client() as client:
+        resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+
+    assert called["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_http_non_heartbeat_message_runs_autosave_evaluation(monkeypatch) -> None:
+    """Verify non-heartbeat OpAMP messages trigger autosave interval evaluation hook."""
+    called = {"count": 0}
+
+    def fake_note() -> None:
+        called["count"] += 1
+
+    monkeypatch.setattr(
+        "opamp_provider.app._note_non_heartbeat_state_change_and_maybe_autosave",
+        fake_note,
+    )
+    agent_msg = opamp_pb2.AgentToServer(
+        instance_uid=bytes.fromhex("02020202020202020202020202020202")
+    )
+    agent_msg.sequence_num = 1
+    version = agent_msg.agent_description.identifying_attributes.add()
+    version.key = "service.version"
+    version.value.string_value = "1.2.3"
+
+    async with app.test_client() as client:
+        resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert resp.status_code == 200
+
+    assert called["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_websocket_endpoint() -> None:
     """Verify `/v1/opamp` WebSocket transport by sending encoded payload and checking decoded response."""
     test_uid = b"abcdef1234567890"
@@ -385,7 +444,7 @@ async def test_opamp_config_token_accepts_websocket_with_valid_bearer(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_get_comms_settings() -> None:
+async def test_get_comms_settings(monkeypatch) -> None:
     """Verify GET `/api/settings/comms` returns configured delayed/significant communication thresholds."""
     config = ProviderConfig(
         delayed_comms_seconds=60,
@@ -397,6 +456,10 @@ async def test_get_comms_settings() -> None:
         log_level="INFO",
     )
     provider_config.set_config(config)
+    monkeypatch.setattr(
+        "opamp_provider.app.list_snapshot_files",
+        lambda _prefix: [pathlib.Path("a"), pathlib.Path("b")],
+    )
 
     async with app.test_client() as client:
         resp = await client.get("/api/settings/comms")
@@ -408,6 +471,10 @@ async def test_get_comms_settings() -> None:
         "significant_comms_seconds": 300,
         "client_event_history_size": 2,
         "human_in_loop_approval": False,
+        "state_save_folder": "runtime",
+        "retention_count": 5,
+        "state_snapshot_file_count": 2,
+        "autosave_interval_seconds_since_change": 600,
         "tls_enabled": False,
         "https_certificate_expiry_date": None,
         "https_certificate_days_remaining": None,
@@ -457,7 +524,73 @@ async def test_get_diagnostic_settings_disabled_by_default() -> None:
         assert resp.status_code == 200
         payload = await resp.get_json()
 
-    assert payload == {"diagnostic_enabled": False}
+    assert payload["diagnostic_enabled"] is False
+    assert payload["state_persistence_enabled"] is False
+    assert isinstance(payload.get("state_persistence"), dict)
+
+
+@pytest.mark.asyncio
+async def test_post_state_save_persists_snapshot_when_enabled(monkeypatch) -> None:
+    """Verify manual state-save endpoint triggers snapshot writer when persistence is enabled."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+        state_persistence=provider_config.ProviderStatePersistenceConfig(
+            enabled=True,
+            state_file_prefix="runtime/opamp_server_state",
+        ),
+    )
+    provider_config.set_config(config)
+    captured = {}
+
+    def fake_save_state_snapshot(*, store, persistence, reason, logger=None, now=None):
+        captured["reason"] = reason
+        captured["state_file_prefix"] = persistence.state_file_prefix
+        return pathlib.Path("/tmp/opamp_server_state.20260409T103000Z.json")
+
+    monkeypatch.setattr("opamp_provider.app.save_state_snapshot", fake_save_state_snapshot)
+
+    async with app.test_client() as client:
+        resp = await client.post("/api/settings/state/save")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert captured["reason"] == "manual_ui_trigger"
+    assert captured["state_file_prefix"] == "runtime/opamp_server_state"
+    assert payload["status"] == "saved"
+    assert payload["snapshot_path"] == "/tmp/opamp_server_state.20260409T103000Z.json"
+    assert isinstance(payload["saved_at_utc"], str)
+
+
+@pytest.mark.asyncio
+async def test_post_state_save_rejects_when_persistence_disabled() -> None:
+    """Verify manual state-save endpoint rejects requests when persistence is disabled."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+        state_persistence=provider_config.ProviderStatePersistenceConfig(
+            enabled=False,
+            state_file_prefix="runtime/opamp_server_state",
+        ),
+    )
+    provider_config.set_config(config)
+
+    async with app.test_client() as client:
+        resp = await client.post("/api/settings/state/save")
+        assert resp.status_code == 400
+        payload = await resp.get_json()
+
+    assert payload == {"error": "state persistence is disabled"}
 
 
 @pytest.mark.asyncio
@@ -487,7 +620,7 @@ async def test_get_server_opamp_config_returns_config_when_diagnostic_enabled() 
 
 
 @pytest.mark.asyncio
-async def test_put_comms_settings() -> None:
+async def test_put_comms_settings(monkeypatch) -> None:
     """Verify PUT `/api/settings/comms` updates and returns communication threshold settings."""
     config = ProviderConfig(
         delayed_comms_seconds=60,
@@ -499,6 +632,14 @@ async def test_put_comms_settings() -> None:
         log_level="INFO",
     )
     provider_config.set_config(config)
+    monkeypatch.setattr(
+        "opamp_provider.app.list_snapshot_files",
+        lambda _prefix: [
+            pathlib.Path("a"),
+            pathlib.Path("b"),
+            pathlib.Path("c"),
+        ],
+    )
 
     async with app.test_client() as client:
         resp = await client.put(
@@ -508,6 +649,7 @@ async def test_put_comms_settings() -> None:
                 "significant_comms_seconds": 600,
                 "client_event_history_size": 4,
                 "human_in_loop_approval": True,
+                "retention_count": 7,
             },
         )
         assert resp.status_code == 200
@@ -518,6 +660,10 @@ async def test_put_comms_settings() -> None:
         "significant_comms_seconds": 600,
         "client_event_history_size": 4,
         "human_in_loop_approval": True,
+        "state_save_folder": "runtime",
+        "retention_count": 7,
+        "state_snapshot_file_count": 3,
+        "autosave_interval_seconds_since_change": 600,
     }
     config_path = pathlib.Path(provider_config.get_effective_config_path())
     stored = json.loads(config_path.read_text(encoding="utf-8"))
@@ -526,6 +672,10 @@ async def test_put_comms_settings() -> None:
     assert provider.get("significant_comms_seconds") == 600
     assert provider.get("client_event_history_size") == 4
     assert provider.get("human_in_loop_approval") is True
+    persisted_state_cfg = provider.get("state_persistence", {})
+    assert persisted_state_cfg.get("state_file_prefix") == "runtime/opamp_server_state"
+    assert persisted_state_cfg.get("retention_count") == 7
+    assert persisted_state_cfg.get("autosave_interval_seconds_since_change") == 600
 
 
 @pytest.mark.asyncio
@@ -597,6 +747,82 @@ async def test_put_comms_settings_rejects_invalid_event_history_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_put_comms_settings_rejects_invalid_retention_count() -> None:
+    """Verify PUT `/api/settings/comms` rejects non-positive state snapshot retention count values."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+    )
+    provider_config.set_config(config)
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={
+                "delayed_comms_seconds": 60,
+                "significant_comms_seconds": 300,
+                "retention_count": 0,
+            },
+        )
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_put_comms_settings_triggers_purge_when_retention_below_current_count(
+    monkeypatch,
+) -> None:
+    """Verify lowering retention below current snapshot file count triggers prune."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+    )
+    provider_config.set_config(config)
+    monkeypatch.setattr(
+        "opamp_provider.app.list_snapshot_files",
+        lambda _prefix: [
+            pathlib.Path("state1"),
+            pathlib.Path("state2"),
+            pathlib.Path("state3"),
+        ],
+    )
+    captured = {}
+
+    def fake_prune_snapshot_files(*, state_file_prefix: str, retention_count: int, logger=None):
+        captured["state_file_prefix"] = state_file_prefix
+        captured["retention_count"] = retention_count
+        return 2
+
+    monkeypatch.setattr(
+        "opamp_provider.app.prune_snapshot_files",
+        fake_prune_snapshot_files,
+    )
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={
+                "delayed_comms_seconds": 60,
+                "significant_comms_seconds": 300,
+                "retention_count": 1,
+            },
+        )
+        assert resp.status_code == 200
+
+    assert captured["state_file_prefix"] == "runtime/opamp_server_state"
+    assert captured["retention_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_put_comms_settings_rejects_invalid_human_in_loop_approval() -> None:
     """Verify PUT `/api/settings/comms` rejects non-boolean human_in_loop_approval values."""
     config = ProviderConfig(
@@ -651,11 +877,33 @@ async def test_get_global_settings_help() -> None:
     assert "significant_comms_seconds" in tooltips
     assert "client_event_history_size" in tooltips
     assert "human_in_loop_approval" in tooltips
+    assert "state_save_folder" in tooltips
+    assert "retention_count" in tooltips
+    assert "autosave_interval_seconds_since_change" in tooltips
     assert "default_heartbeat_frequency" in tooltips
     assert fields["delayed_comms_seconds"]["label"] == "Delayed Communications Threshold (seconds)"
     assert fields["significant_comms_seconds"]["label"] == "Significant Communications Threshold (seconds)"
     assert fields["client_event_history_size"]["label"] == "Client Event History Size"
     assert fields["human_in_loop_approval"]["label"] == "Human In Loop Approval"
+    assert fields["state_save_folder"]["label"] == "State Save Folder"
+    assert fields["retention_count"]["label"] == "State Snapshot Retention Count"
+    assert (
+        fields["autosave_interval_seconds_since_change"]["label"]
+        == "Autosave Interval Since Change (seconds)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_help_page_includes_restore_usage() -> None:
+    """Verify `/help` includes restore CLI usage and fallback behavior guidance."""
+    async with app.test_client() as client:
+        resp = await client.get("/help")
+        assert resp.status_code == 200
+        html = await resp.get_data(as_text=True)
+
+    assert "--restore" in html
+    assert "state_file_prefix" in html
+    assert "empty/default in-memory state" in html
 
 
 @pytest.mark.asyncio

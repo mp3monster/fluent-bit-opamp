@@ -4,28 +4,13 @@ This document lists the HTTP and WebSocket endpoints exposed by the provider.
 
 ## Bearer-Token Protection Scope
 
-Bearer protection is prefix-based and controlled by:
+Bearer protection is controlled by provider config plus environment-backed secrets/JWT settings:
 
-- `OPAMP_AUTH_MODE` (`disabled`, `static`, `jwt`)
-- `OPAMP_AUTH_PROTECTED_PATH_PREFIXES` (comma-separated path prefixes)
-
-Default protected prefixes are:
-
-- `/tool`
-- `/sse`
-- `/messages`
-- `/mcp`
-- `/api`
-
-Important behavior details:
-
-- Any HTTP endpoint can be protected by adding its prefix to
-  `OPAMP_AUTH_PROTECTED_PATH_PREFIXES` (for example `/api` or `/v1/opamp`).
-- Prefix matching applies to the exact path and descendants.
-  Example: protecting `/tool` also protects `/tool/commands`.
-- OpAMP HTTP transport (`POST /v1/opamp`) can be protected with a prefix entry.
-- OpAMP WebSocket transport (`WEBSOCKET /v1/opamp`) is not currently covered by the
-  HTTP bearer-check hook.
+- `provider.ui-use-authorization` controls non-OpAMP routes (for example `/api`, `/tool`, `/ui`, `/help`, `/sse`, `/messages`, `/mcp`).
+- `provider.opamp-use-authorization` controls OpAMP transport (`/v1/opamp` HTTP and WebSocket).
+- Environment variables provide token/JWT validation settings:
+  - OpAMP transport: `OPAMP_AUTH_*`
+  - Non-OpAMP routes: `UI_AUTH_*`
 
 ## UI Endpoints
 
@@ -44,9 +29,8 @@ Important behavior details:
 | GET | `/tool/otelAgents` | List agents that are not disconnected. |
 | GET | `/tool/commands` | List all commands (OpAMP-standard and custom). |
 
-When bearer auth is enabled (`OPAMP_AUTH_MODE=static` or `jwt`) and `/tool` is in
-`OPAMP_AUTH_PROTECTED_PATH_PREFIXES` (default), `/tool` endpoints require an
-`Authorization: Bearer <token>` header.
+When `provider.ui-use-authorization` is set to `config-token` or `idp`, `/tool`
+endpoints require an `Authorization: Bearer <token>` header.
 
 ## API Endpoints
 
@@ -65,6 +49,8 @@ When bearer auth is enabled (`OPAMP_AUTH_MODE=static` or `jwt`) and `/tool` is i
 | GET | `/api/commands/custom` | List custom command metadata for the UI. |
 | GET | `/api/settings/comms` | Get communication threshold settings. |
 | PUT | `/api/settings/comms` | Update communication threshold settings. |
+| GET | `/api/settings/diagnostic` | Get diagnostic and state-persistence status metadata for UI feature-gating/health display. |
+| POST | `/api/settings/state/save` | Force an immediate provider state snapshot save (when persistence is enabled). |
 | GET | `/api/settings/client` | Get global client settings. |
 | PUT | `/api/settings/client` | Update global client settings. |
 | GET | `/api/help/global-settings` | Get shared help text for Global Settings labels/tooltips. |
@@ -88,9 +74,9 @@ Human-in-loop behavior notes:
 
 Bearer protection notes:
 
-- `POST /v1/opamp` is protectable by adding `/v1/opamp` to
-  `OPAMP_AUTH_PROTECTED_PATH_PREFIXES`.
-- `WEBSOCKET /v1/opamp` is bearer-protected through `provider.opamp-use-authorization`.
+- Both `POST /v1/opamp` and `WEBSOCKET /v1/opamp` are protected through `provider.opamp-use-authorization`.
+- `config-token` mode validates against `OPAMP_AUTH_STATIC_TOKEN`.
+- `idp` mode validates JWT using `OPAMP_AUTH_JWT_*`.
 
 ## MCP Transport Endpoints
 
@@ -100,5 +86,6 @@ Bearer protection notes:
 | POST | `/messages` | FastMCP SSE message endpoint paired with `/sse`. |
 | POST/GET | `/mcp` | FastMCP Streamable HTTP endpoint (when enabled in transport configuration). |
 
-When bearer auth is enabled and default MCP prefixes are protected, MCP transport
-endpoints (`/sse`, `/messages`, `/mcp`) require `Authorization: Bearer <token>`.
+When `provider.ui-use-authorization` is set to `config-token` or `idp`, MCP
+transport endpoints (`/sse`, `/messages`, `/mcp`) require
+`Authorization: Bearer <token>`.

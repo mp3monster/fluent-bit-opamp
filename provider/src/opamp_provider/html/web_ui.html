@@ -190,8 +190,8 @@
         <button id="closeGlobalSettingsBtn" class="cancel">Close</button>
       </div>
       <div class="modal-tabs">
-        <button class="settings-tab-button active" data-settings-tab="server">ServerSettings</button>
-        <button class="settings-tab-button" data-settings-tab="client">ClientSettings</button>
+        <button class="settings-tab-button active" data-settings-tab="server">Server Settings</button>
+        <button class="settings-tab-button" data-settings-tab="client">Client Settings</button>
         <button
           id="settingsTabServerOpampConfigBtn"
           class="settings-tab-button hidden"
@@ -201,55 +201,39 @@
       <div class="modal-tab-body">
         <div id="settings-tab-server" class="tab-panel active">
           <div class="settings-form">
-            <div class="settings-group">
-              <div class="settings-row">
-                <label id="delayedCommsSecondsLabel" for="delayedCommsSecondsInput">delayed_comms_seconds</label>
-                <input
-                  id="delayedCommsSecondsInput"
-                  type="number"
-                  min="1"
-                  step="1"
-                />
-                <button
-                  type="button"
-                  class="schema-icon help-icon"
-                  data-help-key="delayed_comms_seconds"
-                  title="Seconds before a client is marked delayed (amber). This overrides the config file value."
-                >i</button>
-              </div>
-            </div>
-            <div class="settings-group">
-              <div class="settings-row">
-                <label id="significantCommsSecondsLabel" for="significantCommsSecondsInput">significant_comms_seconds</label>
-                <input
-                  id="significantCommsSecondsInput"
-                  type="number"
-                  min="1"
-                  step="1"
-                />
-                <button
-                  type="button"
-                  class="schema-icon help-icon"
-                  data-help-key="significant_comms_seconds"
-                  title="Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value."
-                >i</button>
-              </div>
-            </div>
-            <div class="settings-group">
-              <div class="settings-row">
-                <label id="clientEventHistorySizeLabel" for="clientEventHistorySizeInput">client_event_history_size</label>
-                <input
-                  id="clientEventHistorySizeInput"
-                  type="number"
-                  min="1"
-                  step="1"
-                />
-                <button
-                  type="button"
-                  class="schema-icon help-icon"
-                  data-help-key="client_event_history_size"
-                  title="Maximum number of recent per-client events retained by the provider. Older events are dropped when this limit is exceeded."
-                >i</button>
+            <div class="settings-group settings-group-cluster">
+              <div class="settings-group-title">Communication Thresholds</div>
+              <div class="settings-group-rows">
+                <div class="settings-row">
+                  <label id="delayedCommsSecondsLabel" for="delayedCommsSecondsInput">delayed_comms_seconds</label>
+                  <input
+                    id="delayedCommsSecondsInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="delayed_comms_seconds"
+                    title="Seconds before a client is marked delayed (amber). This overrides the config file value."
+                  >i</button>
+                </div>
+                <div class="settings-row">
+                  <label id="significantCommsSecondsLabel" for="significantCommsSecondsInput">significant_comms_seconds</label>
+                  <input
+                    id="significantCommsSecondsInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="significant_comms_seconds"
+                    title="Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value."
+                  >i</button>
+                </div>
               </div>
             </div>
             <div class="settings-group">
@@ -271,6 +255,63 @@
                   data-help-key="human_in_loop_approval"
                   title="When enabled, unknown agents require manual approval before being admitted."
                 >i</button>
+              </div>
+            </div>
+            <div id="statePersistenceGroup" class="settings-group settings-group-cluster">
+              <div class="settings-group-title">State Persistence</div>
+              <div class="settings-group-rows">
+                <div class="settings-row settings-row-readonly">
+                  <label id="stateSaveFolderLabel" for="stateSaveFolderInput">state_save_folder</label>
+                  <input
+                    id="stateSaveFolderInput"
+                    type="text"
+                    placeholder="runtime"
+                  />
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="state_save_folder"
+                    title="Folder used for provider state snapshots."
+                  >i</button>
+                </div>
+                <div class="settings-row settings-row-retention">
+                  <label id="retentionCountLabel" for="retentionCountInput">retention_count</label>
+                  <input
+                    id="retentionCountInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
+                  <div id="stateSnapshotFileCountOutput" class="settings-inline-status">
+                    current number of stored states is 0
+                  </div>
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="retention_count"
+                    title="Number of latest provider state snapshot files to retain."
+                  >i</button>
+                </div>
+                <div class="settings-row">
+                  <label id="autosaveIntervalLabel" for="autosaveIntervalInput">autosave_interval_seconds_since_change</label>
+                  <input
+                    id="autosaveIntervalInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="autosave_interval_seconds_since_change"
+                    title="Autosave interval in seconds for non-heartbeat OpAMP state changes."
+                  >i</button>
+                </div>
+                <div class="settings-row settings-row-action">
+                  <label for="saveStateNowBtn">state snapshot</label>
+                  <button id="saveStateNowBtn" class="save" type="button">Save State Now</button>
+                  <span id="saveStateNowStatus" class="settings-inline-status">No manual snapshot run yet.</span>
+                </div>
               </div>
             </div>
             <div class="settings-group">
@@ -301,6 +342,23 @@
         </div>
         <div id="settings-tab-client" class="tab-panel">
           <div class="settings-form">
+            <div class="settings-group">
+              <div class="settings-row">
+                <label id="clientEventHistorySizeLabel" for="clientEventHistorySizeInput">client_event_history_size</label>
+                <input
+                  id="clientEventHistorySizeInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                />
+                <button
+                  type="button"
+                  class="schema-icon help-icon"
+                  data-help-key="client_event_history_size"
+                  title="Maximum number of recent per-client events retained by the provider. Older events are dropped when this limit is exceeded."
+                >i</button>
+              </div>
+            </div>
             <div class="settings-group">
               <div class="settings-row">
                 <label id="defaultHeartbeatFrequencyLabel" for="defaultHeartbeatFrequencyInput">Default Heartbeat Frequency (seconds)</label>

@@ -31,6 +31,23 @@ python3 -m pip install -r provider/requirements.txt
 
 The provider will start on the configured `webui_port` (default `8080`) unless you pass `--port`.
 
+### Provider restore options
+
+```bash
+opamp-provider --config-path ./config/opamp.json --restore
+```
+
+Restores runtime state from the latest snapshot using the configured `provider.state_persistence.state_file_prefix`.
+
+```bash
+opamp-provider --config-path ./config/opamp.json --restore ./runtime/opamp_server_state.20260409T103000Z.json
+```
+
+Restores from the explicit snapshot file path.
+
+Snapshot files use UTC timestamp suffixes: `<state_file_prefix>.<YYYYMMDDTHHMMSSZ>.json`.
+If restore fails because the file is missing, corrupt, or incompatible, provider logs the error and continues with empty/default in-memory state.
+
 ## Quick start (consumer only)
 
 ### PowerShell (Windows)
@@ -100,6 +117,7 @@ python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 - Consumer diagram walkthrough (rendered PNGs): `docs/consumer_client_diagrams.md`
 - Provider/server diagram walkthrough (rendered PNGs): `docs/provider_server_diagrams.md`
 - Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
+- Provider state persistence/restore and snapshot retention details: see `provider/README.md#state-persistence-and-restore`
 - Recommended API gateway hardening and internal vs external client profiles: see `docs/api_gateway_requirements.md`
 - Running as a Linux daemon or Windows service (including consumer permissions to launch Fluent Bit/Fluentd): see `docs/service_daemon_setup.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.

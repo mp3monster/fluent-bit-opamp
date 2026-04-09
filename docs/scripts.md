@@ -15,6 +15,7 @@ This table lists the helper scripts and their platform-specific names.
 | Render Mermaid `.mmd` to PNG (local wrapper) | `scripts/render_mermaid_png.sh` | n/a |
 | Request server shutdown via API | `scripts/shutdown_opamp_server.sh` | `scripts/shutdown_opamp_server.cmd` |
 | Build deployable Python artifacts (provider + consumer) | `scripts/build_artifacts.sh` | `scripts/build_artifacts.cmd` |
+| Build wheel artifacts and optionally publish to GitHub release assets | `scripts/build_and_publish_wheels.py` | `scripts\build_and_publish_wheels.py` |
 
 `configure_keycloak` supports a container readiness-only mode:
 
@@ -65,6 +66,37 @@ Example:
 ```cmd
 scripts\build_artifacts.cmd
 ```
+
+## Wheel Build + GitHub Publish
+
+Use `build_and_publish_wheels.py` to generate wheels for both components:
+
+- provider (server) wheel -> `dist/provider/*.whl`
+- consumer (agent) wheel -> `dist/consumer/*.whl`
+- deployable artifacts SBOM (CycloneDX JSON) -> `dist/sbom/opamp_deployable_artifacts.cyclonedx.json`
+
+Build only:
+
+```bash
+python3 scripts/build_and_publish_wheels.py
+```
+
+Build and publish to GitHub release assets in `mp3monster/fluent-opamp`:
+
+```bash
+GITHUB_TOKEN=<token> python3 scripts/build_and_publish_wheels.py --publish --tag v0.1.0
+```
+
+Optional publish flags:
+
+- `--repo owner/name` to override repository target
+- `--release-name "..."` to set release title (defaults to tag)
+- `--release-notes "..."` or `--release-notes-file <path>`
+- `--draft`
+- `--prerelease`
+- `--sbom-path <path>` to override where SBOM JSON is written
+
+When `--publish` is used, both wheel files and the generated SBOM file are uploaded as release assets.
 
 ## Mermaid PNG rendering
 

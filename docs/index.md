@@ -20,8 +20,8 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/service_daemon_setup.md](service_daemon_setup.md) — running provider/consumer as `systemd` or Windows services, including Fluent Bit/Fluentd launch permissions.
 - [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](../provider/README.md) — provider configuration and web UI notes.
+- [provider state restore notes](../provider/README.md#state-persistence-and-restore) — snapshot naming, `--restore` usage, fallback behavior, and retention.
 - [docs/scripts.md](scripts.md) — script reference table by platform.
-- [docs/features.md](features.md) — backlog and ideas for future work.
 
 ## Project layout (quick view)
 

@@ -258,3 +258,54 @@ def test_block_agent_clears_pending_and_marks_blocked() -> None:
     assert store.pending_approval_count() == 0
     assert store.is_blocked_agent(uid.hex()) is True
     assert uid.hex() in store.list_blocked_agents()
+
+
+def test_export_persisted_state_blocked_entries_are_allowlisted() -> None:
+    """Verify persisted blocked-agent entries only include instance_uid, ip, and blocked_at."""
+    store = ClientStore()
+    uid = "abcabcabcabcabcabcabcabcabcabcab"
+    store.block_agent(
+        uid,
+        reason="manual block",
+        headers={"Authorization": "Bearer token"},
+        ip="203.0.113.7",
+    )
+
+    payload = store.export_persisted_state()
+
+    blocked = payload["blocked_agents"]
+    assert isinstance(blocked, list)
+    assert len(blocked) == 1
+    entry = blocked[0]
+    assert set(entry.keys()) == {"instance_uid", "ip", "blocked_at"}
+    assert entry["instance_uid"] == uid
+    assert entry["ip"] == "203.0.113.7"
+    assert isinstance(entry["blocked_at"], str)
+
+
+def test_import_persisted_state_ignores_unknown_and_queues_refresh_for_missing() -> None:
+    """Verify restore ignores unknown fields and queues force-resync for incomplete records with valid UIDs."""
+    store = ClientStore()
+    client_id = "1234567890abcdef1234567890abcdef"
+    provider_state = {
+        "default_heartbeat_frequency": 30,
+        "clients": [
+            {
+                "client_id": client_id,
+                "unknown_future_field": "ignored",
+            }
+        ],
+        "pending_approvals": [],
+        "blocked_agents": [],
+        "pending_instance_uid_replacements": {},
+    }
+
+    summary = store.import_persisted_state(provider_state)
+    restored = store.get(client_id)
+
+    assert restored is not None
+    assert summary["clients"] == 1
+    assert summary["unknown_attributes_ignored"] >= 1
+    assert summary["full_refresh_queued"] == 1
+    assert len(restored.commands) >= 1
+    assert restored.commands[-1].action == "forceresync"

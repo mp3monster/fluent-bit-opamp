@@ -43,6 +43,9 @@
         renderTable();
       }
     });
+    retentionCountInput.addEventListener("input", () => {
+      updateStatePersistenceUsageDisplay();
+    });
     applyAuthTokenBtn.addEventListener("click", () => {
       setAuthToken(authTokenInput.value);
     });
@@ -101,6 +104,7 @@
     cancelGlobalSettingsBtn.addEventListener("click", closeGlobalSettingsModal);
     saveGlobalSettingsBtn.addEventListener("click", saveGlobalSettings);
     saveServerSettingsBtn.addEventListener("click", saveServerSettings);
+    saveStateNowBtn.addEventListener("click", saveStateNowFromSettings);
     closePendingApprovalBtn.addEventListener("click", closePendingApprovalModal);
     cancelPendingApprovalBtn.addEventListener("click", closePendingApprovalModal);
     savePendingApprovalBtn.addEventListener("click", savePendingApprovalDecisions);

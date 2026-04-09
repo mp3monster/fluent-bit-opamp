@@ -9,6 +9,7 @@ Quart-based OpAMP server skeleton and web UI.
 - [Configuration](#configuration)
 - [Fields](#fields)
 - [Human-In-Loop Approval Workflow](#human-in-loop-approval-workflow)
+- [State Persistence and Restore](#state-persistence-and-restore)
 - [CLI Overrides](#cli-overrides)
 - [Running As A Service/Daemon](#running-as-a-servicedaemon)
 - [Web UI](#web-ui)
@@ -33,7 +34,7 @@ python -m opamp_provider.proto.ensure
 Run the server:
 
 ```bash
-quart --app opamp_provider.app:app run --port 4320
+python -m opamp_provider.server --port 4320
 ```
 
 Installed CLI command:
@@ -72,6 +73,13 @@ Example `opamp.json`:
     "human_in_loop_approval": false,
     "opamp-use-authorization": "none",
     "ui-use-authorization": "none",
+    "state_persistence": {
+      "enabled": true,
+      "state_file_prefix": "runtime/opamp_server_state",
+      "retention_count": 5,
+      "flush_mode": "graceful_shutdown",
+      "autosave_interval_seconds_since_change": 600
+    },
     "tls": {
       "cert_file": "certs/provider-server.pem",
       "key_file": "certs/provider-server-key.pem",
@@ -103,7 +111,7 @@ Example `opamp.json`:
   Default heartbeat interval assigned to clients.
 - `provider.human_in_loop_approval` (boolean, optional, default `false`)
   Requires unknown agents to be reviewed in the Pending Approval workflow before they are accepted.
-  This setting can be updated in the UI via Global Settings -> ServerSettings.
+  This setting can be updated in the UI via Global Settings -> Server Settings.
 - `provider.opamp-use-authorization` (string, optional, default `"none"`)
   OpAMP transport authorization mode for `/v1/opamp` HTTP and WebSocket:
   - `none`: no OpAMP bearer-token enforcement.
@@ -131,6 +139,18 @@ Example `opamp.json`:
     Allowed values: `none`, `partial_chain`, `full_chain_to_root`.
     This value is validated for config consistency in the current phase.
     `scripts/run_opamp_server.* --https` sets this to `none` for local self-signed usage.
+- `provider.state_persistence` (object, optional)
+  Runtime state snapshot persistence configuration.
+  - `provider.state_persistence.enabled` (boolean, optional, default `false`)
+    Enables persistent runtime snapshots when `true`.
+  - `provider.state_persistence.state_file_prefix` (string, optional, default `"runtime/opamp_server_state"`)
+    Prefix used for timestamped snapshot files (`<prefix>.<YYYYMMDDTHHMMSSZ>.json`).
+  - `provider.state_persistence.retention_count` (integer, optional, default `5`)
+    Number of most-recent snapshots to keep.
+  - `provider.state_persistence.flush_mode` (string, optional, default `"graceful_shutdown"`)
+    Initial flush strategy; current implementation writes on graceful shutdown and autosave checkpoints.
+  - `provider.state_persistence.autosave_interval_seconds_since_change` (integer, optional, default `600`)
+    Autosave interval in seconds for non-heartbeat OpAMP state changes.
 
 ## Human-In-Loop Approval Workflow
 
@@ -158,6 +178,38 @@ Related API endpoints:
 - `GET /api/approvals/pending`
 - `POST /api/approvals/pending`
 
+## State Persistence and Restore
+
+When `provider.state_persistence.enabled=true`, provider can write and restore runtime snapshots.
+
+- Snapshot naming: `<state_file_prefix>.<YYYYMMDDTHHMMSSZ>.json` (UTC suffix).
+- Snapshot retention: newest `retention_count` files are retained (default `5`).
+- Blocked-agent snapshot payload is allowlisted to `instance_uid`, `ip`, and `blocked_at`.
+- On restore, unknown persisted attributes are ignored; missing attributes are initialized with compatibility defaults and restore can queue a force-resync request for incomplete restored clients with valid UIDs.
+- Global Settings -> Server Settings includes a `Save State Now` button for manual snapshot writes.
+
+Restore CLI usage:
+
+```bash
+opamp-provider --config-path ./config/opamp.json --restore
+```
+
+Restores from the latest snapshot matching `state_file_prefix`.
+
+```bash
+opamp-provider --config-path ./config/opamp.json --restore ./runtime/opamp_server_state.20260409T103000Z.json
+```
+
+Restores from an explicit snapshot file path.
+
+If restore fails (missing/unreadable/corrupt/incompatible file), provider logs the error and continues startup with empty/default in-memory state.
+
+Manual snapshot API (used by the UI button):
+
+```text
+POST /api/settings/state/save
+```
+
 ## CLI Overrides
 
 You can override selected config values at runtime:
@@ -165,6 +217,8 @@ You can override selected config values at runtime:
 - `--config-path` overrides the config file location.
 - `--port` overrides `provider.webui_port`.
 - `--log-level` overrides `provider.log_level`.
+- `--restore` restores from latest snapshot for the configured `state_file_prefix`.
+- `--restore <snapshot_file>` restores from an explicit snapshot file path.
 
 ## Running As A Service/Daemon
 

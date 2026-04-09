@@ -42,6 +42,11 @@ from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.mcptool import register_mcp_transport, register_tool_routes
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE, ClientRecord
+from opamp_provider.state_persistence import (
+    list_snapshot_files,
+    prune_snapshot_files,
+    save_state_snapshot,
+)
 from opamp_provider.transport import decode_message, encode_message
 from shared.opamp_config import (
     OPAMP_HTTP_PATH,
@@ -54,7 +59,7 @@ from shared.opamp_config import (
     UTF8_ENCODING,
 )
 
-app = Quart(__name__)
+app = Quart("opamp_server")
 app.config.setdefault("DIAGNOSTIC_MODE", False)
 register_tool_routes(app)
 register_mcp_transport(app)
@@ -128,6 +133,24 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
             "blocked from normal processing until approved."
         ),
     },
+    "state_save_folder": {
+        "label": "State Save Folder",
+        "tooltip": (
+            "Folder path where provider state snapshots are written and restored from."
+        ),
+    },
+    "retention_count": {
+        "label": "State Snapshot Retention Count",
+        "tooltip": (
+            "Number of latest provider state snapshot files to retain."
+        ),
+    },
+    "autosave_interval_seconds_since_change": {
+        "label": "Autosave Interval Since Change (seconds)",
+        "tooltip": (
+            "Seconds between autosaves for non-heartbeat OpAMP state changes."
+        ),
+    },
     "default_heartbeat_frequency": {
         "label": "Default Heartbeat Frequency (seconds)",
         "tooltip": (
@@ -138,6 +161,15 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
 _SHUTDOWN_REQUESTED = False  # Guard to prevent duplicate shutdown scheduling.
 _LAST_DISCONNECT_PURGE: datetime | None = None  # Timestamp of last disconnected-client purge pass.
 _WEBSOCKET_CLIENTS: dict[object, str | None] = {}  # Active websocket -> client_id mapping.
+_LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT: datetime | None = None  # Timestamp of first unsaved non-heartbeat OpAMP state change.
+_PERSISTENCE_STATUS: dict[str, object] = {
+    "restore_status": "not_requested",
+    "restore_detail": "",
+    "last_save_status": "not_run",
+    "last_save_path": None,
+    "last_save_reason": None,
+    "last_save_at": None,
+}
 ERR_AGENT_PENDING_APPROVAL = "agent pending approval"
 ERR_AGENT_BLOCKED = "agent is blocked"
 ERR_AGENT_AUTH_FAILED = "agent authentication failed"
@@ -148,7 +180,96 @@ ERR_UI_AUTH_CONFIG_INVALID = "invalid ui-use-authorization configuration"
 STORE.set_default_heartbeat_frequency(
     provider_config.CONFIG.default_heartbeat_frequency,
     max_events=provider_config.CONFIG.client_event_history_size,
+    record_event=False,
 )
+
+
+def set_state_restore_status(status: str, detail: str = "") -> None:
+    """Record persisted-state restore status for diagnostics and logs."""
+    _PERSISTENCE_STATUS["restore_status"] = str(status).strip() or "unknown"
+    _PERSISTENCE_STATUS["restore_detail"] = str(detail or "")
+
+
+def _record_snapshot_status(
+    *,
+    status: str,
+    path: str | None,
+    reason: str,
+    at: datetime | None = None,
+) -> None:
+    """Record latest snapshot save status for diagnostics."""
+    _PERSISTENCE_STATUS["last_save_status"] = str(status).strip() or "unknown"
+    _PERSISTENCE_STATUS["last_save_path"] = path
+    _PERSISTENCE_STATUS["last_save_reason"] = reason
+    _PERSISTENCE_STATUS["last_save_at"] = (
+        (at or datetime.now(timezone.utc)).replace(microsecond=0).isoformat()
+    )
+
+
+def _is_heartbeat_only_message(agent_msg: opamp_pb2.AgentToServer) -> bool:
+    """Return whether AgentToServer payload only contains instance_uid/sequence_num."""
+    field_names = {descriptor.name for descriptor, _value in agent_msg.ListFields()}
+    if not field_names:
+        return False
+    return field_names.issubset({"instance_uid", "sequence_num"})
+
+
+def _save_state_snapshot(reason: str) -> None:
+    """Save one persisted-state snapshot if persistence is enabled."""
+    persistence = provider_config.CONFIG.state_persistence
+    if persistence.enabled is not True:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        path = save_state_snapshot(
+            store=STORE,
+            persistence=persistence,
+            reason=reason,
+            logger=logger,
+            now=now,
+        )
+        _record_snapshot_status(
+            status="saved",
+            path=str(path) if path is not None else None,
+            reason=reason,
+            at=now,
+        )
+    except Exception as exc:
+        logger.exception("state snapshot save failed reason=%s", reason, exc_info=exc)
+        _record_snapshot_status(
+            status="failed",
+            path=None,
+            reason=reason,
+            at=now,
+        )
+
+
+def _note_non_heartbeat_state_change_and_maybe_autosave() -> None:
+    """Track non-heartbeat state change timing and run autosave checks."""
+    global _LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT
+    now = datetime.now(timezone.utc)
+    if _LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT is None:
+        _LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT = now
+
+    persistence = provider_config.CONFIG.state_persistence
+    if persistence.enabled is not True:
+        return
+    interval = max(1, int(persistence.autosave_interval_seconds_since_change))
+    elapsed = (now - _LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT).total_seconds()
+    if elapsed < interval:
+        return
+    _save_state_snapshot("autosave_non_heartbeat_opamp")
+    _LAST_AUTOSAVE_ELIGIBLE_CHANGE_AT = None
+
+
+def _state_snapshot_file_count() -> int:
+    """Return count of snapshot files currently present for configured prefix."""
+    try:
+        prefix = provider_config.CONFIG.state_persistence.state_file_prefix
+        return len(list_snapshot_files(prefix))
+    except Exception as exc:
+        logger.warning("failed counting state snapshot files", exc_info=exc)
+        return 0
 
 
 def _request_process_shutdown() -> None:
@@ -841,6 +962,7 @@ async def opamp_http() -> Response:
                             client_id,
                             reason=f"failed pending approval payload transformation: {approval_error}",
                             headers=request_headers,
+                            ip=remote_addr,
                         )
                         logger.exception(
                             "failed to transform pending approval payload; client blocked client_id=%s",
@@ -886,6 +1008,8 @@ async def opamp_http() -> Response:
             channel=CHANNEL_HTTP,
             remote_addr=remote_addr,
         )
+        if not _is_heartbeat_only_message(agent_msg):
+            _note_non_heartbeat_state_change_and_maybe_autosave()
         pending_command = STORE.next_pending_command(client.client_id)
         response_msg = _build_response(
             agent_msg,
@@ -1013,6 +1137,7 @@ async def opamp_websocket() -> None:
                                                 f"transformation: {approval_error}"
                                             ),
                                             headers=ws_headers,
+                                            ip=remote_addr,
                                         )
                                         logger.exception(
                                             (
@@ -1050,6 +1175,8 @@ async def opamp_websocket() -> None:
                                 channel=CHANNEL_WEBSOCKET,
                                 remote_addr=remote_addr,
                             )
+                            if not _is_heartbeat_only_message(agent_msg):
+                                _note_non_heartbeat_state_change_and_maybe_autosave()
                             _WEBSOCKET_CLIENTS[websocket] = client.client_id
                             pending_command = STORE.next_pending_command(client.client_id)
                             response_msg = _build_response(
@@ -1129,6 +1256,7 @@ async def _close_websockets() -> None:
 async def _finalize_server() -> None:
     """Finalizer to cleanly close WebSocket connections on shutdown."""
     await _close_websockets()
+    _save_state_snapshot("graceful_shutdown")
 
 
 @app.get("/api/clients")
@@ -1193,6 +1321,7 @@ async def apply_pending_approval_decisions() -> Response:
                 client_id,
                 reason="blocked via pending approval workflow",
                 headers=_request_header_map(),
+                ip=request.remote_addr,
             )
             blocked += 1
 
@@ -1486,11 +1615,20 @@ async def issue_agent_identification(client_id: str) -> Response:
 @app.get("/api/settings/comms")
 async def get_comms_settings() -> Response:
     """Get communication threshold settings."""
+    state_prefix = pathlib.Path(provider_config.CONFIG.state_persistence.state_file_prefix)
     payload = {
         "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
         "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
         "client_event_history_size": provider_config.CONFIG.client_event_history_size,
         "human_in_loop_approval": provider_config.CONFIG.human_in_loop_approval,
+        "state_save_folder": str(state_prefix.parent),
+        "retention_count": int(
+            provider_config.CONFIG.state_persistence.retention_count
+        ),
+        "state_snapshot_file_count": _state_snapshot_file_count(),
+        "autosave_interval_seconds_since_change": int(
+            provider_config.CONFIG.state_persistence.autosave_interval_seconds_since_change
+        ),
     }
     payload.update(_tls_certificate_expiry_metadata())
     return jsonify(payload)
@@ -1499,7 +1637,68 @@ async def get_comms_settings() -> Response:
 @app.get("/api/settings/diagnostic")
 async def get_diagnostic_settings() -> Response:
     """Return diagnostic-mode status used by UI feature gating."""
-    return jsonify({"diagnostic_enabled": _diagnostic_mode_enabled()})
+    return jsonify(
+        {
+            "diagnostic_enabled": _diagnostic_mode_enabled(),
+            "state_persistence_enabled": provider_config.CONFIG.state_persistence.enabled
+            is True,
+            "state_persistence": dict(_PERSISTENCE_STATUS),
+        }
+    )
+
+
+@app.post("/api/settings/state/save")
+async def save_state_snapshot_now() -> Response:
+    """Force an immediate persisted-state snapshot save."""
+    persistence = provider_config.CONFIG.state_persistence
+    if persistence.enabled is not True:
+        _record_snapshot_status(
+            status="skipped",
+            path=None,
+            reason="manual_ui_trigger_disabled",
+        )
+        return (
+            jsonify({"error": "state persistence is disabled"}),
+            HTTPStatus.BAD_REQUEST,
+        )
+    now = datetime.now(timezone.utc)
+    try:
+        path = save_state_snapshot(
+            store=STORE,
+            persistence=persistence,
+            reason="manual_ui_trigger",
+            logger=logger,
+            now=now,
+        )
+        snapshot_path = str(path) if path is not None else None
+        _record_snapshot_status(
+            status="saved",
+            path=snapshot_path,
+            reason="manual_ui_trigger",
+            at=now,
+        )
+        return jsonify(
+            {
+                "status": "saved",
+                "snapshot_path": snapshot_path,
+                "saved_at_utc": now.replace(microsecond=0).isoformat(),
+            }
+        )
+    except Exception as exc:
+        logger.exception(
+            "manual state snapshot save failed",
+            exc_info=exc,
+        )
+        _record_snapshot_status(
+            status="failed",
+            path=None,
+            reason="manual_ui_trigger",
+            at=now,
+        )
+        return (
+            jsonify({"error": "failed to save provider state snapshot"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
 
 @app.get("/api/settings/server-opamp-config")
@@ -1573,28 +1772,99 @@ async def update_comms_settings() -> Response:
             ),
             key="human_in_loop_approval",
         )
+        state_save_folder = str(
+            payload.get(
+                "state_save_folder",
+                str(
+                    pathlib.Path(
+                        provider_config.CONFIG.state_persistence.state_file_prefix
+                    ).parent
+                ),
+            )
+        ).strip()
+        autosave_interval_seconds_since_change = int(
+            payload.get(
+                "autosave_interval_seconds_since_change",
+                provider_config.CONFIG.state_persistence.autosave_interval_seconds_since_change,
+            )
+        )
+        retention_count = int(
+            payload.get(
+                "retention_count",
+                provider_config.CONFIG.state_persistence.retention_count,
+            )
+        )
     except (TypeError, ValueError):
         return (
             jsonify(
                 {
-                    "error": "thresholds must be integers and human_in_loop_approval must be boolean"
+                    "error": (
+                        "thresholds must be integers, "
+                        "human_in_loop_approval must be boolean, and "
+                        "autosave_interval_seconds_since_change/retention_count must be integer"
+                    )
                 }
             ),
             HTTPStatus.BAD_REQUEST,
         )
     if delayed <= 0 or significant <= 0 or client_event_history_size <= 0:
         return jsonify({"error": "thresholds must be positive"}), HTTPStatus.BAD_REQUEST
+    if autosave_interval_seconds_since_change <= 0:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "autosave_interval_seconds_since_change must be a positive integer"
+                    )
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    if retention_count <= 0:
+        return (
+            jsonify(
+                {
+                    "error": "retention_count must be a positive integer"
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    if not state_save_folder:
+        return (
+            jsonify({"error": "state_save_folder must be a non-empty string"}),
+            HTTPStatus.BAD_REQUEST,
+        )
     if delayed >= significant:
         return (
             jsonify({"error": "significant must be greater than delayed"}),
             HTTPStatus.BAD_REQUEST,
         )
-    config = provider_config.update_comms_thresholds(
-        delayed=delayed,
-        significant=significant,
-        client_event_history_size=client_event_history_size,
-        human_in_loop_approval=human_in_loop_approval,
-    )
+    try:
+        config = provider_config.update_comms_thresholds(
+            delayed=delayed,
+            significant=significant,
+            client_event_history_size=client_event_history_size,
+            human_in_loop_approval=human_in_loop_approval,
+            state_save_folder=state_save_folder,
+            retention_count=retention_count,
+            autosave_interval_seconds_since_change=(
+                autosave_interval_seconds_since_change
+            ),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
+    try:
+        if retention_count < _state_snapshot_file_count():
+            prune_snapshot_files(
+                state_file_prefix=config.state_persistence.state_file_prefix,
+                retention_count=config.state_persistence.retention_count,
+                logger=logger,
+            )
+    except Exception as exc:
+        logger.warning(
+            "failed pruning snapshots after retention update",
+            exc_info=exc,
+        )
     try:
         provider_config.persist_provider_config(config)
     except Exception as exc:
@@ -1609,6 +1879,14 @@ async def update_comms_settings() -> Response:
             "significant_comms_seconds": config.significant_comms_seconds,
             "client_event_history_size": config.client_event_history_size,
             "human_in_loop_approval": config.human_in_loop_approval,
+            "state_save_folder": str(
+                pathlib.Path(config.state_persistence.state_file_prefix).parent
+            ),
+            "retention_count": int(config.state_persistence.retention_count),
+            "state_snapshot_file_count": _state_snapshot_file_count(),
+            "autosave_interval_seconds_since_change": int(
+                config.state_persistence.autosave_interval_seconds_since_change
+            ),
         }
     )
 
@@ -1772,6 +2050,18 @@ async def help_page() -> Response:
         .replace(
             "__HELP_HUMAN_IN_LOOP_APPROVAL__",
             GLOBAL_SETTINGS_HELP["human_in_loop_approval"]["tooltip"],
+        )
+        .replace(
+            "__HELP_STATE_SAVE_FOLDER__",
+            GLOBAL_SETTINGS_HELP["state_save_folder"]["tooltip"],
+        )
+        .replace(
+            "__HELP_RETENTION_COUNT__",
+            GLOBAL_SETTINGS_HELP["retention_count"]["tooltip"],
+        )
+        .replace(
+            "__HELP_AUTOSAVE_INTERVAL_SECONDS_SINCE_CHANGE__",
+            GLOBAL_SETTINGS_HELP["autosave_interval_seconds_since_change"]["tooltip"],
         )
         .replace(
             "__HELP_DEFAULT_HEARTBEAT_FREQUENCY__",

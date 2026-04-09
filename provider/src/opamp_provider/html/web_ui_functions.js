@@ -5,6 +5,25 @@
       state.delayed = data.delayed_comms_seconds ?? 60;
       state.significant = data.significant_comms_seconds ?? 300;
       state.clientEventHistorySize = data.client_event_history_size ?? 50;
+      state.stateSaveFolder = String(data.state_save_folder || "runtime");
+      const retentionCount = parseInt(data.retention_count, 10);
+      state.retentionCount =
+        Number.isNaN(retentionCount) || retentionCount <= 0
+          ? 5
+          : retentionCount;
+      const snapshotFileCount = parseInt(data.state_snapshot_file_count, 10);
+      state.stateSnapshotFileCount =
+        Number.isNaN(snapshotFileCount) || snapshotFileCount < 0
+          ? 0
+          : snapshotFileCount;
+      const autosaveInterval = parseInt(
+        data.autosave_interval_seconds_since_change,
+        10
+      );
+      state.autosaveIntervalSecondsSinceChange =
+        Number.isNaN(autosaveInterval) || autosaveInterval <= 0
+          ? 600
+          : autosaveInterval;
       state.humanInLoopApproval = data.human_in_loop_approval === true;
       state.tlsEnabled = data.tls_enabled === true;
       state.httpsCertificateExpiryDate =
@@ -67,10 +86,12 @@
       const resp = await apiFetch("/api/settings/diagnostic");
       if (!resp.ok) {
         state.diagnosticEnabled = false;
+        state.statePersistenceEnabled = false;
         return;
       }
       const data = await resp.json();
       state.diagnosticEnabled = data.diagnostic_enabled === true;
+      state.statePersistenceEnabled = data.state_persistence_enabled === true;
     }
 
     async function loadServerOpampConfigTab() {
@@ -149,6 +170,21 @@
           key: "human_in_loop_approval",
           label: humanInLoopApprovalLabel,
           icon: document.querySelector('.help-icon[data-help-key="human_in_loop_approval"]'),
+        },
+        {
+          key: "state_save_folder",
+          label: stateSaveFolderLabel,
+          icon: document.querySelector('.help-icon[data-help-key="state_save_folder"]'),
+        },
+        {
+          key: "retention_count",
+          label: retentionCountLabel,
+          icon: document.querySelector('.help-icon[data-help-key="retention_count"]'),
+        },
+        {
+          key: "autosave_interval_seconds_since_change",
+          label: autosaveIntervalLabel,
+          icon: document.querySelector('.help-icon[data-help-key="autosave_interval_seconds_since_change"]'),
         },
       ];
       bindings.forEach(binding => {
@@ -407,14 +443,25 @@
       const hostType = extractAgentField(agentDesc, "os_type");
       const hostVersion = extractAgentField(agentDesc, "os_version");
       const hostName = extractAgentField(agentDesc, "hostname");
+      const macAddress = extractAgentField(agentDesc, "mac_address");
+      const reportedIpAddress =
+        extractAgentField(agentDesc, "ip_address")
+        || extractAgentField(agentDesc, "ip")
+        || extractAgentField(agentDesc, "host.ip");
+      const sourceIpAddress = client && client.remote_addr ? String(client.remote_addr) : "";
+      const ipAddress = reportedIpAddress || sourceIpAddress;
       const nextExpected = computeNextExpected(client);
       const instanceUid = client.client_id ?? "--";
       const titleName = serviceInstanceId || "Client";
       modalTitle.textContent = `${titleName} (${instanceUid})`;
       const healthInfo = getClientHealthInfo(client);
+      const hasDisplayValue = value => typeof value === "string" && value.trim() !== "";
 
       const fields = [];
-      fields.push(["Status", status.label]);
+      fields.push([
+        "Status",
+        `<span class="status-dot modal-status ${status.cls}"><span class="dot"></span>${status.label}</span>`,
+      ]);
       if (serviceName) {
         fields.push(["Service Name", serviceName, true]);
       }
@@ -436,6 +483,12 @@
       }
       if (hostName) {
         fields.push(["Host Name", hostName]);
+      }
+      if (hasDisplayValue(macAddress)) {
+        fields.push(["MAC Address", String(macAddress).trim()]);
+      }
+      if (hasDisplayValue(ipAddress)) {
+        fields.push(["IP Address", String(ipAddress).trim()]);
       }
       fields.push(
         ["First Registered", client.first_seen ? new Date(client.first_seen).toLocaleString() : "--"],
@@ -651,10 +704,31 @@
       delayedCommsSecondsInput.value = String(state.delayed);
       significantCommsSecondsInput.value = String(state.significant);
       clientEventHistorySizeInput.value = String(state.clientEventHistorySize);
+      stateSaveFolderInput.value = String(state.stateSaveFolder || "runtime");
+      retentionCountInput.value = String(state.retentionCount);
+      autosaveIntervalInput.value = String(state.autosaveIntervalSecondsSinceChange);
       humanInLoopApprovalInput.checked = state.humanInLoopApproval === true;
       renderHttpsCertificateExpiryRow();
       defaultHeartbeatFrequencyInput.value = String(state.defaultHeartbeatFrequency);
       settingsTabServerOpampConfigBtn.classList.toggle("hidden", !state.diagnosticEnabled);
+      if (statePersistenceGroup) {
+        statePersistenceGroup.classList.toggle(
+          "hidden",
+          state.statePersistenceEnabled !== true
+        );
+      }
+      updateStatePersistenceUsageDisplay();
+      if (saveStateNowBtn) {
+        saveStateNowBtn.disabled = state.statePersistenceEnabled !== true;
+      }
+      if (state.statePersistenceEnabled === true) {
+        setSaveStateNowStatus("No manual snapshot run yet.");
+      } else {
+        setSaveStateNowStatus(
+          "State persistence is disabled in provider settings.",
+          "error"
+        );
+      }
       setActiveSettingsTab("server");
       globalSettingsModal.classList.add("open");
     }
@@ -662,6 +736,63 @@
     function closeGlobalSettingsModal() {
       hideHelpPopover();
       globalSettingsModal.classList.remove("open");
+    }
+
+    function updateStatePersistenceUsageDisplay() {
+      if (stateSnapshotFileCountOutput) {
+        stateSnapshotFileCountOutput.textContent = (
+          `current number of stored states is ${state.stateSnapshotFileCount}`
+        );
+      }
+    }
+
+    function setSaveStateNowStatus(message, tone = "") {
+      if (!saveStateNowStatus) return;
+      saveStateNowStatus.textContent = String(message || "");
+      saveStateNowStatus.classList.remove("success", "error");
+      if (tone === "success" || tone === "error") {
+        saveStateNowStatus.classList.add(tone);
+      }
+    }
+
+    async function saveStateNowFromSettings() {
+      if (!saveStateNowBtn) return;
+      saveStateNowBtn.disabled = true;
+      const originalLabel = saveStateNowBtn.textContent;
+      saveStateNowBtn.textContent = "Saving...";
+      setSaveStateNowStatus("Saving snapshot...");
+      try {
+        const resp = await apiFetch("/api/settings/state/save", {
+          method: "POST",
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          const errorMessage = String(
+            payload && payload.error
+              ? payload.error
+              : "Failed to save provider state snapshot."
+          );
+          setSaveStateNowStatus(errorMessage, "error");
+          return;
+        }
+        const snapshotPath = String(payload.snapshot_path || "").trim();
+        await fetchSettings();
+        updateStatePersistenceUsageDisplay();
+        if (snapshotPath) {
+          const snapshotName = snapshotPath.split(/[\\/]/).pop() || snapshotPath;
+          setSaveStateNowStatus(`Created: ${snapshotName}`, "success");
+          return;
+        }
+        setSaveStateNowStatus("Snapshot saved.", "success");
+      } catch (_error) {
+        setSaveStateNowStatus(
+          "Failed to save provider state snapshot.",
+          "error"
+        );
+      } finally {
+        saveStateNowBtn.disabled = false;
+        saveStateNowBtn.textContent = originalLabel;
+      }
     }
 
     function resetPendingApprovalDecisions() {
@@ -802,6 +933,9 @@
         clientEventHistorySizeInput.value,
         10
       );
+      const proposedStateSaveFolder = String(stateSaveFolderInput.value || "").trim();
+      const proposedRetentionCount = parseInt(retentionCountInput.value, 10);
+      const proposedAutosaveInterval = parseInt(autosaveIntervalInput.value, 10);
       const proposedHumanInLoopApproval = humanInLoopApprovalInput.checked === true;
       const proposedValue = parseInt(defaultHeartbeatFrequencyInput.value, 10);
       if (Number.isNaN(proposedDelayed) || proposedDelayed <= 0) {
@@ -823,6 +957,18 @@
         window.alert("client_event_history_size must be a positive integer.");
         return;
       }
+      if (!proposedStateSaveFolder) {
+        window.alert("state_save_folder must be provided.");
+        return;
+      }
+      if (Number.isNaN(proposedRetentionCount) || proposedRetentionCount <= 0) {
+        window.alert("retention_count must be a positive integer.");
+        return;
+      }
+      if (Number.isNaN(proposedAutosaveInterval) || proposedAutosaveInterval <= 0) {
+        window.alert("autosave_interval_seconds_since_change must be a positive integer.");
+        return;
+      }
       if (Number.isNaN(proposedValue) || proposedValue <= 0) {
         window.alert("Default Heartbeat Frequency must be a positive integer.");
         return;
@@ -831,6 +977,9 @@
         proposedDelayed !== state.delayed
         || proposedSignificant !== state.significant
         || proposedClientEventHistorySize !== state.clientEventHistorySize
+        || proposedStateSaveFolder !== state.stateSaveFolder
+        || proposedRetentionCount !== state.retentionCount
+        || proposedAutosaveInterval !== state.autosaveIntervalSecondsSinceChange
         || proposedHumanInLoopApproval !== state.humanInLoopApproval
       ) {
         const commsResp = await apiFetch("/api/settings/comms", {
@@ -841,6 +990,9 @@
             significant_comms_seconds: proposedSignificant,
             client_event_history_size: proposedClientEventHistorySize,
             human_in_loop_approval: proposedHumanInLoopApproval,
+            state_save_folder: proposedStateSaveFolder,
+            retention_count: proposedRetentionCount,
+            autosave_interval_seconds_since_change: proposedAutosaveInterval,
           }),
         });
         if (!commsResp.ok) {
@@ -851,6 +1003,23 @@
         state.delayed = parseInt(commsPayload.delayed_comms_seconds, 10);
         state.significant = parseInt(commsPayload.significant_comms_seconds, 10);
         state.clientEventHistorySize = parseInt(commsPayload.client_event_history_size, 10);
+        state.stateSaveFolder = String(commsPayload.state_save_folder || proposedStateSaveFolder);
+        const updatedRetentionCount = parseInt(commsPayload.retention_count, 10);
+        state.retentionCount = Number.isNaN(updatedRetentionCount) || updatedRetentionCount <= 0
+          ? proposedRetentionCount
+          : updatedRetentionCount;
+        const updatedSnapshotCount = parseInt(
+          commsPayload.state_snapshot_file_count,
+          10
+        );
+        state.stateSnapshotFileCount = Number.isNaN(updatedSnapshotCount)
+          || updatedSnapshotCount < 0
+          ? state.stateSnapshotFileCount
+          : updatedSnapshotCount;
+        state.autosaveIntervalSecondsSinceChange = parseInt(
+          commsPayload.autosave_interval_seconds_since_change,
+          10
+        );
         state.humanInLoopApproval = commsPayload.human_in_loop_approval === true;
         updatePendingApprovalVisibility();
       }
@@ -881,6 +1050,9 @@
         clientEventHistorySizeInput.value,
         10
       );
+      const proposedStateSaveFolder = String(stateSaveFolderInput.value || "").trim();
+      const proposedRetentionCount = parseInt(retentionCountInput.value, 10);
+      const proposedAutosaveInterval = parseInt(autosaveIntervalInput.value, 10);
       const proposedHumanInLoopApproval = humanInLoopApprovalInput.checked === true;
       if (Number.isNaN(proposedDelayed) || proposedDelayed <= 0) {
         window.alert("delayed_comms_seconds must be a positive integer.");
@@ -901,6 +1073,18 @@
         window.alert("client_event_history_size must be a positive integer.");
         return;
       }
+      if (!proposedStateSaveFolder) {
+        window.alert("state_save_folder must be provided.");
+        return;
+      }
+      if (Number.isNaN(proposedRetentionCount) || proposedRetentionCount <= 0) {
+        window.alert("retention_count must be a positive integer.");
+        return;
+      }
+      if (Number.isNaN(proposedAutosaveInterval) || proposedAutosaveInterval <= 0) {
+        window.alert("autosave_interval_seconds_since_change must be a positive integer.");
+        return;
+      }
 
       const commsResp = await apiFetch("/api/settings/comms", {
         method: "PUT",
@@ -910,6 +1094,9 @@
           significant_comms_seconds: proposedSignificant,
           client_event_history_size: proposedClientEventHistorySize,
           human_in_loop_approval: proposedHumanInLoopApproval,
+          state_save_folder: proposedStateSaveFolder,
+          retention_count: proposedRetentionCount,
+          autosave_interval_seconds_since_change: proposedAutosaveInterval,
         }),
       });
       if (!commsResp.ok) {
@@ -920,6 +1107,23 @@
       state.delayed = parseInt(commsPayload.delayed_comms_seconds, 10);
       state.significant = parseInt(commsPayload.significant_comms_seconds, 10);
       state.clientEventHistorySize = parseInt(commsPayload.client_event_history_size, 10);
+      state.stateSaveFolder = String(commsPayload.state_save_folder || proposedStateSaveFolder);
+      const updatedRetentionCount = parseInt(commsPayload.retention_count, 10);
+      state.retentionCount = Number.isNaN(updatedRetentionCount) || updatedRetentionCount <= 0
+        ? proposedRetentionCount
+        : updatedRetentionCount;
+      const updatedSnapshotCount = parseInt(
+        commsPayload.state_snapshot_file_count,
+        10
+      );
+      state.stateSnapshotFileCount = Number.isNaN(updatedSnapshotCount)
+        || updatedSnapshotCount < 0
+        ? state.stateSnapshotFileCount
+        : updatedSnapshotCount;
+      state.autosaveIntervalSecondsSinceChange = parseInt(
+        commsPayload.autosave_interval_seconds_since_change,
+        10
+      );
       state.humanInLoopApproval = commsPayload.human_in_loop_approval === true;
       updatePendingApprovalVisibility();
 

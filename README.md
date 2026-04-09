@@ -12,7 +12,6 @@ This repository hosts a small OpAMP provider (server) and consumer (client) setu
 - [docs/scripts.md](docs/scripts.md) — script reference table by platform.
 - [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](provider/README.md) — provider configuration and web UI notes.
-- [docs/features.md](docs/features.md) — backlog and ideas for future work.
 
 ## Folder summary
 

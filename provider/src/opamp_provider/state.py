@@ -21,6 +21,7 @@ import sys
 from enum import Enum
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
+import string
 
 from google.protobuf import text_format
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -40,6 +41,7 @@ DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default expected heartbeat interval assigned
 HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION = "send heartbeatfrequency event"  # User-visible event text for heartbeat updates.
 AUTH_MECHANISM_MTLS = "mtls"  # Client auth mechanism value for mutual TLS identities.
 AUTH_MECHANISM_JWT = "jwt"  # Client auth mechanism value for JWT-based identities.
+REQUIRED_RESTORE_FIELDS = ("client_id",)  # Required persisted fields for client restore payloads.
 
 
 def _utc_now() -> datetime:
@@ -627,7 +629,7 @@ class ClientStore:
             return int(self._default_heartbeat_frequency)
 
     def set_default_heartbeat_frequency(
-        self, heartbeat_frequency: int, *, max_events: int
+        self, heartbeat_frequency: int, *, max_events: int, record_event: bool = True
     ) -> int:
         """Set default heartbeat frequency and apply it to all known clients."""
         with self._lock:
@@ -635,10 +637,11 @@ class ClientStore:
             self._default_heartbeat_frequency = frequency
             for record in self._clients.values():
                 record.heartbeat_frequency = frequency
-                event = EventHistory(
-                    event_description=HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION
-                )
-                self._append_history_event(record, event, max_events=max_events)
+                if record_event:
+                    event = EventHistory(
+                        event_description=HEARTBEAT_FREQUENCY_EVENT_DESCRIPTION
+                    )
+                    self._append_history_event(record, event, max_events=max_events)
             logging.getLogger(__name__).info(
                 (
                     "set_default_heartbeat_frequency updated_clients=%s "
@@ -709,6 +712,14 @@ class ClientStore:
                     cmd.sent_at = _utc_now()
                     return
 
+    def queue_force_resync(self, client_id: str) -> bool:
+        """Queue force-resync command for a client when none is pending."""
+        with self._lock:
+            record = self._clients.get(client_id)
+            if record is None:
+                return False
+            return self._queue_force_resync_if_missing_locked(record)
+
     def pop_next_action(self, client_id: str) -> Optional[str]:
         """Pop the next queued action for a client."""
         with self._lock:
@@ -769,6 +780,7 @@ class ClientStore:
         *,
         reason: str,
         headers: Optional[dict[str, str]] = None,
+        ip: Optional[str] = None,
     ) -> None:
         """Add a client to the blocked list and clear pending approval state."""
         with self._lock:
@@ -778,6 +790,7 @@ class ClientStore:
                     "blocked_at": _utc_now().isoformat(),
                     "reason": reason,
                     "headers": dict(headers or {}),
+                    "ip": str(ip).strip() if ip is not None else None,
                 }
 
     def is_blocked_agent(self, client_id: str) -> bool:
@@ -842,6 +855,239 @@ class ClientStore:
                 if removed_record is not None:
                     removed.append(removed_record)
         return removed
+
+    def export_persisted_state(self) -> dict[str, object]:
+        """Return persistable provider state payload."""
+        with self._lock:
+            clients = [record.model_dump(mode="json") for record in self._clients.values()]
+            pending = [
+                record.model_dump(mode="json")
+                for record in self._pending_approvals.values()
+            ]
+            blocked_entries: list[dict[str, object]] = []
+            for client_id, details in self._blocked_agents.items():
+                if not client_id:
+                    continue
+                blocked_entries.append(
+                    {
+                        "instance_uid": client_id,
+                        "ip": (
+                            str(details.get("ip")).strip()
+                            if details.get("ip") is not None
+                            else None
+                        ),
+                        "blocked_at": str(details.get("blocked_at") or ""),
+                    }
+                )
+            return {
+                "default_heartbeat_frequency": int(self._default_heartbeat_frequency),
+                "clients": clients,
+                "pending_approvals": pending,
+                "blocked_agents": blocked_entries,
+                "pending_instance_uid_replacements": dict(
+                    self._pending_instance_uid_replacements
+                ),
+            }
+
+    @staticmethod
+    def _is_valid_instance_uid(value: str) -> bool:
+        """Return whether the provided value is a valid 16-byte hex UID."""
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 32:
+            return False
+        return all(ch in string.hexdigits for ch in normalized)
+
+    @staticmethod
+    def _normalize_record_payload(
+        payload: dict[str, object],
+    ) -> tuple[dict[str, object], list[str], list[str]]:
+        """Normalize one persisted client payload with unknown/missing field tracking."""
+        known_fields = set(ClientRecord.model_fields.keys())
+        unknown_fields = sorted(
+            key for key in payload.keys() if str(key) not in known_fields
+        )
+        missing_fields: list[str] = []
+        normalized = dict(payload)
+        for field_name, field_info in ClientRecord.model_fields.items():
+            if field_name in normalized:
+                continue
+            missing_fields.append(field_name)
+            # Restore semantics: initialize known-but-missing attributes as null.
+            normalized[field_name] = None
+        for key in unknown_fields:
+            normalized.pop(key, None)
+        # Preserve model validity for required non-null fields while keeping
+        # optional/missing attributes initialized as null.
+        if normalized.get("capabilities") is None:
+            normalized["capabilities"] = []
+        if normalized.get("custom_capabilities_reported") is None:
+            normalized["custom_capabilities_reported"] = []
+        if normalized.get("features") is None:
+            normalized["features"] = []
+        if normalized.get("commands") is None:
+            normalized["commands"] = []
+        if normalized.get("events") is None:
+            normalized["events"] = []
+        if normalized.get("message_id") is None:
+            normalized["message_id"] = MIN_INTEGER
+        if normalized.get("first_seen") is None:
+            normalized["first_seen"] = _utc_now().isoformat()
+        if normalized.get("heartbeat_frequency") is None:
+            normalized["heartbeat_frequency"] = DEFAULT_HEARTBEAT_FREQUENCY
+        if normalized.get("disconnected") is None:
+            normalized["disconnected"] = False
+        return normalized, missing_fields, unknown_fields
+
+    @staticmethod
+    def _deserialize_event_payload(raw: object) -> EventHistory | CommandRecord | None:
+        """Deserialize one history payload into EventHistory or CommandRecord."""
+        if isinstance(raw, CommandRecord):
+            return raw
+        if isinstance(raw, EventHistory):
+            return raw
+        if not isinstance(raw, dict):
+            return None
+        if "classifier" in raw and "action" in raw:
+            try:
+                return CommandRecord.model_validate(raw)
+            except Exception:
+                return None
+        try:
+            return EventHistory.model_validate(raw)
+        except Exception:
+            return None
+
+    @classmethod
+    def _deserialize_client_record(
+        cls,
+        payload: object,
+    ) -> tuple[ClientRecord | None, list[str], list[str]]:
+        """Deserialize one persisted client record with tolerance for schema drift."""
+        if not isinstance(payload, dict):
+            return None, [], []
+        normalized, missing_fields, unknown_fields = cls._normalize_record_payload(payload)
+        commands_raw = normalized.get("commands")
+        events_raw = normalized.get("events")
+        normalized["commands"] = []
+        normalized["events"] = []
+        try:
+            record = ClientRecord.model_validate(normalized)
+        except Exception:
+            return None, missing_fields, unknown_fields
+        commands: list[CommandRecord] = []
+        if isinstance(commands_raw, list):
+            for raw_cmd in commands_raw:
+                try:
+                    commands.append(CommandRecord.model_validate(raw_cmd))
+                except Exception:
+                    continue
+        events: list[EventHistory | CommandRecord] = []
+        if isinstance(events_raw, list):
+            for raw_event in events_raw:
+                parsed = cls._deserialize_event_payload(raw_event)
+                if parsed is not None:
+                    events.append(parsed)
+        record.commands = commands
+        record.events = events
+        return record, missing_fields, unknown_fields
+
+    def import_persisted_state(self, provider_state: object) -> dict[str, int]:
+        """Load persisted provider state into memory with schema-drift tolerance."""
+        logger = logging.getLogger(__name__)
+        if not isinstance(provider_state, dict):
+            raise ValueError("provider_state must be an object")
+        clients_raw = provider_state.get("clients")
+        pending_raw = provider_state.get("pending_approvals")
+        blocked_raw = provider_state.get("blocked_agents")
+        replacements_raw = provider_state.get("pending_instance_uid_replacements")
+        default_hf_raw = provider_state.get("default_heartbeat_frequency")
+
+        with self._lock:
+            self._clients = {}
+            self._pending_approvals = {}
+            self._blocked_agents = {}
+            self._pending_instance_uid_replacements = {}
+
+            if isinstance(default_hf_raw, int) and default_hf_raw > 0:
+                self._default_heartbeat_frequency = int(default_hf_raw)
+
+            unknown_fields_seen = 0
+            restored_clients = 0
+            restored_pending = 0
+            refresh_queued = 0
+
+            if isinstance(clients_raw, list):
+                for entry in clients_raw:
+                    record, missing_fields, unknown_fields = self._deserialize_client_record(entry)
+                    if record is None:
+                        continue
+                    for required in REQUIRED_RESTORE_FIELDS:
+                        if not getattr(record, required, None):
+                            record = None
+                            break
+                    if record is None:
+                        continue
+                    self._clients[record.client_id] = record
+                    restored_clients += 1
+                    unknown_fields_seen += len(unknown_fields)
+                    if missing_fields and self._is_valid_instance_uid(record.client_id):
+                        if self._queue_force_resync_if_missing_locked(record):
+                            refresh_queued += 1
+
+            if isinstance(pending_raw, list):
+                for entry in pending_raw:
+                    record, _missing_fields, unknown_fields = self._deserialize_client_record(entry)
+                    if record is None or not record.client_id:
+                        continue
+                    self._pending_approvals[record.client_id] = record
+                    restored_pending += 1
+                    unknown_fields_seen += len(unknown_fields)
+
+            if isinstance(blocked_raw, list):
+                for entry in blocked_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    instance_uid = str(entry.get("instance_uid") or "").strip()
+                    if not instance_uid:
+                        continue
+                    blocked_at = str(entry.get("blocked_at") or "").strip()
+                    ip = entry.get("ip")
+                    self._blocked_agents[instance_uid] = {
+                        "blocked_at": blocked_at or _utc_now().isoformat(),
+                        "reason": "restored from persisted state",
+                        "headers": {},
+                        "ip": str(ip).strip() if ip is not None else None,
+                    }
+
+            if isinstance(replacements_raw, dict):
+                for target, source in replacements_raw.items():
+                    target_uid = str(target or "").strip()
+                    source_uid = str(source or "").strip()
+                    if not target_uid or not source_uid:
+                        continue
+                    self._pending_instance_uid_replacements[target_uid] = source_uid
+
+            if unknown_fields_seen:
+                logger.info(
+                    "state restore ignored unknown persisted attributes count=%s",
+                    unknown_fields_seen,
+                )
+            if refresh_queued:
+                logger.info(
+                    "state restore queued full refresh for restored clients count=%s",
+                    refresh_queued,
+                )
+
+            return {
+                "clients": restored_clients,
+                "pending_approvals": restored_pending,
+                "blocked_agents": len(self._blocked_agents),
+                "pending_instance_uid_replacements": len(
+                    self._pending_instance_uid_replacements
+                ),
+                "full_refresh_queued": refresh_queued,
+                "unknown_attributes_ignored": unknown_fields_seen,
+            }
 
 
 STORE = ClientStore()  # Module-level in-memory client store singleton.
