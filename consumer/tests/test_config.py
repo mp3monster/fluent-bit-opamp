@@ -13,6 +13,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from opamp_consumer import config as consumer_config
 from shared.opamp_config import AgentCapabilities
 
@@ -46,6 +48,50 @@ def test_allow_custom_capabilities_defaults_false_when_missing(
     loaded = consumer_config.load_config()
 
     assert loaded.allow_custom_capabilities is False
+
+
+def test_consumer_tls_defaults_when_missing(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.tls_verify_server is True
+    assert loaded.tls_ca_file is None
+
+
+def test_consumer_tls_loads_verify_and_ca_file(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    ca_file = tmp_path / "ca-root.pem"
+    ca_file.write_text("dummy ca", encoding="utf-8")
+    raw["consumer"]["tls"] = {
+        "verify_server": False,
+        "ca_file": str(ca_file),
+    }
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    loaded = consumer_config.load_config()
+
+    assert loaded.tls_verify_server is False
+    assert loaded.tls_ca_file == str(ca_file)
+
+
+def test_consumer_tls_ca_file_must_exist(tmp_path, monkeypatch) -> None:
+    raw = _base_consumer_config()
+    raw["consumer"]["tls"] = {
+        "verify_server": True,
+        "ca_file": str(tmp_path / "missing-ca.pem"),
+    }
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv(consumer_config.ENV_OPAMP_CONFIG_PATH, str(config_path))
+
+    with pytest.raises(ValueError, match="consumer.tls.ca_file must reference an existing file"):
+        consumer_config.load_config()
 
 
 def test_server_authorization_defaults_none_when_missing(tmp_path, monkeypatch) -> None:

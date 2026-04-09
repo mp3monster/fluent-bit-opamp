@@ -51,6 +51,9 @@ Use this minimal config for a fast local startup:
 {
   "consumer": {
     "server_url": "http://localhost",
+    "tls": {
+      "verify_server": true
+    },
     "server-authorization": "none",
     "agent_config_path": "./fluent-bit.conf",
     "agent_additional_params": [],
@@ -93,6 +96,10 @@ Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directo
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
+    "tls": {
+      "verify_server": true,
+      "ca_file": "certs/ca-root.pem"
+    },
     "server-authorization": "none",
     "OpAMP-token": "optional-config-token",
     "idp-token-url": "https://idp.example.com/realms/opamp/protocol/openid-connect/token",
@@ -131,6 +138,8 @@ Graceful stop: create `OpAMPSupervisor.signal` in the supervisor working directo
 | `consumer.full_update_controller_type` | string | No | Full update controller implementation name (`SentCount`, `AlwaysSend`, `TimeSend`). | `"SentCount"` |
 | `consumer.log_level` | string | Yes (`--log-level`) | Consumer log level name (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Resolved via Python `logging` names. | `"debug"` |
 | `consumer.transport` | string | No | OpAMP transport mode (`http` or `websocket`). | `"http"` |
+| `consumer.tls.verify_server` | boolean | No | Enables HTTPS/WSS certificate validation for provider connections. Default `true`. | `true` |
+| `consumer.tls.ca_file` | string | No | Optional custom CA bundle file for HTTPS/WSS validation. Must exist when set. | `"certs/ca-root.pem"` |
 | `consumer.server-authorization` | string | No | Outbound provider auth mode: `none`, `env-var`, `config-var`, or `idp`. | `"none"` |
 | `consumer.OpAMP-token` | string | No | Static token used when `server-authorization=config-var`. | `"token-value"` |
 | `consumer.idp-token-url` | string | No | IdP OAuth token endpoint URL used when `server-authorization=idp`. | `"https://idp.example.com/.../token"` |
@@ -152,6 +161,12 @@ Authorization mode behavior:
 - `idp`: token is requested from the configured IdP token endpoint and cached in
   runtime config header fields (`server_authorization_header_name/value`).
   If provider returns auth errors (`401`/`403`), the client renegotiates and retries once.
+
+TLS transport behavior:
+- HTTP mode uses `consumer.server_url` directly (`http://` or `https://`).
+- WebSocket mode normalizes URL scheme before connecting:
+  - `http://...` -> `ws://...`
+  - `https://...` -> `wss://...`
 
 ## Hardwired Capabilities
 

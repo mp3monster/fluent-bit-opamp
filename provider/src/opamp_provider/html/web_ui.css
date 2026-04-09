@@ -343,6 +343,40 @@
       width: 100%;
     }
 
+    .settings-row-readonly {
+      grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr) auto;
+    }
+
+    .settings-readonly-value {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--ink);
+      font-size: 0.9rem;
+      line-height: 1.25;
+    }
+
+    .settings-row-placeholder {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+    }
+
+    .settings-group.expiring-soon {
+      border-color: var(--red);
+      border-width: 2px;
+      background: rgba(228, 87, 78, 0.1);
+    }
+
+    .settings-group.expiring-soon label,
+    .settings-group.expiring-soon .settings-readonly-value {
+      color: var(--red);
+      border-color: var(--red);
+      font-weight: 600;
+    }
+
     .settings-diagnostic-header {
       display: flex;
       flex-direction: column;

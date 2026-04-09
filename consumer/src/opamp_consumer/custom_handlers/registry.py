@@ -62,6 +62,7 @@ def _discover_handler_classes(
     Returns:
         List of handler class types discovered under the folder.
     """
+    logger = logging.getLogger(__name__)
     classes: list[type[CustomMessageHandlerInterface]] = []
     for path in folder.glob("*.py"):
         if path.name.startswith("__"):
@@ -69,12 +70,17 @@ def _discover_handler_classes(
         module = _load_module_from_path(path)
         if module is None:
             continue
-        for _, obj in inspect.getmembers(module, inspect.isclass):
-            if not issubclass(obj, CustomMessageHandlerInterface):
+        for member_name, member_class in inspect.getmembers(module, inspect.isclass):
+            logger.debug(
+                "inspecting custom handler member name=%s class=%s",
+                member_name,
+                member_class.__name__,
+            )
+            if not issubclass(member_class, CustomMessageHandlerInterface):
                 continue
-            if obj is CustomMessageHandlerInterface:
+            if member_class is CustomMessageHandlerInterface:
                 continue
-            classes.append(obj)
+            classes.append(member_class)
     return classes
 
 

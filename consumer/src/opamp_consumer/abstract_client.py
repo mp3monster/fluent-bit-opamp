@@ -255,6 +255,8 @@ class AbstractOpAMPClient(
                 opamp_http_path=OPAMP_HTTP_PATH,
                 handle_reply=self._handle_server_to_agent,
                 authorization_header=authorization_header,
+                tls_verify=self.config.tls_verify_server,
+                tls_ca_file=self.config.tls_ca_file,
             )
         except Exception as err:
             if not self._should_retry_idp_authorization(err):
@@ -271,6 +273,8 @@ class AbstractOpAMPClient(
                 opamp_http_path=OPAMP_HTTP_PATH,
                 handle_reply=self._handle_server_to_agent,
                 authorization_header=authorization_header,
+                tls_verify=self.config.tls_verify_server,
+                tls_ca_file=self.config.tls_ca_file,
             )
 
     def _populate_agent_to_server_health(
@@ -392,6 +396,8 @@ class AbstractOpAMPClient(
                 opamp_http_path=OPAMP_HTTP_PATH,
                 handle_reply=self._handle_server_to_agent,
                 authorization_header=authorization_header,
+                tls_verify=self.config.tls_verify_server,
+                tls_ca_file=self.config.tls_ca_file,
             )
         except Exception as err:
             if not self._should_retry_idp_authorization(err):
@@ -408,6 +414,8 @@ class AbstractOpAMPClient(
                 opamp_http_path=OPAMP_HTTP_PATH,
                 handle_reply=self._handle_server_to_agent,
                 authorization_header=authorization_header,
+                tls_verify=self.config.tls_verify_server,
+                tls_ca_file=self.config.tls_ca_file,
             )
 
     def _server_authorization_mode(self) -> str:

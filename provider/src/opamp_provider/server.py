@@ -23,6 +23,17 @@ from opamp_provider.app import app
 from opamp_provider.state import STORE
 
 
+def _provider_tls_run_kwargs(config: provider_config.ProviderConfig) -> dict[str, str]:
+    """Return Quart TLS run kwargs for configured provider TLS settings."""
+    tls_config = config.tls
+    if tls_config is None:
+        return {}
+    return {
+        "certfile": tls_config.cert_file,
+        "keyfile": tls_config.key_file,
+    }
+
+
 def main() -> None:
     """Load config overrides and start the Quart app."""
     parser = argparse.ArgumentParser()
@@ -69,7 +80,11 @@ def main() -> None:
         root_logger.setLevel(resolved_log_level)
     app.config["DIAGNOSTIC_MODE"] = bool(args.diagnostic)
     port = args.port if args.port is not None else config.webui_port
-    app.run(host=args.host, port=port)
+    app.run(
+        host=args.host,
+        port=port,
+        **_provider_tls_run_kwargs(config),
+    )
 
 
 if __name__ == "__main__":

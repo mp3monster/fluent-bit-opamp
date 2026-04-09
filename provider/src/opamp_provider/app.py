@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 from typing import Callable
 import logging
 import os
@@ -70,6 +71,9 @@ OPAMP_HEADER_NONE = OPAMP_TRANSPORT_HEADER_NONE  # Expected transport header val
 SERVER_CAPABILITIES = int(ServerCapabilities.AcceptsStatus)  # Server advertises AcceptsStatus only.
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30  # Fallback heartbeat interval for connection settings offers.
 MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for API JSON payloads.
+CERT_NOT_AFTER_SUFFIX_GMT = " GMT"  # Trailing timezone marker emitted by ssl certificate decoder.
+CERT_NOT_AFTER_PARSE_FORMAT = "%b %d %H:%M:%S %Y"  # Datetime parse format for decoded certificate notAfter values.
+TLS_EXPIRY_WARNING_DAYS = 30  # Number of days before expiry to highlight certificate warning state.
 
 COMMAND_RESTART = "restart"  # Standard OpAMP restart command action name.
 COMMAND_FORCE_RESYNC = "forceresync"  # Custom action name used to trigger full state resync.
@@ -230,6 +234,64 @@ def _coerce_bool_setting(value: object, *, key: str) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{key} must be a boolean")
+
+
+def _load_tls_certificate_expiry_utc(cert_file: str) -> datetime | None:
+    """Load certificate expiry timestamp in UTC from a PEM certificate file."""
+    try:
+        cert_data = ssl._ssl._test_decode_cert(cert_file)
+    except Exception as exc:
+        logger.warning(
+            "failed to decode provider tls cert file %s", cert_file, exc_info=exc
+        )
+        return None
+    not_after_raw = cert_data.get("notAfter")
+    if not isinstance(not_after_raw, str) or not not_after_raw.strip():
+        return None
+    normalized_not_after = not_after_raw.strip()
+    if normalized_not_after.endswith(CERT_NOT_AFTER_SUFFIX_GMT):
+        normalized_not_after = normalized_not_after[: -len(CERT_NOT_AFTER_SUFFIX_GMT)]
+    normalized_not_after = " ".join(normalized_not_after.split())
+    try:
+        parsed = datetime.strptime(normalized_not_after, CERT_NOT_AFTER_PARSE_FORMAT)
+    except ValueError:
+        logger.warning(
+            "failed to parse provider tls cert notAfter value %r",
+            not_after_raw,
+        )
+        return None
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _tls_certificate_expiry_metadata(
+    *,
+    now_utc: datetime | None = None,
+) -> dict[str, object]:
+    """Build TLS certificate-expiry metadata for global settings responses."""
+    tls_config = provider_config.CONFIG.tls
+    if tls_config is None:
+        return {
+            "tls_enabled": False,
+            "https_certificate_expiry_date": None,
+            "https_certificate_days_remaining": None,
+            "https_certificate_expiring_soon": False,
+        }
+    expiry_utc = _load_tls_certificate_expiry_utc(tls_config.cert_file)
+    if expiry_utc is None:
+        return {
+            "tls_enabled": True,
+            "https_certificate_expiry_date": None,
+            "https_certificate_days_remaining": None,
+            "https_certificate_expiring_soon": False,
+        }
+    now = now_utc or datetime.now(timezone.utc)
+    days_remaining = (expiry_utc.date() - now.date()).days
+    return {
+        "tls_enabled": True,
+        "https_certificate_expiry_date": expiry_utc.date().isoformat(),
+        "https_certificate_days_remaining": days_remaining,
+        "https_certificate_expiring_soon": days_remaining <= TLS_EXPIRY_WARNING_DAYS,
+    }
 
 
 def _header_value(
@@ -1424,14 +1486,14 @@ async def issue_agent_identification(client_id: str) -> Response:
 @app.get("/api/settings/comms")
 async def get_comms_settings() -> Response:
     """Get communication threshold settings."""
-    return jsonify(
-        {
-            "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
-            "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
-            "client_event_history_size": provider_config.CONFIG.client_event_history_size,
-            "human_in_loop_approval": provider_config.CONFIG.human_in_loop_approval,
-        }
-    )
+    payload = {
+        "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
+        "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
+        "client_event_history_size": provider_config.CONFIG.client_event_history_size,
+        "human_in_loop_approval": provider_config.CONFIG.human_in_loop_approval,
+    }
+    payload.update(_tls_certificate_expiry_metadata())
+    return jsonify(payload)
 
 
 @app.get("/api/settings/diagnostic")

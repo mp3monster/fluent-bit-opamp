@@ -32,6 +32,7 @@ classDiagram
       +load_config_with_overrides()
       +set_config()
       +persist_provider_config()
+      +_load_provider_tls_config()
     }
 
     class ProviderAuth {
@@ -133,22 +134,28 @@ flowchart TD
     D --> E["provider_config.load_config_with_overrides(...)"]
     E --> F["provider_config.set_config(...)"]
     F --> G["STORE.set_default_heartbeat_frequency(...)"]
-    G --> H["Quart app.run(host, port)"]
+    G --> H{"provider.tls present?"}
+    H -->|No| I["Quart app.run(host, port)"]
+    H -->|Yes| J["Quart app.run(host, port, certfile, keyfile)"]
 
-    H --> I["POST /v1/opamp"]
-    H --> J["WEBSOCKET /v1/opamp"]
-    H --> K["/api/* + /tool/* + /ui"]
+    I --> K["POST /v1/opamp"]
+    I --> L["WEBSOCKET /v1/opamp"]
+    I --> M["/api/* + /tool/* + /ui"]
 
-    I --> L["opamp_http()"]
-    L --> M["STORE.upsert_from_agent_msg(..., channel=HTTP)"]
-    M --> N["_build_response(...)"]
-    N --> O["ServerToAgent protobuf response"]
+    J --> K
+    J --> L
+    J --> M
 
-    J --> P["opamp_websocket()"]
-    P --> Q["decode_message() + AgentToServer parse"]
-    Q --> R["STORE.upsert_from_agent_msg(..., channel=websocket)"]
-    R --> S["_build_response(...)"]
-    S --> T["encode_message() + websocket.send(...)"]
+    K --> N["opamp_http()"]
+    N --> O["STORE.upsert_from_agent_msg(..., channel=HTTP)"]
+    O --> P["_build_response(...)"]
+    P --> Q["ServerToAgent protobuf response"]
+
+    L --> R["opamp_websocket()"]
+    R --> S["decode_message() + AgentToServer parse"]
+    S --> T["STORE.upsert_from_agent_msg(..., channel=websocket)"]
+    T --> U["_build_response(...)"]
+    U --> V["encode_message() + websocket.send(...)"]
 ```
 
 ## Command Queue and Dispatch Pipeline

@@ -6,7 +6,48 @@
       state.significant = data.significant_comms_seconds ?? 300;
       state.clientEventHistorySize = data.client_event_history_size ?? 50;
       state.humanInLoopApproval = data.human_in_loop_approval === true;
+      state.tlsEnabled = data.tls_enabled === true;
+      state.httpsCertificateExpiryDate =
+        typeof data.https_certificate_expiry_date === "string"
+          ? data.https_certificate_expiry_date
+          : null;
+      state.httpsCertificateDaysRemaining =
+        Number.isInteger(data.https_certificate_days_remaining)
+          ? data.https_certificate_days_remaining
+          : null;
+      state.httpsCertificateExpiringSoon =
+        data.https_certificate_expiring_soon === true;
       updatePendingApprovalVisibility();
+    }
+
+    function renderHttpsCertificateExpiryRow() {
+      if (!httpsCertificateExpiryGroup || !httpsCertificateExpiryOutput) return;
+      if (state.tlsEnabled !== true) {
+        httpsCertificateExpiryGroup.classList.add("hidden");
+        httpsCertificateExpiryGroup.classList.remove("expiring-soon");
+        httpsCertificateExpiryOutput.textContent = "--";
+        return;
+      }
+      httpsCertificateExpiryGroup.classList.remove("hidden");
+      const expiryDate = state.httpsCertificateExpiryDate;
+      if (expiryDate) {
+        const daysRemaining = state.httpsCertificateDaysRemaining;
+        if (Number.isInteger(daysRemaining)) {
+          httpsCertificateExpiryOutput.textContent =
+            `${expiryDate} (${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining)`;
+        } else {
+          httpsCertificateExpiryOutput.textContent = expiryDate;
+        }
+      } else {
+        httpsCertificateExpiryOutput.textContent = "Unavailable";
+      }
+      const expiringSoon =
+        state.httpsCertificateExpiringSoon === true
+        || (
+          Number.isInteger(state.httpsCertificateDaysRemaining)
+          && state.httpsCertificateDaysRemaining <= 30
+        );
+      httpsCertificateExpiryGroup.classList.toggle("expiring-soon", expiringSoon);
     }
 
     async function fetchClientSettings() {
@@ -327,7 +368,9 @@
 
     function refreshOpenModal() {
       if (!activeClient || !modal.classList.contains("open")) return;
-      const refreshed = state.clients.find(c => c.client_id === activeClient.client_id);
+      const refreshed = state.clients.find(
+        clientEntry => clientEntry.client_id === activeClient.client_id
+      );
       if (!refreshed) {
         closeModal();
         return;
@@ -609,6 +652,7 @@
       significantCommsSecondsInput.value = String(state.significant);
       clientEventHistorySizeInput.value = String(state.clientEventHistorySize);
       humanInLoopApprovalInput.checked = state.humanInLoopApproval === true;
+      renderHttpsCertificateExpiryRow();
       defaultHeartbeatFrequencyInput.value = String(state.defaultHeartbeatFrequency);
       settingsTabServerOpampConfigBtn.classList.toggle("hidden", !state.diagnosticEnabled);
       setActiveSettingsTab("server");
@@ -1157,7 +1201,9 @@
         return;
       }
       await fetchClients();
-      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      const refreshed = state.clients.find(
+        clientEntry => clientEntry.client_id === target.client_id
+      );
       if (refreshed) openModal(refreshed);
     }
 
@@ -1222,7 +1268,9 @@
         return;
       }
       await fetchClients();
-      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      const refreshed = state.clients.find(
+        clientEntry => clientEntry.client_id === target.client_id
+      );
       if (refreshed) {
         openModal(refreshed, {
           preserveTab: true,
@@ -1250,7 +1298,9 @@
         return;
       }
       await fetchClients();
-      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      const refreshed = state.clients.find(
+        clientEntry => clientEntry.client_id === target.client_id
+      );
       if (refreshed) {
         openModal(refreshed, {
           preserveTab: true,
@@ -1395,7 +1445,9 @@
       }
       await fetchClients();
       if (options.reopenModal !== true) return;
-      const refreshed = state.clients.find(c => c.client_id === target.client_id);
+      const refreshed = state.clients.find(
+        clientEntry => clientEntry.client_id === target.client_id
+      );
       if (!refreshed) return;
       if (options.preserveTab === true) {
         openModal(refreshed, {

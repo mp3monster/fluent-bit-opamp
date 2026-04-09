@@ -43,6 +43,10 @@ CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"  # Provider JSON
 CFG_HUMAN_IN_LOOP_APPROVAL = "human_in_loop_approval"  # Provider JSON key toggling manual agent approval workflow.
 CFG_OPAMP_USE_AUTHORIZATION = "opamp-use-authorization"  # Provider JSON key controlling OpAMP transport bearer authorization mode.
 CFG_UI_USE_AUTHORIZATION = "ui-use-authorization"  # Provider JSON key controlling non-OpAMP HTTP/WebSocket bearer authorization mode.
+CFG_TLS = "tls"  # Provider JSON key for shared TLS server settings.
+CFG_TLS_CERT_FILE = "cert_file"  # Provider TLS key for server certificate path.
+CFG_TLS_KEY_FILE = "key_file"  # Provider TLS key for server private key path.
+CFG_TLS_TRUST_ANCHOR_MODE = "trust_anchor_mode"  # Provider TLS key for trust-anchor policy mode.
 
 DEFAULT_DELAYED_COMMS_SECONDS = 60  # Default delayed comms threshold in seconds.
 DEFAULT_SIGNIFICANT_COMMS_SECONDS = 300  # Default significant comms threshold in seconds.
@@ -62,6 +66,17 @@ OPAMP_USE_AUTHORIZATION_IDP = (
 )
 DEFAULT_OPAMP_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default OpAMP auth mode.
 DEFAULT_UI_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default non-OpAMP auth mode.
+TLS_TRUST_ANCHOR_PARTIAL_CHAIN = "partial_chain"  # Trust-anchor mode allowing intermediate anchors.
+TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT = "full_chain_to_root"  # Trust-anchor mode requiring root anchors.
+TLS_TRUST_ANCHOR_NONE = "none"  # Trust-anchor mode for local self-signed development without CA-anchor checks.
+DEFAULT_TLS_TRUST_ANCHOR_MODE = TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT  # Default provider trust-anchor mode.
+
+
+@dataclass(frozen=True)
+class ProviderTLSConfig:
+    cert_file: str
+    key_file: str
+    trust_anchor_mode: str = DEFAULT_TLS_TRUST_ANCHOR_MODE
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,7 @@ class ProviderConfig:
     human_in_loop_approval: bool = DEFAULT_HUMAN_IN_LOOP_APPROVAL
     opamp_use_authorization: str = DEFAULT_OPAMP_USE_AUTHORIZATION
     ui_use_authorization: str = DEFAULT_UI_USE_AUTHORIZATION
+    tls: ProviderTLSConfig | None = None
 
 
 def resolve_log_level(log_level: str | None) -> int:
@@ -162,10 +178,65 @@ def _normalize_authorization_mode(
     return default_mode
 
 
+def _normalize_trust_anchor_mode(value: Any) -> str:
+    """Normalize trust-anchor mode from provider TLS config values."""
+    if value is None:
+        return DEFAULT_TLS_TRUST_ANCHOR_MODE
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return DEFAULT_TLS_TRUST_ANCHOR_MODE
+    if normalized in {
+        TLS_TRUST_ANCHOR_NONE,
+        TLS_TRUST_ANCHOR_PARTIAL_CHAIN,
+        TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT,
+    }:
+        return normalized
+    raise ValueError(
+        f"{CFG_PROVIDER}.{CFG_TLS}.{CFG_TLS_TRUST_ANCHOR_MODE} has unsupported value "
+        f"{value!r}"
+    )
+
+
+def _validate_required_file_path(*, cfg_key: str, value: Any) -> str:
+    """Validate required file path settings and return normalized path string."""
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{cfg_key} is required")
+    path = pathlib.Path(normalized)
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"{cfg_key} must reference an existing file")
+    return normalized
+
+
+def _load_provider_tls_config(provider_raw: dict[str, Any]) -> ProviderTLSConfig | None:
+    """Load provider TLS settings from provider config mapping."""
+    tls_raw = provider_raw.get(CFG_TLS)
+    if tls_raw is None:
+        return None
+    if not isinstance(tls_raw, dict):
+        raise ValueError(f"{CFG_PROVIDER}.{CFG_TLS} must be an object")
+    cert_file = _validate_required_file_path(
+        cfg_key=f"{CFG_PROVIDER}.{CFG_TLS}.{CFG_TLS_CERT_FILE}",
+        value=tls_raw.get(CFG_TLS_CERT_FILE),
+    )
+    key_file = _validate_required_file_path(
+        cfg_key=f"{CFG_PROVIDER}.{CFG_TLS}.{CFG_TLS_KEY_FILE}",
+        value=tls_raw.get(CFG_TLS_KEY_FILE),
+    )
+    return ProviderTLSConfig(
+        cert_file=cert_file,
+        key_file=key_file,
+        trust_anchor_mode=_normalize_trust_anchor_mode(
+            tls_raw.get(CFG_TLS_TRUST_ANCHOR_MODE)
+        ),
+    )
+
+
 def load_config() -> ProviderConfig:
     """Load provider config from disk."""
     raw = _load_json(_config_path())
     provider_raw = raw.get(CFG_PROVIDER, {})
+    tls_config = _load_provider_tls_config(provider_raw)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
@@ -217,6 +288,7 @@ def load_config() -> ProviderConfig:
             cfg_key=CFG_UI_USE_AUTHORIZATION,
             default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
+        tls=tls_config,
     )
 
 
@@ -228,6 +300,7 @@ def load_config_with_overrides(
     """Load provider config with CLI overrides applied."""
     base_raw = _load_json(config_path or _config_path())
     provider_raw = base_raw.get(CFG_PROVIDER, {})
+    tls_config = _load_provider_tls_config(provider_raw)
     delayed = int(provider_raw.get(CFG_DELAYED_COMMS_SECONDS, DEFAULT_DELAYED_COMMS_SECONDS))
     significant = int(
         provider_raw.get(CFG_SIGNIFICANT_COMMS_SECONDS, DEFAULT_SIGNIFICANT_COMMS_SECONDS)
@@ -281,6 +354,7 @@ def load_config_with_overrides(
             cfg_key=CFG_UI_USE_AUTHORIZATION,
             default_mode=DEFAULT_UI_USE_AUTHORIZATION,
         ),
+        tls=tls_config,
     )
 
 
@@ -320,6 +394,7 @@ def update_comms_thresholds(
         human_in_loop_approval=effective_human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
+        tls=CONFIG.tls,
     )
     set_config(config)
     return config
@@ -339,6 +414,7 @@ def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> P
         human_in_loop_approval=CONFIG.human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
+        tls=CONFIG.tls,
     )
     set_config(config)
     return config

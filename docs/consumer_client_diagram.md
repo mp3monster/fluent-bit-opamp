@@ -94,6 +94,8 @@ classDiagram
       <<module>>
       +send_http_message()
       +send_websocket_message()
+      +_normalize_websocket_base_url()
+      +_build_websocket_ssl_context()
     }
     class client_bootstrap {
       <<module>>
@@ -139,6 +141,27 @@ flowchart TD
 
     I --> L["AbstractOpAMPClient + mixins"]
     K --> L
+```
+
+## Transport URL and TLS Resolution
+
+```mermaid
+flowchart TD
+    A["consumer.server_url"] --> B{"transport mode"}
+    B -->|http| C["send_http_message()"]
+    B -->|websocket| D["send_websocket_message()"]
+
+    C --> E{"consumer.tls.verify_server"}
+    E -->|true, no ca_file| F["httpx.AsyncClient(verify=True)"]
+    E -->|true + ca_file| G["httpx.AsyncClient(verify=ca_file)"]
+    E -->|false| H["httpx.AsyncClient(verify=False)"]
+
+    D --> I["_normalize_websocket_base_url()"]
+    I --> J["http -> ws, https -> wss"]
+    J --> K{"wss scheme?"}
+    K -->|yes| L["_build_websocket_ssl_context()"]
+    K -->|no| M["connect without SSL context"]
+    L --> N["websockets.connect(..., ssl=context)"]
 ```
 
 ## Mixin Dispatch Model

@@ -31,6 +31,9 @@ What this shows:
 
 - Script/CLI entrypoints into `opamp_provider.server`.
 - Startup path through config load, store defaults, and `app.run(...)`.
+- Conditional startup mode:
+  - HTTP when `provider.tls` is absent.
+  - HTTPS when `provider.tls.cert_file` and `provider.tls.key_file` are configured.
 - Parallel request surfaces: OpAMP HTTP, OpAMP WebSocket, and REST/UI/tool APIs.
 
 ## Diagram 3: Command Queue and Dispatch Pipeline

@@ -28,6 +28,7 @@ What this shows:
 - Script and CLI entrypoints for Fluent Bit and Fluentd clients.
 - Bootstrap path through `client_bootstrap.run_default_client_main(...)`.
 - Shared runtime behavior flowing into `AbstractOpAMPClient` + mixins.
+- Provider endpoint target still comes from `consumer.server_url`.
 
 ## Diagram 3: Mixin Dispatch Model
 
@@ -47,3 +48,13 @@ What this shows:
 - How report flags gate which payload fields are emitted.
 - When controller implementations reset flags for future sends.
 - How `ReportFullState` from the server forces full reporting state.
+
+## Diagram 5: Transport URL and TLS Resolution
+
+![Consumer transport URL and TLS resolution](consumer_client_diagram_5.png)
+
+What this shows:
+
+- How `consumer.server_url` and `consumer.transport` select HTTP vs WebSocket send path.
+- URL normalization for WebSocket mode (`http->ws`, `https->wss`).
+- How `consumer.tls.verify_server` and `consumer.tls.ca_file` control TLS verification behavior.

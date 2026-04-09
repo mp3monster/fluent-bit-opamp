@@ -101,12 +101,19 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
     """
     discovered: dict[CommandKey, CommandType] = {}
     for module in _load_command_modules():
-        for _, class_obj in inspect.getmembers(module, inspect.isclass):
-            if not issubclass(class_obj, CommandObjectInterface):
+        for member_name, command_class in inspect.getmembers(module, inspect.isclass):
+            _LOGGER.debug(
+                "inspecting command member name=%s class=%s",
+                member_name,
+                command_class.__name__,
+            )
+            if not issubclass(command_class, CommandObjectInterface):
                 continue
-            if class_obj is CommandObjectInterface or inspect.isabstract(class_obj):
+            if command_class is CommandObjectInterface or inspect.isabstract(
+                command_class
+            ):
                 continue
-            command_instance = class_obj()
+            command_instance = command_class()
             key_values = command_instance.get_key_value_dictionary()
             operation = str(key_values.get(_KEY_ACTION, "")).strip().lower()
             if not operation:
@@ -121,19 +128,19 @@ def _discover_command_classes() -> dict[CommandKey, CommandType]:
                     key[0],
                     key[1],
                     discovered[key].__name__,
-                    class_obj.__name__,
+                    command_class.__name__,
                 )
                 raise ValueError(
                     "Duplicate command registration for classifier=%s operation=%s"
                     % (key[0], key[1])
                 )
-            discovered[key] = class_obj
+            discovered[key] = command_class
             _LOGGER.debug(
                 "registered command class=%s classifier=%s operation=%s module=%s",
-                class_obj.__name__,
+                command_class.__name__,
                 key[0],
                 key[1],
-                class_obj.__module__,
+                command_class.__module__,
             )
     return discovered
 

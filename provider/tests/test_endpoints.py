@@ -12,6 +12,7 @@
 
 import json
 import pathlib
+from datetime import datetime, timezone
 
 import pytest
 
@@ -22,6 +23,7 @@ from opamp_provider.app import (
     ERR_AGENT_AUTH_FAILED,
     ERR_AGENT_BLOCKED,
     ERR_AGENT_PENDING_APPROVAL,
+    _tls_certificate_expiry_metadata,
     app,
 )
 from opamp_provider import auth as provider_auth
@@ -406,6 +408,44 @@ async def test_get_comms_settings() -> None:
         "significant_comms_seconds": 300,
         "client_event_history_size": 2,
         "human_in_loop_approval": False,
+        "tls_enabled": False,
+        "https_certificate_expiry_date": None,
+        "https_certificate_days_remaining": None,
+        "https_certificate_expiring_soon": False,
+    }
+
+
+def test_tls_certificate_expiry_metadata_marks_expiring_soon(monkeypatch) -> None:
+    """Verify TLS metadata helper reports certificate expiry and 30-day warning state."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+        tls=provider_config.ProviderTLSConfig(
+            cert_file="/tmp/provider-server.pem",
+            key_file="/tmp/provider-server-key.pem",
+        ),
+    )
+    provider_config.set_config(config)
+    mock_expiry = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "opamp_provider.app._load_tls_certificate_expiry_utc",
+        lambda _cert_file: mock_expiry,
+    )
+
+    payload = _tls_certificate_expiry_metadata(
+        now_utc=datetime(2026, 4, 8, tzinfo=timezone.utc)
+    )
+
+    assert payload == {
+        "tls_enabled": True,
+        "https_certificate_expiry_date": "2026-05-01",
+        "https_certificate_days_remaining": 23,
+        "https_certificate_expiring_soon": True,
     }
 
 

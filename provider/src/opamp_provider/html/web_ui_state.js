@@ -14,6 +14,10 @@
       defaultHeartbeatFrequency: 30,
       diagnosticEnabled: false,
       humanInLoopApproval: false,
+      tlsEnabled: false,
+      httpsCertificateExpiryDate: null,
+      httpsCertificateDaysRemaining: null,
+      httpsCertificateExpiringSoon: false,
       authToken: "",
       timer: null,
     };
@@ -100,6 +104,12 @@
     const humanInLoopApprovalLabel = document.getElementById(
       "humanInLoopApprovalLabel"
     );
+    const httpsCertificateExpiryGroup = document.getElementById(
+      "httpsCertificateExpiryGroup"
+    );
+    const httpsCertificateExpiryOutput = document.getElementById(
+      "httpsCertificateExpiryOutput"
+    );
     const defaultHeartbeatFrequencyLabel = document.getElementById(
       "defaultHeartbeatFrequencyLabel"
     );
@@ -174,4 +184,3 @@
         tooltip: "Default heartbeat interval in seconds applied to clients when globally updated.",
       },
     };
-

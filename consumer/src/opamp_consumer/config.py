@@ -41,6 +41,9 @@ CFG_LOG_LEVEL = "log_level"  # Consumer JSON key for logging level override.
 CFG_SERVICE_NAME = "service_name"  # Consumer JSON key for service.name override.
 CFG_SERVICE_NAMESPACE = "service_namespace"  # Consumer JSON key for service.namespace override.
 CFG_TRANSPORT = "transport"  # Consumer JSON key for selected transport mode.
+CFG_TLS = "tls"  # Consumer JSON key for TLS transport settings block.
+CFG_TLS_VERIFY_SERVER = "verify_server"  # Consumer TLS key controlling HTTPS certificate validation.
+CFG_TLS_CA_FILE = "ca_file"  # Consumer TLS key for custom CA bundle path.
 CFG_SERVER_AUTHORIZATION = "server-authorization"  # Consumer JSON key controlling outbound provider authorization mode.
 CFG_OPAMP_TOKEN = "OpAMP-token"  # Consumer JSON key for static OpAMP token value.
 CFG_IDP_TOKEN_URL = "idp-token-url"  # Consumer JSON key for IdP token endpoint URL.
@@ -60,6 +63,7 @@ HARDWIRED_AGENT_CAPABILITY_NAMES = (  # Built-in capabilities always advertised 
     "ReportsHealth",
 )
 DEFAULT_LOG_LEVEL = "debug"  # Default consumer log level when unspecified.
+DEFAULT_TLS_VERIFY_SERVER = True  # Default behavior validates provider server certificate.
 DEFAULT_FULL_UPDATE_CONTROLLER: dict[str, int] = {"fullResendAfter": 1}  # Default controller settings payload.
 DEFAULT_FULL_UPDATE_CONTROLLER_TYPE = "SentCount"  # Default full-update controller implementation name.
 SERVER_AUTHORIZATION_NONE = "none"  # Disable outbound provider Authorization header usage.
@@ -113,6 +117,8 @@ class ConsumerConfig:
         None  # Service namespace reported in AgentDescription attributes.
     )
     transport: str | None = None  # Active OpAMP transport mode (http or websocket).
+    tls_verify_server: bool = DEFAULT_TLS_VERIFY_SERVER  # Enable outbound HTTPS/WSS certificate verification.
+    tls_ca_file: str | None = None  # Optional custom CA file used for outbound HTTPS/WSS validation.
     server_authorization: str = (
         DEFAULT_SERVER_AUTHORIZATION
         # Outbound provider authorization mode: none | env-var | config-var | idp.
@@ -273,6 +279,33 @@ def _coerce_optional_str(value: Any) -> str | None:
     return text or None
 
 
+def _resolve_tls_section(consumer_raw: dict[str, Any]) -> dict[str, Any]:
+    """Return normalized consumer TLS config mapping."""
+    tls_raw = consumer_raw.get(CFG_TLS)
+    if tls_raw is None:
+        return {}
+    if isinstance(tls_raw, dict):
+        return tls_raw
+    logging.getLogger(__name__).warning(
+        "%s.%s must be an object; ignoring invalid value %r",
+        CFG_CONSUMER,
+        CFG_TLS,
+        tls_raw,
+    )
+    return {}
+
+
+def _validate_optional_file_path(*, path_value: str | None, cfg_key: str) -> str | None:
+    """Validate optional file paths and return normalized string path."""
+    normalized_path = _coerce_optional_str(path_value)
+    if not normalized_path:
+        return None
+    path = pathlib.Path(normalized_path)
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"{cfg_key} must reference an existing file")
+    return normalized_path
+
+
 def _normalize_server_authorization(value: Any) -> str:
     """Normalize server authorization mode from canonical config values."""
     if value is None:
@@ -318,6 +351,15 @@ def load_config() -> ConsumerConfig:
     service_name = consumer_raw.get(CFG_SERVICE_NAME)
     service_namespace = consumer_raw.get(CFG_SERVICE_NAMESPACE)
     transport = consumer_raw.get(CFG_TRANSPORT, DEFAULT_TRANSPORT)
+    tls_raw = _resolve_tls_section(consumer_raw)
+    tls_verify_server = _coerce_bool(
+        tls_raw.get(CFG_TLS_VERIFY_SERVER),
+        default=DEFAULT_TLS_VERIFY_SERVER,
+    )
+    tls_ca_file = _validate_optional_file_path(
+        path_value=tls_raw.get(CFG_TLS_CA_FILE),
+        cfg_key=f"{CFG_CONSUMER}.{CFG_TLS}.{CFG_TLS_CA_FILE}",
+    )
     server_authorization_raw = consumer_raw.get(CFG_SERVER_AUTHORIZATION)
     server_authorization = _normalize_server_authorization(server_authorization_raw)
     opamp_token = _coerce_optional_str(consumer_raw.get(CFG_OPAMP_TOKEN))
@@ -374,6 +416,8 @@ def load_config() -> ConsumerConfig:
     logger.info("loaded consumer service_name: %s", service_name)
     logger.info("loaded consumer service_namespace: %s", service_namespace)
     logger.info("loaded consumer transport: %s", transport)
+    logger.info("loaded consumer tls_verify_server: %s", tls_verify_server)
+    logger.info("loaded consumer tls_ca_file: %s", tls_ca_file)
     logger.info("loaded consumer server_authorization: %s", server_authorization)
     logger.info(
         "loaded consumer opamp_token configured: %s",
@@ -420,6 +464,8 @@ def load_config() -> ConsumerConfig:
         service_name=service_name,
         service_namespace=service_namespace,
         transport=transport,
+        tls_verify_server=tls_verify_server,
+        tls_ca_file=tls_ca_file,
         server_authorization=server_authorization,
         opamp_token=opamp_token,
         idp_token_url=idp_token_url,
@@ -523,6 +569,15 @@ def load_config_with_overrides(
     resolved_idp_grant_type = str(
         consumer_raw.get(CFG_IDP_GRANT_TYPE) or DEFAULT_IDP_GRANT_TYPE
     )
+    tls_raw = _resolve_tls_section(consumer_raw)
+    resolved_tls_verify_server = _coerce_bool(
+        tls_raw.get(CFG_TLS_VERIFY_SERVER),
+        default=DEFAULT_TLS_VERIFY_SERVER,
+    )
+    resolved_tls_ca_file = _validate_optional_file_path(
+        path_value=tls_raw.get(CFG_TLS_CA_FILE),
+        cfg_key=f"{CFG_CONSUMER}.{CFG_TLS}.{CFG_TLS_CA_FILE}",
+    )
 
     if not resolved_agent_config_path:
         raise ValueError(f"{CFG_CONSUMER}.{CFG_AGENT_CONFIG_PATH} is required")
@@ -546,6 +601,8 @@ def load_config_with_overrides(
         service_name=consumer_raw.get(CFG_SERVICE_NAME),
         service_namespace=consumer_raw.get(CFG_SERVICE_NAMESPACE),
         transport=consumer_raw.get(CFG_TRANSPORT, DEFAULT_TRANSPORT),
+        tls_verify_server=resolved_tls_verify_server,
+        tls_ca_file=resolved_tls_ca_file,
         server_authorization=resolved_server_authorization,
         opamp_token=resolved_opamp_token,
         idp_token_url=resolved_idp_token_url,

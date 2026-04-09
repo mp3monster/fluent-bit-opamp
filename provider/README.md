@@ -71,7 +71,12 @@ Example `opamp.json`:
     "default_heartbeat_frequency": 30,
     "human_in_loop_approval": false,
     "opamp-use-authorization": "none",
-    "ui-use-authorization": "none"
+    "ui-use-authorization": "none",
+    "tls": {
+      "cert_file": "certs/provider-server.pem",
+      "key_file": "certs/provider-server-key.pem",
+      "trust_anchor_mode": "full_chain_to_root"
+    }
   }
 }
 ```
@@ -116,6 +121,15 @@ Example `opamp.json`:
   - `idp`: require bearer token and validate as JWT using IdP settings
     (`UI_AUTH_JWT_ISSUER`, `UI_AUTH_JWT_AUDIENCE`, optional `UI_AUTH_JWT_JWKS_URL`,
     `UI_AUTH_JWT_LEEWAY_SECONDS`).
+- `provider.tls` (object, optional)
+  Enables HTTPS for the single provider listener when present. When omitted, provider runs HTTP-only.
+  - `provider.tls.cert_file` (string, required when `provider.tls` is present)
+    Path to PEM server certificate file.
+  - `provider.tls.key_file` (string, required when `provider.tls` is present)
+    Path to PEM server private key file.
+  - `provider.tls.trust_anchor_mode` (string, optional, default `"full_chain_to_root"`)
+    Allowed values: `partial_chain`, `full_chain_to_root`.
+    This value is validated for config consistency in the current phase.
 
 ## Human-In-Loop Approval Workflow
 
