@@ -67,6 +67,7 @@ def _test_provider_config(
     human_in_loop_approval: bool = False,
     opamp_use_authorization: str = provider_config.OPAMP_USE_AUTHORIZATION_NONE,
     ui_use_authorization: str = provider_config.DEFAULT_UI_USE_AUTHORIZATION,
+    latest_docs_url: str = provider_config.DEFAULT_LATEST_DOCS_URL,
 ) -> ProviderConfig:
     """Build a ProviderConfig suitable for endpoint tests."""
     return ProviderConfig(
@@ -78,6 +79,7 @@ def _test_provider_config(
         client_event_history_size=50,
         log_level="INFO",
         default_heartbeat_frequency=30,
+        latest_docs_url=latest_docs_url,
         human_in_loop_approval=human_in_loop_approval,
         opamp_use_authorization=opamp_use_authorization,
         ui_use_authorization=ui_use_authorization,
@@ -904,6 +906,17 @@ async def test_help_page_includes_restore_usage() -> None:
     assert "--restore" in html
     assert "state_file_prefix" in html
     assert "empty/default in-memory state" in html
+
+
+@pytest.mark.asyncio
+async def test_doc_set_redirect_uses_provider_config_value() -> None:
+    """Verify `/doc-set` redirect target is configuration-driven."""
+    configured_url = "https://example.org/docs/latest"
+    provider_config.set_config(_test_provider_config(latest_docs_url=configured_url))
+    async with app.test_client() as client:
+        resp = await client.get("/doc-set")
+    assert resp.status_code in {301, 302, 307, 308}
+    assert resp.headers.get("Location") == configured_url
 
 
 @pytest.mark.asyncio

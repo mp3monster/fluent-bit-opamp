@@ -1,9 +1,12 @@
 {
   "consumer": {
-    "server_url": "http://localhost:4320",
+    "server_url": "http://localhost:8080",
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
+    "tls": {
+      "verify_server": false
+    },
     "server-authorization": "none",
     "log_agent_api_responses": false,
     "agent_config_path": "./fluent-bit.conf",
@@ -32,7 +35,16 @@
     "client_event_history_size": 50,
     "log_level": "DEBUG",
     "default_heartbeat_frequency": 30,
-    "human_in_loop_approval": true,
-    "opamp-use-authorization": "none"
+    "latest_docs_url": "https://github.com/mp3monster/fluent-opamp/blob/main/README.md",
+    "human_in_loop_approval": false,
+    "opamp-use-authorization": "none",
+    "ui-use-authorization": "none",
+    "state_persistence": {
+      "enabled": true,
+      "state_file_prefix": "server-state\\opamp_server_state",
+      "retention_count": 3,
+      "flush_mode": "graceful_shutdown",
+      "autosave_interval_seconds_since_change": 60
+    }
   }
 }

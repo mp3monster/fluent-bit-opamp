@@ -40,6 +40,7 @@ CFG_RETRY_AFTER_SECONDS = "retryAfterSeconds"  # Provider JSON key for Retry-Aft
 CFG_CLIENT_EVENT_HISTORY_SIZE = "client_event_history_size"  # Provider JSON key for per-client event history length.
 CFG_LOG_LEVEL = "log_level"  # Provider JSON key for logging level override.
 CFG_DEFAULT_HEARTBEAT_FREQUENCY = "default_heartbeat_frequency"  # Provider JSON key for default client heartbeat interval.
+CFG_LATEST_DOCS_URL = "latest_docs_url"  # Provider JSON key for Latest docs redirect URL.
 CFG_HUMAN_IN_LOOP_APPROVAL = "human_in_loop_approval"  # Provider JSON key toggling manual agent approval workflow.
 CFG_OPAMP_USE_AUTHORIZATION = "opamp-use-authorization"  # Provider JSON key controlling OpAMP transport bearer authorization mode.
 CFG_UI_USE_AUTHORIZATION = "ui-use-authorization"  # Provider JSON key controlling non-OpAMP HTTP/WebSocket bearer authorization mode.
@@ -64,6 +65,7 @@ DEFAULT_RETRY_AFTER_SECONDS = 30  # Default Retry-After duration in seconds.
 DEFAULT_CLIENT_EVENT_HISTORY_SIZE = 50  # Default maximum number of retained client events.
 DEFAULT_LOG_LEVEL = "INFO"  # Default provider log level.
 DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY = 30  # Default heartbeat frequency assigned to new clients.
+DEFAULT_LATEST_DOCS_URL = "https://github.com/mp3monster/fluent-opamp/blob/main/README.md"  # Default redirect target for /doc-set.
 DEFAULT_HUMAN_IN_LOOP_APPROVAL = False  # Default behavior leaves human approval workflow disabled.
 OPAMP_USE_AUTHORIZATION_NONE = "none"  # Disable OpAMP endpoint bearer auth checks.
 OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN = (
@@ -111,6 +113,7 @@ class ProviderConfig:
     client_event_history_size: int
     log_level: str
     default_heartbeat_frequency: int = DEFAULT_DEFAULT_HEARTBEAT_FREQUENCY
+    latest_docs_url: str = DEFAULT_LATEST_DOCS_URL
     human_in_loop_approval: bool = DEFAULT_HUMAN_IN_LOOP_APPROVAL
     opamp_use_authorization: str = DEFAULT_OPAMP_USE_AUTHORIZATION
     ui_use_authorization: str = DEFAULT_UI_USE_AUTHORIZATION
@@ -345,6 +348,12 @@ def load_config() -> ProviderConfig:
     )
     opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
     ui_use_authorization_raw = provider_raw.get(CFG_UI_USE_AUTHORIZATION)
+    latest_docs_url = str(
+        provider_raw.get(CFG_LATEST_DOCS_URL, DEFAULT_LATEST_DOCS_URL)
+        or DEFAULT_LATEST_DOCS_URL
+    ).strip()
+    if not latest_docs_url:
+        latest_docs_url = DEFAULT_LATEST_DOCS_URL
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -373,6 +382,7 @@ def load_config() -> ProviderConfig:
                 )
             ),
         ),
+        latest_docs_url=latest_docs_url,
         human_in_loop_approval=_as_bool(
             provider_raw.get(
                 CFG_HUMAN_IN_LOOP_APPROVAL,
@@ -411,6 +421,12 @@ def load_config_with_overrides(
     )
     opamp_use_authorization_raw = provider_raw.get(CFG_OPAMP_USE_AUTHORIZATION)
     ui_use_authorization_raw = provider_raw.get(CFG_UI_USE_AUTHORIZATION)
+    latest_docs_url = str(
+        provider_raw.get(CFG_LATEST_DOCS_URL, DEFAULT_LATEST_DOCS_URL)
+        or DEFAULT_LATEST_DOCS_URL
+    ).strip()
+    if not latest_docs_url:
+        latest_docs_url = DEFAULT_LATEST_DOCS_URL
     return ProviderConfig(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
@@ -441,6 +457,7 @@ def load_config_with_overrides(
                 )
             ),
         ),
+        latest_docs_url=latest_docs_url,
         human_in_loop_approval=_as_bool(
             provider_raw.get(
                 CFG_HUMAN_IN_LOOP_APPROVAL,
@@ -545,6 +562,7 @@ def update_comms_thresholds(
         client_event_history_size=history_size,
         log_level=CONFIG.log_level,
         default_heartbeat_frequency=CONFIG.default_heartbeat_frequency,
+        latest_docs_url=CONFIG.latest_docs_url,
         human_in_loop_approval=effective_human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
@@ -566,6 +584,7 @@ def update_default_heartbeat_frequency(*, default_heartbeat_frequency: int) -> P
         client_event_history_size=CONFIG.client_event_history_size,
         log_level=CONFIG.log_level,
         default_heartbeat_frequency=max(1, int(default_heartbeat_frequency)),
+        latest_docs_url=CONFIG.latest_docs_url,
         human_in_loop_approval=CONFIG.human_in_loop_approval,
         opamp_use_authorization=CONFIG.opamp_use_authorization,
         ui_use_authorization=CONFIG.ui_use_authorization,
@@ -604,6 +623,7 @@ def persist_provider_config(
     provider_raw[CFG_DEFAULT_HEARTBEAT_FREQUENCY] = int(
         effective.default_heartbeat_frequency
     )
+    provider_raw[CFG_LATEST_DOCS_URL] = str(effective.latest_docs_url)
     provider_raw[CFG_HUMAN_IN_LOOP_APPROVAL] = bool(effective.human_in_loop_approval)
     provider_raw[CFG_OPAMP_USE_AUTHORIZATION] = str(effective.opamp_use_authorization)
     provider_raw[CFG_UI_USE_AUTHORIZATION] = str(effective.ui_use_authorization)

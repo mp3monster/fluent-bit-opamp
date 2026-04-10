@@ -2071,6 +2071,12 @@ async def help_page() -> Response:
     return Response(html, content_type="text/html; charset=utf-8")
 
 
+@app.get("/doc-set")
+async def latest_docs_redirect() -> Response:
+    """Redirect to the latest documentation set."""
+    return redirect(provider_config.CONFIG.latest_docs_url)
+
+
 @app.get("/api/help/global-settings")
 async def global_settings_help() -> Response:
     """Return shared help text used by global settings tooltips and help page."""
