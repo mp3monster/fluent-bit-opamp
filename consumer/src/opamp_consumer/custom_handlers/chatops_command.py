@@ -10,7 +10,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Default custom handler implementation with logging stubs."""
+"""ChatOps custom handler implementation.
+
+Custom command payload attributes used by this handler:
+
+- `tag`:
+  Optional string route segment appended to the local ChatOps URL.
+  Example: `tag: "reload"` -> `http://localhost:<port>/reload`.
+
+- `attributes`:
+  Optional request payload sent to the local ChatOps endpoint as JSON.
+  Supports a JSON object, a JSON string, or an escaped JSON string.
+  When omitted or invalid, `{}` is sent.
+  The parsed value is serialized into the outbound HTTP POST body
+  (`httpx.post(..., content=<json-bytes>)`) to the local agent endpoint,
+  with `Content-Type: application/json` and matching `Content-Length`.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +51,7 @@ CONTENT_TYPE_HEADER = "Content-Type"  # HTTP header key for content type.
 CONTENT_LENGTH_HEADER = "Content-Length"  # HTTP header key for payload byte length.
 CONTENT_TYPE_JSON = "application/json"  # MIME type used for ChatOps HTTP payloads.
 UTF8_ENCODING = "utf-8"  # Text encoding used for payload serialization/parsing.
+DEFAULT_CHAT_OPS_PORT = 8888  # Fallback local ChatOps listener port.
 
 
 class ChatOpsCommand(CustomMessageHandlerInterface):
@@ -88,9 +104,9 @@ class ChatOpsCommand(CustomMessageHandlerInterface):
         Returns:
             Fully-qualified localhost URL for the ChatOps call.
         """
-        port = 8888
+        port = DEFAULT_CHAT_OPS_PORT
         if self._data is not None and self._data.config is not None:
-            configured_port = self._data.config.chat_ops_port or 8888
+            configured_port = self._data.config.chat_ops_port or DEFAULT_CHAT_OPS_PORT
             port = int(configured_port)
         tag = str(self._payload_data.get("tag", "") or "").strip()
         if tag:
