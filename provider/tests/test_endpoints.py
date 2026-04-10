@@ -471,8 +471,11 @@ async def test_get_comms_settings(monkeypatch) -> None:
     assert payload == {
         "delayed_comms_seconds": 60,
         "significant_comms_seconds": 300,
+        "minutes_keep_disconnected": 30,
         "client_event_history_size": 2,
         "human_in_loop_approval": False,
+        "state_persistence_enabled": False,
+        "opamp_use_authorization": "none",
         "state_save_folder": "runtime",
         "retention_count": 5,
         "state_snapshot_file_count": 2,
@@ -649,8 +652,10 @@ async def test_put_comms_settings(monkeypatch) -> None:
             json={
                 "delayed_comms_seconds": 120,
                 "significant_comms_seconds": 600,
+                "minutes_keep_disconnected": 45,
                 "client_event_history_size": 4,
                 "human_in_loop_approval": True,
+                "state_persistence_enabled": True,
                 "retention_count": 7,
             },
         )
@@ -660,8 +665,11 @@ async def test_put_comms_settings(monkeypatch) -> None:
     assert payload == {
         "delayed_comms_seconds": 120,
         "significant_comms_seconds": 600,
+        "minutes_keep_disconnected": 45,
         "client_event_history_size": 4,
         "human_in_loop_approval": True,
+        "state_persistence_enabled": True,
+        "opamp_use_authorization": "none",
         "state_save_folder": "runtime",
         "retention_count": 7,
         "state_snapshot_file_count": 3,
@@ -672,9 +680,11 @@ async def test_put_comms_settings(monkeypatch) -> None:
     provider = stored.get("provider", {})
     assert provider.get("delayed_comms_seconds") == 120
     assert provider.get("significant_comms_seconds") == 600
+    assert provider.get("minutes_keep_disconnected") == 45
     assert provider.get("client_event_history_size") == 4
     assert provider.get("human_in_loop_approval") is True
     persisted_state_cfg = provider.get("state_persistence", {})
+    assert persisted_state_cfg.get("enabled") is True
     assert persisted_state_cfg.get("state_file_prefix") == "runtime/opamp_server_state"
     assert persisted_state_cfg.get("retention_count") == 7
     assert persisted_state_cfg.get("autosave_interval_seconds_since_change") == 600
@@ -743,6 +753,32 @@ async def test_put_comms_settings_rejects_invalid_event_history_size() -> None:
                 "delayed_comms_seconds": 60,
                 "significant_comms_seconds": 300,
                 "client_event_history_size": 0,
+            },
+        )
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_put_comms_settings_rejects_invalid_minutes_keep_disconnected() -> None:
+    """Verify PUT `/api/settings/comms` rejects non-positive disconnected retention minutes."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+    )
+    provider_config.set_config(config)
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={
+                "delayed_comms_seconds": 60,
+                "significant_comms_seconds": 300,
+                "minutes_keep_disconnected": 0,
             },
         )
         assert resp.status_code == 400
@@ -852,6 +888,32 @@ async def test_put_comms_settings_rejects_invalid_human_in_loop_approval() -> No
 
 
 @pytest.mark.asyncio
+async def test_put_comms_settings_rejects_invalid_state_persistence_enabled() -> None:
+    """Verify PUT `/api/settings/comms` rejects non-boolean state_persistence_enabled values."""
+    config = ProviderConfig(
+        delayed_comms_seconds=60,
+        significant_comms_seconds=300,
+        webui_port=8080,
+        minutes_keep_disconnected=30,
+        retry_after_seconds=30,
+        client_event_history_size=2,
+        log_level="INFO",
+    )
+    provider_config.set_config(config)
+
+    async with app.test_client() as client:
+        resp = await client.put(
+            "/api/settings/comms",
+            json={
+                "delayed_comms_seconds": 60,
+                "significant_comms_seconds": 300,
+                "state_persistence_enabled": "maybe",
+            },
+        )
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_get_client_settings() -> None:
     """Verify GET `/api/settings/client` returns default heartbeat frequency."""
     STORE.set_default_heartbeat_frequency(30, max_events=50)
@@ -877,16 +939,20 @@ async def test_get_global_settings_help() -> None:
     assert isinstance(fields, dict)
     assert "delayed_comms_seconds" in tooltips
     assert "significant_comms_seconds" in tooltips
+    assert "minutes_keep_disconnected" in tooltips
     assert "client_event_history_size" in tooltips
     assert "human_in_loop_approval" in tooltips
+    assert "state_persistence_enabled" in tooltips
     assert "state_save_folder" in tooltips
     assert "retention_count" in tooltips
     assert "autosave_interval_seconds_since_change" in tooltips
     assert "default_heartbeat_frequency" in tooltips
     assert fields["delayed_comms_seconds"]["label"] == "Delayed Communications Threshold (seconds)"
     assert fields["significant_comms_seconds"]["label"] == "Significant Communications Threshold (seconds)"
+    assert fields["minutes_keep_disconnected"]["label"] == "Disconnected Retention Window (minutes)"
     assert fields["client_event_history_size"]["label"] == "Client Event History Size"
     assert fields["human_in_loop_approval"]["label"] == "Human In Loop Approval"
+    assert fields["state_persistence_enabled"]["label"] == "State Persistence Enabled"
     assert fields["state_save_folder"]["label"] == "State Save Folder"
     assert fields["retention_count"]["label"] == "State Snapshot Retention Count"
     assert (
@@ -1038,7 +1104,7 @@ async def test_queue_restart_command_and_emit_restart_payload() -> None:
         assert len(record.events) == 1
         event = record.events[0]
         event_desc = event.get_event_description()
-        assert event_desc == "Restart Agent"
+        assert event_desc == "Restarts Agent"
 
         agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
         opamp_resp = await client.post(
@@ -1091,6 +1157,59 @@ async def test_queue_force_resync_command_sets_report_full_state_flag() -> None:
     assert record is not None
     assert len(record.commands) == 1
     assert record.commands[0].sent_at is not None
+
+
+@pytest.mark.asyncio
+async def test_queue_custom_nullcommand_and_emit_custom_message_payload() -> None:
+    """Verify custom nullcommand queueing emits `ServerToAgent.custom_message` using dynamic custom-command mapping."""
+    client_id = "000000000000000000000000000000aa"
+    STORE._clients.clear()
+
+    async with app.test_client() as client:
+        queue_resp = await client.post(
+            f"/api/clients/{client_id}/commands",
+            json=[
+                {"key": "classifier", "value": "custom"},
+                {"key": "operation", "value": "nullcommand"},
+                {"key": "capability", "value": "org.mp3monster.opamp_provider.nullcommand"},
+                {"key": "dummyValue", "value": "integration-check"},
+            ],
+        )
+        assert queue_resp.status_code == 201
+
+        agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+        opamp_resp = await client.post(
+            "/v1/opamp",
+            data=agent_msg.SerializeToString(),
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        assert opamp_resp.status_code == 200
+        server_msg = opamp_pb2.ServerToAgent()
+        server_msg.ParseFromString(await opamp_resp.get_data())
+        assert server_msg.HasField("custom_message")
+        assert (
+            server_msg.custom_message.capability
+            == "org.mp3monster.opamp_provider.nullcommand"
+        )
+        assert b'"dummyValue": "integration-check"' in server_msg.custom_message.data
+
+
+@pytest.mark.asyncio
+async def test_queue_command_rejects_unknown_custom_operation() -> None:
+    """Verify queue endpoint rejects unknown custom operations even with wildcard custom routing."""
+    async with app.test_client() as client:
+        resp = await client.post(
+            "/api/clients/client-1/commands",
+            json=[
+                {"key": "classifier", "value": "custom"},
+                {"key": "operation", "value": "definitely-not-registered"},
+                {"key": "capability", "value": "org.example.custom.unknown"},
+            ],
+        )
+        assert resp.status_code == 400
+        payload = await resp.get_json()
+
+    assert payload["error"] == "unsupported custom command mapping"
 
 
 @pytest.mark.asyncio
@@ -1394,7 +1513,10 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     first = command_map["chatopcommand"]
     assert first["fqdn"] == "org.mp3monster.opamp_provider.chatopcommand"
     assert first["displayname"] == "ChatOps Command"
-    assert first["description"] == "custom chatopcommand queued"
+    assert (
+        first["description"]
+        == "Uses the chat ops strategy to provide a dynamic means to get the agent to perform a task based on its existing configuration."
+    )
     assert first["classifier"] == "custom"
     assert first["operation"] == "chatopcommand"
     assert first["reported_by_client"] is False
@@ -1410,14 +1532,24 @@ async def test_list_custom_commands_returns_display_names_and_schema() -> None:
     shutdown = command_map["shutdownagent"]
     assert shutdown["fqdn"] == "org.mp3monster.opamp_provider.command_shutdown_agent"
     assert shutdown["displayname"] == "Shutdown Agent"
-    assert shutdown["description"] == "custom shutdownagent queued"
+    assert shutdown["description"] == "Instruction for telling an agent to shutdown"
     assert shutdown["schema"] == []
     nullcommand = command_map["nullcommand"]
     assert nullcommand["fqdn"] == "org.mp3monster.opamp_provider.nullcommand"
     assert nullcommand["displayname"] == "Null Command"
-    assert nullcommand["description"] == "custom nullcommand queued"
+    assert (
+        nullcommand["description"]
+        == "Null command provides a means to check the custom command configuration without impact"
+    )
     assert nullcommand["reported_by_client"] is False
-    assert nullcommand["schema"] == []
+    assert nullcommand["schema"] == [
+        {
+            "parametername": "dummyValue",
+            "type": "string",
+            "description": "Dummy value used for nullcommand log output on the consumer.",
+            "isrequired": False,
+        },
+    ]
 
 
 @pytest.mark.asyncio

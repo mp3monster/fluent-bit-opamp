@@ -46,15 +46,6 @@ _KEY_SCHEMA = "schema"
 _CLASSIFIER_COMMAND = "command"
 _CLASSIFIER_CUSTOM = "custom"
 _CLASSIFIER_CUSTOM_COMMAND = "custom_command"
-# Known custom operation identifiers used in factory dispatch.
-_OPERATION_CHATOPS = "chatopcommand"
-_OPERATION_SHUTDOWN_AGENT = "shutdownagent"
-_OPERATION_NULLCOMMAND = "nullcommand"
-# Reverse-FQDN capability identifiers emitted/recognized for custom commands.
-_CAPABILITY_CHATOPS = "org.mp3monster.opamp_provider.chatopcommand"
-_CAPABILITY_SHUTDOWN_AGENT = "org.mp3monster.opamp_provider.command_shutdown_agent"
-_CAPABILITY_NULLCOMMAND = "org.mp3monster.opamp_provider.nullcommand"
-
 CommandKey = tuple[str, str]
 CommandType = type[CommandObjectInterface]
 _INTERNAL_SCHEMA_PARAMETERS = {_KEY_CLASSIFIER, "type", "data"}
@@ -195,6 +186,66 @@ for key, command_class in _get_command_registry_by_standard_filter(
         _COMMAND_FQDN_MAP[key] = normalized_fqdn
 
 
+# Design intent: custom commands should be "drop-in" via discovery.
+# These maps are derived once from the registry so adding a new custom command
+# implementation does not require editing factory conditionals.
+_CUSTOM_COMMAND_CLASS_BY_OPERATION: dict[str, CommandType] = {}
+_CUSTOM_COMMAND_CLASS_BY_CAPABILITY: dict[str, CommandType] = {}
+for key, command_class in _COMMAND_REGISTRY.items():
+    classifier, operation = key
+    if classifier != _CLASSIFIER_CUSTOM:
+        continue
+    normalized_operation = str(operation).strip().lower()
+    if normalized_operation:
+        existing = _CUSTOM_COMMAND_CLASS_BY_OPERATION.get(normalized_operation)
+        if existing is not None and existing is not command_class:
+            raise ValueError(
+                "Duplicate custom command operation mapping for operation=%s" % normalized_operation
+            )
+        _CUSTOM_COMMAND_CLASS_BY_OPERATION[normalized_operation] = command_class
+    capability_fqdn = str(_COMMAND_FQDN_MAP.get(key, "")).strip()
+    if capability_fqdn:
+        existing = _CUSTOM_COMMAND_CLASS_BY_CAPABILITY.get(capability_fqdn)
+        if existing is not None and existing is not command_class:
+            raise ValueError(
+                "Duplicate custom capability mapping for capability=%s" % capability_fqdn
+            )
+        _CUSTOM_COMMAND_CLASS_BY_CAPABILITY[capability_fqdn] = command_class
+
+
+def _new_command_object(
+    command_class: CommandType,
+    *,
+    values: dict[str, str],
+) -> CommandObjectInterface:
+    """Instantiate and initialize a command object with provided key/value pairs."""
+    instance = command_class()
+    instance.set_key_value_dictionary(values)
+    return instance
+
+
+def _resolve_custom_command_class(
+    *,
+    capability: str,
+    operation: str,
+    action: str,
+) -> CommandType | None:
+    """Resolve custom command class by capability first, then operation/action."""
+    # Design intent: prefer capability when present because it is globally unique
+    # and survives operation renames; operation/action are compatibility fallbacks.
+    if capability:
+        by_capability = _CUSTOM_COMMAND_CLASS_BY_CAPABILITY.get(capability)
+        if by_capability is not None:
+            return by_capability
+    if operation:
+        by_operation = _CUSTOM_COMMAND_CLASS_BY_OPERATION.get(operation)
+        if by_operation is not None:
+            return by_operation
+    if action:
+        return _CUSTOM_COMMAND_CLASS_BY_OPERATION.get(action)
+    return None
+
+
 def get_registered_command_keys(
     parameter_exclude_opamp_standard: bool = True,
     includedisplayname: bool = True,
@@ -310,39 +361,20 @@ def command_object_factory(
 
     if normalized_classifier == _CLASSIFIER_COMMAND:
         _LOGGER.debug("command_object_factory selected class=%s", RestartAgent.__name__)
-        return RestartAgent(key_values=values)
+        return _new_command_object(RestartAgent, values=values)
 
     if normalized_classifier in {_CLASSIFIER_CUSTOM, _CLASSIFIER_CUSTOM_COMMAND}:
-        if capability == _CAPABILITY_CHATOPS:
-            _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
-            return ChatOpCommand(key_values=values)
-        if capability == _CAPABILITY_SHUTDOWN_AGENT:
+        command_class = _resolve_custom_command_class(
+            capability=capability,
+            operation=operation,
+            action=action,
+        )
+        if command_class is not None:
             _LOGGER.debug(
                 "command_object_factory selected class=%s",
-                CommandShutdownAgent.__name__,
+                command_class.__name__,
             )
-            return CommandShutdownAgent(key_values=values)
-        if capability == _CAPABILITY_NULLCOMMAND:
-            _LOGGER.debug(
-                "command_object_factory selected class=%s",
-                CommandNullCommand.__name__,
-            )
-            return CommandNullCommand(key_values=values)
-        if operation == _OPERATION_CHATOPS:
-            _LOGGER.debug("command_object_factory selected class=%s", ChatOpCommand.__name__)
-            return ChatOpCommand(key_values=values)
-        if operation == _OPERATION_SHUTDOWN_AGENT:
-            _LOGGER.debug(
-                "command_object_factory selected class=%s",
-                CommandShutdownAgent.__name__,
-            )
-            return CommandShutdownAgent(key_values=values)
-        if operation == _OPERATION_NULLCOMMAND:
-            _LOGGER.debug(
-                "command_object_factory selected class=%s",
-                CommandNullCommand.__name__,
-            )
-            return CommandNullCommand(key_values=values)
+            return _new_command_object(command_class, values=values)
         _LOGGER.error(
             "unsupported command object mapping classifier=%s operation=%s capability=%s action=%s",
             normalized_classifier,

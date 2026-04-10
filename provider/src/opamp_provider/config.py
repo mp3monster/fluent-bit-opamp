@@ -495,13 +495,22 @@ def update_comms_thresholds(
     *,
     delayed: int,
     significant: int,
+    minutes_keep_disconnected: int | None = None,
     client_event_history_size: int | None = None,
     human_in_loop_approval: bool | None = None,
+    state_persistence_enabled: bool | None = None,
     state_save_folder: str | None = None,
     retention_count: int | None = None,
     autosave_interval_seconds_since_change: int | None = None,
 ) -> ProviderConfig:
     """Return a new config with updated server comm settings and set it."""
+    keep_minutes = (
+        CONFIG.minutes_keep_disconnected
+        if minutes_keep_disconnected is None
+        else int(minutes_keep_disconnected)
+    )
+    if keep_minutes <= 0:
+        raise ValueError("minutes_keep_disconnected must be positive")
     history_size = (
         CONFIG.client_event_history_size
         if client_event_history_size is None
@@ -513,6 +522,16 @@ def update_comms_thresholds(
         else bool(human_in_loop_approval)
     )
     persistence = CONFIG.state_persistence
+    if state_persistence_enabled is not None:
+        persistence = ProviderStatePersistenceConfig(
+            enabled=bool(state_persistence_enabled),
+            state_file_prefix=persistence.state_file_prefix,
+            retention_count=persistence.retention_count,
+            flush_mode=persistence.flush_mode,
+            autosave_interval_seconds_since_change=(
+                persistence.autosave_interval_seconds_since_change
+            ),
+        )
     if state_save_folder is not None:
         folder = str(state_save_folder).strip()
         if not folder:
@@ -562,7 +581,7 @@ def update_comms_thresholds(
         delayed_comms_seconds=delayed,
         significant_comms_seconds=significant,
         webui_port=CONFIG.webui_port,
-        minutes_keep_disconnected=CONFIG.minutes_keep_disconnected,
+        minutes_keep_disconnected=keep_minutes,
         retry_after_seconds=CONFIG.retry_after_seconds,
         client_event_history_size=history_size,
         log_level=CONFIG.log_level,

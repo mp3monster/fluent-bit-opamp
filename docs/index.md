@@ -8,6 +8,7 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/features.md](features.md) — feature notes and design direction.
 - [OpAMP posts on blog.mp3monster.org](https://blog.mp3monster.org/category/technology/fluent-observability/opamp/) — external blog posts and updates.
 - [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
+- [docs/adding_your_own_custom_action.md](adding_your_own_custom_action.md) — how to implement and deploy a custom provider+consumer action using `nullcommand` as the baseline.
 - [docs/consumer_client_diagram.md](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
 - [docs/consumer_client_diagrams.md](consumer_client_diagrams.md) — rendered consumer diagrams with explanation per diagram panel.
 - [docs/provider_server_diagram.md](provider_server_diagram.md) — provider/server Mermaid source diagrams.

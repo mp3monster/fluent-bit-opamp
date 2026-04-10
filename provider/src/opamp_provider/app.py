@@ -119,6 +119,13 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
             "This overrides the config file value."
         ),
     },
+    "minutes_keep_disconnected": {
+        "label": "Disconnected Retention Window (minutes)",
+        "tooltip": (
+            "Minutes to keep disconnected clients in provider state before purge. "
+            "This overrides the config file value."
+        ),
+    },
     "client_event_history_size": {
         "label": "Client Event History Size",
         "tooltip": (
@@ -131,6 +138,13 @@ GLOBAL_SETTINGS_HELP: dict[str, dict[str, str]] = {
         "tooltip": (
             "When enabled, unknown agents are staged for manual review and remain "
             "blocked from normal processing until approved."
+        ),
+    },
+    "state_persistence_enabled": {
+        "label": "State Persistence Enabled",
+        "tooltip": (
+            "When enabled, provider state snapshots can be saved/restored using "
+            "state persistence settings."
         ),
     },
     "state_save_folder": {
@@ -742,9 +756,9 @@ COMMAND_BUILDERS: dict[
 ] = {
     (CLASSIFIER_COMMAND, COMMAND_RESTART): _build_restart_command,
     (CLASSIFIER_COMMAND, COMMAND_FORCE_RESYNC): _build_force_resync_command,
-    (CLASSIFIER_CUSTOM, COMMAND_CHATOP): _build_custom_command_payload,
-    (CLASSIFIER_CUSTOM, COMMAND_SHUTDOWN_AGENT): _build_custom_command_payload,
-    (CLASSIFIER_CUSTOM, COMMAND_NULLCOMMAND): _build_custom_command_payload,
+    # Design intent: wildcard custom routing avoids per-command app.py edits.
+    # Validation still happens in queue_command via command_object_factory.
+    (CLASSIFIER_CUSTOM, "*"): _build_custom_command_payload,
     (CLASSIFIER_CUSTOM_COMMAND, "*"): _build_custom_command_payload,
 }
 
@@ -1473,14 +1487,7 @@ async def queue_command(client_id: str) -> Response:
     if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_FORCE_RESYNC:
         event_description = "Force Resync"
     command_obj = None
-    if (classifier, routing_action) in COMMAND_BUILDERS and (
-        (classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART)
-        or (
-            classifier == CLASSIFIER_CUSTOM
-            and routing_action
-            in {COMMAND_CHATOP, COMMAND_SHUTDOWN_AGENT, COMMAND_NULLCOMMAND}
-        )
-    ):
+    if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART:
         logger.debug(
             "queue_command building command object client_id=%s classifier=%s routing_action=%s key_values=%s",
             client_id,
@@ -1498,6 +1505,52 @@ async def queue_command(client_id: str) -> Response:
         event_description = command_obj.get_command_description()
         logger.debug(
             "queue_command built command object client_id=%s object_type=%s classifier=%s routing_action=%s",
+            client_id,
+            command_obj.__class__.__name__,
+            classifier,
+            routing_action,
+        )
+    elif classifier == CLASSIFIER_CUSTOM:
+        # Design intent: keep wildcard routing for extensibility, but still reject
+        # unknown custom operations early so typos do not queue opaque payloads.
+        logger.debug(
+            "queue_command validating custom command object client_id=%s classifier=%s routing_action=%s key_values=%s",
+            client_id,
+            classifier,
+            routing_action,
+            key_value_dict,
+        )
+        try:
+            command_obj = command_object_factory(
+                classifier=classifier,
+                key_values=key_value_dict,
+            )
+        except ValueError:
+            logger.debug(
+                "queue_command rejected unknown custom command mapping client_id=%s classifier=%s routing_action=%s",
+                client_id,
+                classifier,
+                routing_action,
+            )
+            return (
+                jsonify(
+                    {
+                        "error": "unsupported custom command mapping",
+                        "classifier": classifier,
+                        "action": routing_action,
+                    }
+                ),
+                HTTPStatus.BAD_REQUEST,
+            )
+        command_obj.set_key_value_dictionary(key_value_dict)
+        classifier = command_obj.get_command_classifier().strip().lower()
+        normalized_command_values = command_obj.get_key_value_dictionary()
+        routing_action = str(
+            normalized_command_values.get("action", routing_action) or routing_action
+        ).strip().lower()
+        event_description = command_obj.get_command_description()
+        logger.debug(
+            "queue_command validated custom command object client_id=%s object_type=%s classifier=%s routing_action=%s",
             client_id,
             command_obj.__class__.__name__,
             classifier,
@@ -1619,8 +1672,13 @@ async def get_comms_settings() -> Response:
     payload = {
         "delayed_comms_seconds": provider_config.CONFIG.delayed_comms_seconds,
         "significant_comms_seconds": provider_config.CONFIG.significant_comms_seconds,
+        "minutes_keep_disconnected": provider_config.CONFIG.minutes_keep_disconnected,
         "client_event_history_size": provider_config.CONFIG.client_event_history_size,
         "human_in_loop_approval": provider_config.CONFIG.human_in_loop_approval,
+        "state_persistence_enabled": (
+            provider_config.CONFIG.state_persistence.enabled is True
+        ),
+        "opamp_use_authorization": provider_config.CONFIG.opamp_use_authorization,
         "state_save_folder": str(state_prefix.parent),
         "retention_count": int(
             provider_config.CONFIG.state_persistence.retention_count
@@ -1759,6 +1817,12 @@ async def update_comms_settings() -> Response:
                 provider_config.CONFIG.significant_comms_seconds,
             )
         )
+        minutes_keep_disconnected = int(
+            payload.get(
+                "minutes_keep_disconnected",
+                provider_config.CONFIG.minutes_keep_disconnected,
+            )
+        )
         client_event_history_size = int(
             payload.get(
                 "client_event_history_size",
@@ -1771,6 +1835,13 @@ async def update_comms_settings() -> Response:
                 provider_config.CONFIG.human_in_loop_approval,
             ),
             key="human_in_loop_approval",
+        )
+        state_persistence_enabled = _coerce_bool_setting(
+            payload.get(
+                "state_persistence_enabled",
+                provider_config.CONFIG.state_persistence.enabled,
+            ),
+            key="state_persistence_enabled",
         )
         state_save_folder = str(
             payload.get(
@@ -1800,14 +1871,19 @@ async def update_comms_settings() -> Response:
                 {
                     "error": (
                         "thresholds must be integers, "
-                        "human_in_loop_approval must be boolean, and "
+                        "human_in_loop_approval/state_persistence_enabled must be boolean, and "
                         "autosave_interval_seconds_since_change/retention_count must be integer"
                     )
                 }
             ),
             HTTPStatus.BAD_REQUEST,
         )
-    if delayed <= 0 or significant <= 0 or client_event_history_size <= 0:
+    if (
+        delayed <= 0
+        or significant <= 0
+        or minutes_keep_disconnected <= 0
+        or client_event_history_size <= 0
+    ):
         return jsonify({"error": "thresholds must be positive"}), HTTPStatus.BAD_REQUEST
     if autosave_interval_seconds_since_change <= 0:
         return (
@@ -1843,8 +1919,10 @@ async def update_comms_settings() -> Response:
         config = provider_config.update_comms_thresholds(
             delayed=delayed,
             significant=significant,
+            minutes_keep_disconnected=minutes_keep_disconnected,
             client_event_history_size=client_event_history_size,
             human_in_loop_approval=human_in_loop_approval,
+            state_persistence_enabled=state_persistence_enabled,
             state_save_folder=state_save_folder,
             retention_count=retention_count,
             autosave_interval_seconds_since_change=(
@@ -1877,8 +1955,11 @@ async def update_comms_settings() -> Response:
         {
             "delayed_comms_seconds": config.delayed_comms_seconds,
             "significant_comms_seconds": config.significant_comms_seconds,
+            "minutes_keep_disconnected": config.minutes_keep_disconnected,
             "client_event_history_size": config.client_event_history_size,
             "human_in_loop_approval": config.human_in_loop_approval,
+            "state_persistence_enabled": config.state_persistence.enabled is True,
+            "opamp_use_authorization": config.opamp_use_authorization,
             "state_save_folder": str(
                 pathlib.Path(config.state_persistence.state_file_prefix).parent
             ),
@@ -2044,12 +2125,20 @@ async def help_page() -> Response:
             GLOBAL_SETTINGS_HELP["significant_comms_seconds"]["tooltip"],
         )
         .replace(
+            "__HELP_MINUTES_KEEP_DISCONNECTED__",
+            GLOBAL_SETTINGS_HELP["minutes_keep_disconnected"]["tooltip"],
+        )
+        .replace(
             "__HELP_CLIENT_EVENT_HISTORY_SIZE__",
             GLOBAL_SETTINGS_HELP["client_event_history_size"]["tooltip"],
         )
         .replace(
             "__HELP_HUMAN_IN_LOOP_APPROVAL__",
             GLOBAL_SETTINGS_HELP["human_in_loop_approval"]["tooltip"],
+        )
+        .replace(
+            "__HELP_STATE_PERSISTENCE_ENABLED__",
+            GLOBAL_SETTINGS_HELP["state_persistence_enabled"]["tooltip"],
         )
         .replace(
             "__HELP_STATE_SAVE_FOLDER__",

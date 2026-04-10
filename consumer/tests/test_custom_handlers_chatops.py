@@ -14,7 +14,7 @@ import json
 import logging
 
 from opamp_consumer.config import ConsumerConfig
-from opamp_consumer.custom_handlers import ChatOpsCommand
+from opamp_consumer.custom_handlers.chatops_command import ChatOpsCommand
 from opamp_consumer.fluentbit_client import OpAMPClientData
 from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 from opamp_consumer.proto import opamp_pb2

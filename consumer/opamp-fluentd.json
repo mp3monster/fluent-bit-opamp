@@ -1,19 +1,20 @@
 {
   "consumer": {
-    "server_url": "http://localhost:4320",
+    "server_url": "http://localhost:8080",
     "client_status_port": 2020,
     "chat_ops_port": 8888,
     "transport": "http",
     "tls": {
-      "verify_server": true
+      "verify_server": true,
+      "enabled": false
     },
     "server-authorization": "none",
-    "log_agent_api_responses": true,
+    "log_agent_api_responses": false,
     "agent_config_path": "./consumer/fluentd.conf",
-    "agent_additional_params": ["-v"],
+    "agent_additional_params": [],
     "heartbeat_frequency": 30,
     "full_update_controller": {
-      "fullResendAfter": 2
+      "fullResendAfter": 1
     },
     "full_update_controller_type": "SentCount",
     "allow_custom_capabilities": true,

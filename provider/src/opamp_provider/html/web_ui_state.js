@@ -10,6 +10,7 @@
       refreshSeconds: 30,
       delayed: 60,
       significant: 300,
+      minutesKeepDisconnected: 30,
       clientEventHistorySize: 50,
       stateSaveFolder: "runtime",
       retentionCount: 5,
@@ -19,6 +20,7 @@
       diagnosticEnabled: false,
       statePersistenceEnabled: false,
       humanInLoopApproval: false,
+      opampUseAuthorization: "none",
       tlsEnabled: false,
       httpsCertificateExpiryDate: null,
       httpsCertificateDaysRemaining: null,
@@ -43,6 +45,7 @@
     const applyAuthTokenBtn = document.getElementById("applyAuthTokenBtn");
     const clearAuthTokenBtn = document.getElementById("clearAuthTokenBtn");
     const authTokenStatus = document.getElementById("authTokenStatus");
+    const authTokenGroup = document.getElementById("authTokenGroup");
     const modal = document.getElementById("modal");
     const modalCard = document.getElementById("modalCard");
     const modalFields = document.getElementById("modalFields");
@@ -92,11 +95,17 @@
     const significantCommsSecondsInput = document.getElementById(
       "significantCommsSecondsInput"
     );
+    const minutesKeepDisconnectedInput = document.getElementById(
+      "minutesKeepDisconnectedInput"
+    );
     const clientEventHistorySizeInput = document.getElementById(
       "clientEventHistorySizeInput"
     );
     const humanInLoopApprovalInput = document.getElementById(
       "humanInLoopApprovalInput"
+    );
+    const statePersistenceEnabledInput = document.getElementById(
+      "statePersistenceEnabledInput"
     );
     const stateSaveFolderInput = document.getElementById("stateSaveFolderInput");
     const retentionCountInput = document.getElementById("retentionCountInput");
@@ -112,11 +121,17 @@
     const significantCommsSecondsLabel = document.getElementById(
       "significantCommsSecondsLabel"
     );
+    const minutesKeepDisconnectedLabel = document.getElementById(
+      "minutesKeepDisconnectedLabel"
+    );
     const clientEventHistorySizeLabel = document.getElementById(
       "clientEventHistorySizeLabel"
     );
     const humanInLoopApprovalLabel = document.getElementById(
       "humanInLoopApprovalLabel"
+    );
+    const statePersistenceEnabledLabel = document.getElementById(
+      "statePersistenceEnabledLabel"
     );
     const stateSaveFolderLabel = document.getElementById("stateSaveFolderLabel");
     const retentionCountLabel = document.getElementById("retentionCountLabel");
@@ -188,6 +203,10 @@
         label: "Significant Communications Threshold (seconds)",
         tooltip: "Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value.",
       },
+      minutes_keep_disconnected: {
+        label: "Disconnected Retention Window (minutes)",
+        tooltip: "Minutes to keep disconnected clients in provider state before purge. This overrides the config file value.",
+      },
       client_event_history_size: {
         label: "Client Event History Size",
         tooltip: "Maximum number of recent per-client events retained by the provider. Older events are dropped when this limit is exceeded.",
@@ -195,6 +214,10 @@
       human_in_loop_approval: {
         label: "Human In Loop Approval",
         tooltip: "When enabled, unknown agents are staged for manual review and remain blocked until approved.",
+      },
+      state_persistence_enabled: {
+        label: "State Persistence Enabled",
+        tooltip: "When enabled, provider state snapshots can be saved/restored using state persistence settings.",
       },
       state_save_folder: {
         label: "State Save Folder",

@@ -31,6 +31,7 @@ NULLCOMMAND_CAPABILITY = "org.mp3monster.opamp_provider.nullcommand"  # Capabili
 NULLCOMMAND_TYPE = "Null Command"  # CustomMessage.type value for null-command payloads.
 NULLCOMMAND_CLASSIFIER = "custom"  # Command classifier for provider routing.
 NULLCOMMAND_ACTION = "nullcommand"  # Action name used for queueing and dispatch.
+NULLCOMMAND_DUMMY_VALUE = "dummyValue"  # User payload field used to test end-to-end custom-message data flow.
 PAYLOAD_KEY_CLASSIFIER = "classifier"  # Payload key used for command classifier metadata.
 PAYLOAD_KEY_ACTION = "action"  # Payload key used for command action metadata.
 ENCODING_UTF8 = "utf-8"  # Text encoding used for serialized custom payload bytes.
@@ -75,6 +76,7 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         return {
             PAYLOAD_KEY_CLASSIFIER: NULLCOMMAND_CLASSIFIER,
             PAYLOAD_KEY_ACTION: NULLCOMMAND_ACTION,
+            NULLCOMMAND_DUMMY_VALUE: "",
         }
 
     def get_command_classifier(self) -> str:
@@ -152,7 +154,14 @@ class CommandNullCommand(CommandObjectInterface, CommandParameterSchemaInterface
         Implements:
             CommandParameterSchemaInterface.get_user_parameter_schema.
         """
-        return []
+        return [
+            {
+                "parametername": NULLCOMMAND_DUMMY_VALUE,
+                "type": "string",
+                "description": "Dummy value used for nullcommand log output on the consumer.",
+                "isrequired": False,
+            },
+        ]
 
     def to_custom_message(self) -> opamp_pb2.CustomMessage:
         """Build a CustomMessage payload for nullcommand dispatch."""

@@ -16,8 +16,12 @@ from opamp_consumer.custom_handlers.handler_interface import (
     CommandHandlerInterface,
     CustomMessageHandlerInterface,
 )
-from opamp_consumer.custom_handlers.chatops_command import ChatOpsCommand
-from opamp_consumer.custom_handlers.shutdowncommand import ShutdownCommand
+# Design intent: concrete handlers are discovered dynamically from this package
+# directory by `registry.build_factory_lookup(...)`. We intentionally do not
+# re-export concrete handler classes here so imports do not imply static wiring.
+# from opamp_consumer.custom_handlers.chatops_command import ChatOpsCommand
+# from opamp_consumer.custom_handlers.nullcommand import NullCommand
+# from opamp_consumer.custom_handlers.shutdowncommand import ShutdownCommand
 from opamp_consumer.custom_handlers.registry import (
     build_factory_lookup,
     create_handler,
@@ -25,8 +29,6 @@ from opamp_consumer.custom_handlers.registry import (
 )
 
 __all__ = [
-    "ChatOpsCommand",
-    "ShutdownCommand",
     "CommandHandlerInterface",
     "CustomMessageHandlerInterface",
     "build_factory_lookup",

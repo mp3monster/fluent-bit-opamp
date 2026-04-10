@@ -18,6 +18,7 @@ import argparse
 import logging
 import os
 import json
+import sys
 
 from opamp_provider import config as provider_config
 from opamp_provider.app import app, set_state_restore_status
@@ -70,7 +71,7 @@ def main() -> None:
     # Bootstrap startup logs before config load/restore so manual runs always show
     # config path + restore decisions even when no handlers were preconfigured.
     if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     else:
         root_logger.setLevel(logging.INFO)
     effective_config_path = provider_config.get_effective_config_path(args.config_path)
@@ -170,7 +171,7 @@ def main() -> None:
     # Do not force-reconfigure handlers here. In tests/tools, handlers may be
     # preinstalled (for capture), and replacing them can break stream lifecycle.
     if not root_logger.handlers:
-        logging.basicConfig(level=resolved_log_level)
+        logging.basicConfig(level=resolved_log_level, stream=sys.stdout)
     else:
         root_logger.setLevel(resolved_log_level)
     app.config["DIAGNOSTIC_MODE"] = bool(args.diagnostic)

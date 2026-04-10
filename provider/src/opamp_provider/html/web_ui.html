@@ -234,6 +234,21 @@
                     title="Seconds before a client is marked late (red). Must be greater than delayed_comms_seconds. This overrides the config file value."
                   >i</button>
                 </div>
+                <div class="settings-row">
+                  <label id="minutesKeepDisconnectedLabel" for="minutesKeepDisconnectedInput">minutes_keep_disconnected</label>
+                  <input
+                    id="minutesKeepDisconnectedInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="minutes_keep_disconnected"
+                    title="Minutes to keep disconnected clients in provider state before purge. This overrides the config file value."
+                  >i</button>
+                </div>
               </div>
             </div>
             <div class="settings-group">
@@ -260,6 +275,25 @@
             <div id="statePersistenceGroup" class="settings-group settings-group-cluster">
               <div class="settings-group-title">State Persistence</div>
               <div class="settings-group-rows">
+                <div class="settings-row">
+                  <label id="statePersistenceEnabledLabel" for="statePersistenceEnabledInput">state_persistence.enabled</label>
+                  <label class="settings-switch" for="statePersistenceEnabledInput">
+                    <input
+                      id="statePersistenceEnabledInput"
+                      class="settings-switch-input"
+                      type="checkbox"
+                      role="switch"
+                    />
+                    <span class="settings-switch-track" aria-hidden="true"></span>
+                    <span class="settings-switch-state" aria-hidden="true"></span>
+                  </label>
+                  <button
+                    type="button"
+                    class="schema-icon help-icon"
+                    data-help-key="state_persistence_enabled"
+                    title="When enabled, provider state snapshots can be saved/restored using state persistence settings."
+                  >i</button>
+                </div>
                 <div class="settings-row settings-row-readonly">
                   <label id="stateSaveFolderLabel" for="stateSaveFolderInput">state_save_folder</label>
                   <input
@@ -314,23 +348,6 @@
                 </div>
               </div>
             </div>
-            <div class="settings-group">
-              <div class="token-controls">
-                <label for="authTokenInput">Bearer Token</label>
-                <div class="token-controls-row">
-                  <input
-                    id="authTokenInput"
-                    class="token-input"
-                    type="password"
-                    placeholder="Optional for secured endpoints"
-                    autocomplete="off"
-                  />
-                  <button id="applyAuthTokenBtn" class="token-button" type="button">Set Token</button>
-                  <button id="clearAuthTokenBtn" class="token-button" type="button">Clear Token</button>
-                  <span id="authTokenStatus" class="token-status">Token: not set</span>
-                </div>
-              </div>
-            </div>
             <div id="httpsCertificateExpiryGroup" class="settings-group hidden">
               <div class="settings-row settings-row-readonly">
                 <label for="httpsCertificateExpiryOutput">HTTPS Certificate Expiry Date</label>
@@ -374,6 +391,23 @@
                   data-help-key="default_heartbeat_frequency"
                   title="Default heartbeat interval in seconds applied to clients when globally updated."
                 >i</button>
+              </div>
+            </div>
+            <div id="authTokenGroup" class="settings-group hidden">
+              <div class="token-controls">
+                <label for="authTokenInput">Bearer Token</label>
+                <div class="token-controls-row">
+                  <input
+                    id="authTokenInput"
+                    class="token-input"
+                    type="password"
+                    placeholder="Optional for secured endpoints"
+                    autocomplete="off"
+                  />
+                  <button id="applyAuthTokenBtn" class="token-button" type="button">Set Token</button>
+                  <button id="clearAuthTokenBtn" class="token-button" type="button">Clear Token</button>
+                  <span id="authTokenStatus" class="token-status">Token: not set</span>
+                </div>
               </div>
             </div>
           </div>

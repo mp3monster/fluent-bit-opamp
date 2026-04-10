@@ -46,7 +46,7 @@ def test_restart_agent_implements_command_interface_methods() -> None:
     obj.set_key_value_dictionary({"classifier": "command", "action": "restart"})
 
     assert obj.get_command_classifier() == "command"
-    assert obj.get_command_description() == "Restart Agent"
+    assert obj.get_command_description() == "Restarts Agent"
     assert obj.getdisplayname() == "Restart Agent"
     assert isinstance(obj.get_command_time(), datetime)
     assert obj.get_key_value_dictionary() == {
@@ -82,7 +82,10 @@ def test_chatopcommand_implements_command_interface_methods() -> None:
     obj.set_key_value_dictionary({"classifier": "custom", "action": "chatopcommand"})
 
     assert obj.get_command_classifier() == "custom"
-    assert obj.get_command_description() == "custom chatopcommand queued"
+    assert (
+        obj.get_command_description()
+        == "Uses the chat ops strategy to provide a dynamic means to get the agent to perform a task based on its existing configuration."
+    )
     assert obj.getdisplayname() == "ChatOps Command"
     assert isinstance(obj.get_command_time(), datetime)
     assert obj.get_key_value_dictionary() == {
@@ -147,7 +150,14 @@ def test_command_object_factory_creates_nullcommand() -> None:
     assert obj.get_command_classifier() == "custom"
     assert obj.get_key_value_dictionary()["action"] == "nullcommand"
     assert obj.getdisplayname() == "Null Command"
-    assert obj.get_user_parameter_schema() == []
+    assert obj.get_user_parameter_schema() == [
+        {
+            "parametername": "dummyValue",
+            "type": "string",
+            "description": "Dummy value used for nullcommand log output on the consumer.",
+            "isrequired": False,
+        },
+    ]
 
 
 def test_chatopcommand_generates_custom_message_with_reverse_fqdn_capability() -> None:
@@ -199,11 +209,21 @@ def test_nullcommand_generates_custom_message_with_reverse_fqdn_capability() -> 
             "classifier": "custom",
             "operation": "nullcommand",
             "action": "nullcommand",
+            "dummyValue": "hello-test",
         },
     )
     message = obj.to_custom_message()
     assert message.capability == NULLCOMMAND_CAPABILITY
     assert message.type == NULLCOMMAND_TYPE
+    assert message.data == json.dumps(
+        {
+            "action": "nullcommand",
+            "classifier": "custom",
+            "dummyValue": "hello-test",
+            "operation": "nullcommand",
+        },
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def test_command_object_factory_rejects_unknown_mapping() -> None:
@@ -261,7 +281,10 @@ def test_command_metadata_returns_custom_schema_with_display_name() -> None:
     entry = entries["chatopcommand"]
     assert entry["fqdn"] == CHATOPCOMMAND_CAPABILITY
     assert entry["displayname"] == "ChatOps Command"
-    assert entry["description"] == "custom chatopcommand queued"
+    assert (
+        entry["description"]
+        == "Uses the chat ops strategy to provide a dynamic means to get the agent to perform a task based on its existing configuration."
+    )
     assert entry["classifier"] == "custom"
     assert entry["operation"] == "chatopcommand"
     assert {
@@ -274,12 +297,25 @@ def test_command_metadata_returns_custom_schema_with_display_name() -> None:
         assert row.get("parametername") not in {"classifier", "type", "data"}
     assert entries["shutdownagent"]["fqdn"] == SHUTDOWN_AGENT_CAPABILITY
     assert entries["shutdownagent"]["displayname"] == "Shutdown Agent"
-    assert entries["shutdownagent"]["description"] == "custom shutdownagent queued"
+    assert (
+        entries["shutdownagent"]["description"]
+        == "Instruction for telling an agent to shutdown"
+    )
     assert entries["shutdownagent"]["schema"] == []
     assert entries["nullcommand"]["fqdn"] == NULLCOMMAND_CAPABILITY
     assert entries["nullcommand"]["displayname"] == "Null Command"
-    assert entries["nullcommand"]["description"] == "custom nullcommand queued"
-    assert entries["nullcommand"]["schema"] == []
+    assert (
+        entries["nullcommand"]["description"]
+        == "Null command provides a means to check the custom command configuration without impact"
+    )
+    assert entries["nullcommand"]["schema"] == [
+        {
+            "parametername": "dummyValue",
+            "type": "string",
+            "description": "Dummy value used for nullcommand log output on the consumer.",
+            "isrequired": False,
+        },
+    ]
 
 
 def test_command_registry_exposes_reverse_fqdn_map() -> None:

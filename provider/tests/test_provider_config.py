@@ -262,3 +262,54 @@ def test_update_comms_thresholds_updates_retention_count() -> None:
     )
 
     assert updated.state_persistence.retention_count == 9
+
+
+def test_update_comms_thresholds_updates_minutes_keep_disconnected() -> None:
+    """Verify update_comms_thresholds applies new disconnected retention minutes."""
+    provider_config.set_config(
+        provider_config.ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+        )
+    )
+
+    updated = provider_config.update_comms_thresholds(
+        delayed=60,
+        significant=300,
+        minutes_keep_disconnected=45,
+    )
+
+    assert updated.minutes_keep_disconnected == 45
+
+
+def test_update_comms_thresholds_updates_state_persistence_enabled() -> None:
+    """Verify update_comms_thresholds applies state persistence enabled/disabled updates."""
+    provider_config.set_config(
+        provider_config.ProviderConfig(
+            delayed_comms_seconds=60,
+            significant_comms_seconds=300,
+            webui_port=8080,
+            minutes_keep_disconnected=30,
+            retry_after_seconds=30,
+            client_event_history_size=50,
+            log_level="INFO",
+            state_persistence=provider_config.ProviderStatePersistenceConfig(
+                enabled=False,
+                state_file_prefix="runtime/opamp_server_state",
+                retention_count=5,
+            ),
+        )
+    )
+
+    updated = provider_config.update_comms_thresholds(
+        delayed=60,
+        significant=300,
+        state_persistence_enabled=True,
+    )
+
+    assert updated.state_persistence.enabled is True
