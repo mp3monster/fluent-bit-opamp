@@ -27,6 +27,11 @@ if TYPE_CHECKING:
     from opamp_consumer.abstract_client import OpAMPClientData
     from opamp_consumer.opamp_client_interface import OpAMPClientInterface
 
+UTF8_ENCODING = "utf-8"  # Text encoding used to decode custom-message payload bytes.
+DECODE_ERRORS_REPLACE = "replace"  # Decode error strategy for malformed payload bytes.
+PAYLOAD_ACTION_KEY = "action"  # JSON payload key used to select handler action.
+CLIENT_SEND_METHOD_NAME = "send"  # Client method name used to send custom responses upstream.
+
 
 class CommandHandlerInterface(ABC):
     """Defines the command handler contract for custom messages."""
@@ -88,22 +93,22 @@ class CustomMessageHandlerInterface(CommandHandlerInterface):
 
             message_type = str(self._custom_message.type or "")
             payload_text = bytes(self._custom_message.data or b"").decode(
-                "utf-8",
-                errors="replace",
+                UTF8_ENCODING,
+                errors=DECODE_ERRORS_REPLACE,
             )
             action = ""
             if payload_text:
                 try:
                     payload_data = json.loads(payload_text)
                     if isinstance(payload_data, dict):
-                        action = str(payload_data.get("action", "") or "")
+                        action = str(payload_data.get(PAYLOAD_ACTION_KEY, "") or "")
                 except json.JSONDecodeError:
                     action = ""
 
             self.handle_message(payload_text, message_type)
             custom_response = self.execute_action(action, opamp_client)
             if custom_response is not None:
-                sender = getattr(opamp_client, "send", None)
+                sender = getattr(opamp_client, CLIENT_SEND_METHOD_NAME, None)
                 if not callable(sender):
                     return CommandException(
                         "Custom response could not be sent: client send method unavailable"
