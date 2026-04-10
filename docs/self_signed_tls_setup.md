@@ -70,6 +70,7 @@ Add/update `provider.tls`:
 {
   "provider": {
     "tls": {
+      "enabled": true,
       "cert_file": "certs/provider-server.pem",
       "key_file": "certs/provider-server-key.pem",
       "trust_anchor_mode": "none"
@@ -78,8 +79,15 @@ Add/update `provider.tls`:
 }
 ```
 
+Behavior notes:
+
+- If the `provider.tls` section is missing, provider runs HTTP-only.
+- If `provider.tls` is present and `enabled` is omitted, TLS defaults to enabled.
+- Set `provider.tls.enabled` to `false` to keep the section but force HTTP-only mode.
+
 If you start provider with `scripts/run_opamp_server.sh --https` or
-`scripts\\run_opamp_server.cmd --https`, this block is generated/updated automatically.
+`scripts\\run_opamp_server.cmd --https`, the TLS cert/key/trust values are generated/updated automatically.
+`provider.tls.enabled` can be set explicitly, but defaults to enabled when omitted.
 
 Also ensure the consumer URL in the same file uses HTTPS:
 

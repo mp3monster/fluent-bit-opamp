@@ -33,6 +33,7 @@ This table lists the helper scripts and their platform-specific names.
      - `provider.tls.cert_file`
      - `provider.tls.key_file`
      - `provider.tls.trust_anchor_mode` (`none`)
+     - `provider.tls.enabled` defaults to `true` when omitted.
 - The wrapper consumes `--https` itself and does not pass it through to `opamp_provider.server`.
 
 ## Supervisor config defaults

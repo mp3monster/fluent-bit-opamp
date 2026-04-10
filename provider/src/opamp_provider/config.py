@@ -45,6 +45,7 @@ CFG_HUMAN_IN_LOOP_APPROVAL = "human_in_loop_approval"  # Provider JSON key toggl
 CFG_OPAMP_USE_AUTHORIZATION = "opamp-use-authorization"  # Provider JSON key controlling OpAMP transport bearer authorization mode.
 CFG_UI_USE_AUTHORIZATION = "ui-use-authorization"  # Provider JSON key controlling non-OpAMP HTTP/WebSocket bearer authorization mode.
 CFG_TLS = "tls"  # Provider JSON key for shared TLS server settings.
+CFG_TLS_ENABLED = "enabled"  # Provider TLS key toggling HTTPS/TLS listener mode.
 CFG_TLS_CERT_FILE = "cert_file"  # Provider TLS key for server certificate path.
 CFG_TLS_KEY_FILE = "key_file"  # Provider TLS key for server private key path.
 CFG_TLS_TRUST_ANCHOR_MODE = "trust_anchor_mode"  # Provider TLS key for trust-anchor policy mode.
@@ -76,6 +77,7 @@ OPAMP_USE_AUTHORIZATION_IDP = (
 )
 DEFAULT_OPAMP_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default OpAMP auth mode.
 DEFAULT_UI_USE_AUTHORIZATION = OPAMP_USE_AUTHORIZATION_NONE  # Default non-OpAMP auth mode.
+DEFAULT_TLS_ENABLED = True  # Default TLS enabled state when provider.tls section is present.
 TLS_TRUST_ANCHOR_PARTIAL_CHAIN = "partial_chain"  # Trust-anchor mode allowing intermediate anchors.
 TLS_TRUST_ANCHOR_FULL_CHAIN_TO_ROOT = "full_chain_to_root"  # Trust-anchor mode requiring root anchors.
 TLS_TRUST_ANCHOR_NONE = "none"  # Trust-anchor mode for local self-signed development without CA-anchor checks.
@@ -243,6 +245,9 @@ def _load_provider_tls_config(provider_raw: dict[str, Any]) -> ProviderTLSConfig
         return None
     if not isinstance(tls_raw, dict):
         raise ValueError(f"{CFG_PROVIDER}.{CFG_TLS} must be an object")
+    tls_enabled = _as_bool(tls_raw.get(CFG_TLS_ENABLED), DEFAULT_TLS_ENABLED)
+    if not tls_enabled:
+        return None
     cert_file = _validate_required_file_path(
         cfg_key=f"{CFG_PROVIDER}.{CFG_TLS}.{CFG_TLS_CERT_FILE}",
         value=tls_raw.get(CFG_TLS_CERT_FILE),

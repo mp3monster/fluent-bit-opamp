@@ -72,6 +72,58 @@ def test_provider_tls_defaults_to_none_when_missing() -> None:
     assert config.tls is None
 
 
+def test_provider_tls_enabled_defaults_true_when_section_present(tmp_path) -> None:
+    """Verify provider.tls defaults to enabled when section exists and `enabled` is omitted."""
+    cert_file = tmp_path / "provider-server.pem"
+    key_file = tmp_path / "provider-server-key.pem"
+    cert_file.write_text("dummy cert", encoding="utf-8")
+    key_file.write_text("dummy key", encoding="utf-8")
+
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "tls": {
+                        "cert_file": str(cert_file),
+                        "key_file": str(key_file),
+                    }
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(config_path)
+
+    config = provider_config.load_config()
+    assert config.tls is not None
+    assert config.tls.cert_file == str(cert_file)
+    assert config.tls.key_file == str(key_file)
+
+
+def test_provider_tls_disabled_when_enabled_flag_false(tmp_path) -> None:
+    """Verify provider.tls.enabled=false disables TLS even when TLS section exists."""
+    config_path = tmp_path / "opamp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "tls": {
+                        "enabled": False,
+                    }
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    os.environ[provider_config.ENV_OPAMP_CONFIG_PATH] = str(config_path)
+
+    config = provider_config.load_config()
+    assert config.tls is None
+
+
 def test_state_persistence_defaults_when_missing() -> None:
     """Verify state persistence settings fall back to documented defaults when omitted."""
     root = pathlib.Path(__file__).resolve().parents[2]

@@ -15,6 +15,7 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - [docs/consumer_mixins.md](consumer_mixins.md) — how consumer mixins are composed, dispatched, and overridden.
 - [docs/consumer_update_controllers.md](consumer_update_controllers.md) — how full update controllers drive reporting flags and outbound message field cadence.
 - [docs/authentication.md](authentication.md) — bearer token auth modes, static-token setup, Keycloak/JWT setup, and MCP token usage.
+- [docs/endpoints.md](endpoints.md) — provider endpoint inventory, including UI/API/tool/MCP routes and `/doc-set`.
 - [docs/self_signed_tls_setup.md](self_signed_tls_setup.md) — generate local self-signed cert/key and apply config values for HTTPS testing.
 - [docs/api_gateway_requirements.md](api_gateway_requirements.md) — recommended API gateway controls, internal vs external client profiles, and required auth/route hardening updates.
 - [docs/service_daemon_setup.md](service_daemon_setup.md) — running provider/consumer as `systemd` or Windows services, including Fluent Bit/Fluentd launch permissions.

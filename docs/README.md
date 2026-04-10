@@ -114,6 +114,7 @@ python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 
 - Provider Web UI: http://localhost:8080/ui
 - Help page: http://localhost:8080/help
+- Latest docs redirect: http://localhost:8080/doc-set
 - Consumer diagram walkthrough (rendered PNGs): `docs/consumer_client_diagrams.md`
 - Provider/server diagram walkthrough (rendered PNGs): `docs/provider_server_diagrams.md`
 - Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
@@ -121,4 +122,5 @@ python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 - Recommended API gateway hardening and internal vs external client profiles: see `docs/api_gateway_requirements.md`
 - Running as a Linux daemon or Windows service (including consumer permissions to launch Fluent Bit/Fluentd): see `docs/service_daemon_setup.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.
+- `/doc-set` redirects to the URL set in `provider.latest_docs_url` (defaults to the project README on GitHub).
 - For Windows CMD usage, the commands are similar but use `\.venv\Scripts\activate.bat` to activate the venv.

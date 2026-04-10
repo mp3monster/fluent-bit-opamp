@@ -70,6 +70,7 @@ Example `opamp.json`:
     "client_event_history_size": 50,
     "log_level": "INFO",
     "default_heartbeat_frequency": 30,
+    "latest_docs_url": "https://github.com/mp3monster/fluent-opamp/blob/main/README.md",
     "human_in_loop_approval": false,
     "opamp-use-authorization": "none",
     "ui-use-authorization": "none",
@@ -81,6 +82,7 @@ Example `opamp.json`:
       "autosave_interval_seconds_since_change": 600
     },
     "tls": {
+      "enabled": true,
       "cert_file": "certs/provider-server.pem",
       "key_file": "certs/provider-server-key.pem",
       "trust_anchor_mode": "none"
@@ -109,6 +111,8 @@ Example `opamp.json`:
   Level names are resolved via Python `logging`.
 - `provider.default_heartbeat_frequency` (integer, optional, default `30`)
   Default heartbeat interval assigned to clients.
+- `provider.latest_docs_url` (string, optional, default project README URL)
+  Redirect target URL for `GET /doc-set`.
 - `provider.human_in_loop_approval` (boolean, optional, default `false`)
   Requires unknown agents to be reviewed in the Pending Approval workflow before they are accepted.
   This setting can be updated in the UI via Global Settings -> Server Settings.
@@ -122,7 +126,7 @@ Example `opamp.json`:
     `OPAMP_AUTH_JWT_LEEWAY_SECONDS`).
 - `provider.ui-use-authorization` (string, optional, default `"none"`)
   Non-OpAMP authorization mode for HTTP and MCP transport routes (for example `/tool`, `/sse`,
-  `/messages`, `/mcp`, `/api`, `/ui`, `/help`):
+  `/messages`, `/mcp`, `/api`, `/ui`, `/help`, `/doc-set`):
   - `none`: no non-OpAMP bearer-token enforcement.
   - `config-token`: require `Authorization: Bearer <token>` and compare against the
     `UI_AUTH_STATIC_TOKEN` environment variable (this token is not read from `opamp.json`).
@@ -130,10 +134,13 @@ Example `opamp.json`:
     (`UI_AUTH_JWT_ISSUER`, `UI_AUTH_JWT_AUDIENCE`, optional `UI_AUTH_JWT_JWKS_URL`,
     `UI_AUTH_JWT_LEEWAY_SECONDS`).
 - `provider.tls` (object, optional)
-  Enables HTTPS for the single provider listener when present. When omitted, provider runs HTTP-only.
-  - `provider.tls.cert_file` (string, required when `provider.tls` is present)
+  TLS listener configuration for the single provider listener.
+  If this section is omitted, provider runs HTTP-only.
+  - `provider.tls.enabled` (boolean, optional, default `true` when `provider.tls` exists)
+    Controls whether TLS is active. Set to `false` to force HTTP-only mode while keeping TLS file settings in config.
+  - `provider.tls.cert_file` (string, required when `provider.tls.enabled=true`)
     Path to PEM server certificate file.
-  - `provider.tls.key_file` (string, required when `provider.tls` is present)
+  - `provider.tls.key_file` (string, required when `provider.tls.enabled=true`)
     Path to PEM server private key file.
   - `provider.tls.trust_anchor_mode` (string, optional, default `"full_chain_to_root"`)
     Allowed values: `none`, `partial_chain`, `full_chain_to_root`.
@@ -230,6 +237,7 @@ For Linux `systemd` and Windows service examples for provider and consumer deplo
 
 - Console: `http://localhost:8080/ui`
 - Help: `http://localhost:8080/help`
+- Latest docs redirect: `http://localhost:8080/doc-set`
 
 The UI includes a shutdown button that prompts for confirmation and calls the shutdown API.
 

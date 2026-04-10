@@ -6,7 +6,7 @@ This document lists the HTTP and WebSocket endpoints exposed by the provider.
 
 Bearer protection is controlled by provider config plus environment-backed secrets/JWT settings:
 
-- `provider.ui-use-authorization` controls non-OpAMP routes (for example `/api`, `/tool`, `/ui`, `/help`, `/sse`, `/messages`, `/mcp`).
+- `provider.ui-use-authorization` controls non-OpAMP routes (for example `/api`, `/tool`, `/ui`, `/help`, `/doc-set`, `/sse`, `/messages`, `/mcp`).
 - `provider.opamp-use-authorization` controls OpAMP transport (`/v1/opamp` HTTP and WebSocket).
 - Environment variables provide token/JWT validation settings:
   - OpAMP transport: `OPAMP_AUTH_*`
@@ -19,6 +19,7 @@ Bearer protection is controlled by provider config plus environment-backed secre
 | GET | `/` | Redirect to the web UI (`/ui`). |
 | GET | `/ui` | Main web UI page. |
 | GET | `/help` | Help page. |
+| GET | `/doc-set` | Redirect to latest docs URL configured in `provider.latest_docs_url`. |
 | GET | `/create.ico` | UI favicon. |
 
 ## Tool Endpoints

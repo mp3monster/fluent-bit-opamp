@@ -10,6 +10,9 @@ This project supports optional bearer-token authentication for provider endpoint
 - `/mcp/*`
 - `/api`
 - `/api/*`
+- `/ui`
+- `/help`
+- `/doc-set`
 - `/v1/opamp`
 
 Authentication mode is controlled by provider config keys in `opamp.json`. Static token and JWT
@@ -39,7 +42,7 @@ Provider config key `provider.opamp-use-authorization` controls `/v1/opamp` HTTP
 
 Provider config key `provider.ui-use-authorization` controls non-OpAMP HTTP and MCP transport
 routes (including websocket scopes), for example `/tool`, `/sse`, `/messages`, `/mcp`, `/api`,
-`/ui`, `/help`:
+`/ui`, `/help`, `/doc-set`:
 
 - `none` (default): no bearer validation.
 - `config-token`: require `Authorization: Bearer <token>` and compare with `UI_AUTH_STATIC_TOKEN`.

@@ -134,13 +134,13 @@ flowchart TD
     D --> E["provider_config.load_config_with_overrides(...)"]
     E --> F["provider_config.set_config(...)"]
     F --> G["STORE.set_default_heartbeat_frequency(...)"]
-    G --> H{"provider.tls present?"}
+    G --> H{"provider.tls present and enabled?"}
     H -->|No| I["Quart app.run(host, port)"]
     H -->|Yes| J["Quart app.run(host, port, certfile, keyfile)"]
 
     I --> K["POST /v1/opamp"]
     I --> L["WEBSOCKET /v1/opamp"]
-    I --> M["/api/* + /tool/* + /ui"]
+    I --> M["/api/* + /tool/* + /ui + /help + /doc-set"]
 
     J --> K
     J --> L
@@ -209,6 +209,6 @@ flowchart TD
     B -->|WebSocket /v1/opamp| M["opamp_websocket()"]
     M --> N["decode_message() + provider protocol handling"]
 
-    O["Protected prefixes default: /tool, /sse, /messages, /mcp"] --> C
+    O["Non-OpAMP HTTP routes (for example /tool, /sse, /messages, /mcp, /api, /ui, /help, /doc-set)"] --> C
     O --> I
 ```

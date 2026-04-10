@@ -6,7 +6,7 @@ This guide defines a recommended baseline for fronting the provider with an API 
 
 The provider exposes multiple endpoint classes with different risk profiles:
 
-- Operator endpoints: `/ui`, `/help`, `/api/*`
+- Operator endpoints: `/ui`, `/help`, `/doc-set`, `/api/*`
 - MCP/tool endpoints: `/tool`, `/tool/*`, `/sse`, `/messages`, `/mcp`, `/mcp/*`
 - Agent transport endpoint: `/v1/opamp` (HTTP + WebSocket)
 
@@ -60,7 +60,7 @@ Notes:
 - `jwt` is still preferred over `static` when an IdP is available.
 - Set both static token environment variables:
   - `OPAMP_AUTH_STATIC_TOKEN` for `/v1/opamp`
-  - `UI_AUTH_STATIC_TOKEN` for non-OpAMP routes (`/api`, `/tool`, `/sse`, `/messages`, `/mcp`, `/ui`, `/help`)
+  - `UI_AUTH_STATIC_TOKEN` for non-OpAMP routes (`/api`, `/tool`, `/sse`, `/messages`, `/mcp`, `/ui`, `/help`, `/doc-set`)
 
 ## Profile B: Remote/External or Mixed-Trust Clients
 
@@ -85,7 +85,7 @@ export OPAMP_AUTH_JWT_ISSUER='https://issuer.example.com/realms/opamp'
 export OPAMP_AUTH_JWT_AUDIENCE='opamp-mcp'
 export OPAMP_AUTH_JWT_JWKS_URL='https://issuer.example.com/realms/opamp/protocol/openid-connect/certs'
 
-# Non-OpAMP routes (/api, /tool, /sse, /messages, /mcp, /ui, /help)
+# Non-OpAMP routes (/api, /tool, /sse, /messages, /mcp, /ui, /help, /doc-set)
 export UI_AUTH_JWT_ISSUER='https://issuer.example.com/realms/opamp'
 export UI_AUTH_JWT_AUDIENCE='opamp-ui'
 export UI_AUTH_JWT_JWKS_URL='https://issuer.example.com/realms/opamp/protocol/openid-connect/certs'
@@ -93,7 +93,7 @@ export UI_AUTH_JWT_JWKS_URL='https://issuer.example.com/realms/opamp/protocol/op
 
 Recommended gateway policy shape:
 
-1. Operator routes (`/ui`, `/help`, `/api/*`):
+1. Operator routes (`/ui`, `/help`, `/doc-set`, `/api/*`):
    - OIDC login, MFA, and role/group checks.
 2. MCP/tool routes (`/tool*`, `/mcp*`, `/sse`, `/messages`):
    - JWT validation with strict audience/issuer controls.

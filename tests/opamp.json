@@ -3,7 +3,10 @@
     "server_url": "http://localhost:8080",
     "client_status_port": 2020,
     "chat_ops_port": 8888,
-    "transport": "http",
+    "transport": "https",
+    "tls": {
+      "verify_server": false
+    },
     "server-authorization": "none",
     "log_agent_api_responses": false,
     "agent_config_path": "./fluent-bit.conf",
