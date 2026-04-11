@@ -6,20 +6,20 @@
 
 ## The Main Server Console
 
-![MainConsole](D:\dev\opamp\docs\screenshots\ServerConsole.png)
+![Main Console](.\screenshots\ServerConsole.png)
 
 ## Help Details
 
-![Help Page](D:\dev\opamp\docs\screenshots\ServerHelp.png)
+![Help Page](.\screenshots\ServerHelp.png)
 
 
 
 ## Supervisory Summary View
 
-![SupervisorSummary](D:\dev\opamp\docs\screenshots\SupervisorSummary.png)
+![Supervisor Summary](.\screenshots\SupervisorSummary.png)
 
 
 
 ## Client Command Dialog
 
-![](D:\dev\opamp\docs\screenshots\SupervisorSummary-with commands.png)
+![ClientCommand Dialog](.\screenshots\SupervisorSummary-with-commands.png)
