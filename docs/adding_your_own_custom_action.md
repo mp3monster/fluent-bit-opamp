@@ -6,9 +6,9 @@ This guide explains how to add and deploy a new custom action end-to-end across:
 - provider custom-message dispatch
 - consumer custom-message handling
 
-It uses `nullcommand` as the baseline pattern.
+It uses `nullcommand` as a template.
 
-## Baseline: How `nullcommand` Works Today
+## Baseline: How `nullcommand` Works
 
 Provider baseline class:
 

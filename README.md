@@ -5,7 +5,7 @@ This repository hosts an implementation of the OpenTelemetry [Open Agent Managem
 - manage & monitor any compliant agent
 - Command and configure agents
 
-The protocol is oriented towards agents supporting the observability domain such as OTel Collectors. The protocol does not mandate that the capabilities have to be directly embedded in the agent, infact the protocol documentation calls out explicitly the idea of a supervisor model, where a separate process manages the agent.
+The protocol is oriented towards agents supporting the observability domain such as OTel Collectors. The protocol does not mandate that the capabilities have to be directly embedded in the agent, in fact the protocol documentation calls out explicitly the idea of a supervisor model, where a separate process manages the agent.
 
 This repository provide an agent implementation that specifically adopts the supervisor model, but also understands the characteristics of Fluent Bit and Fluentd to service the different operations.
 
@@ -36,6 +36,7 @@ The documentation includes background such as the implementation philosophies th
 
 - `config` — default configuration files (including `opamp.json`).
 - `consumer` — the OpAMP consumer (client) package, tests, and config samples.
+- `dist` — SBOM and Wheel files.
 - `docs` — project documentation.
 - `logs` — runtime logs created by scripts.
 - `proto` — protobuf definitions and generated artifacts.

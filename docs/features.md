@@ -14,15 +14,15 @@ Here's a markdown table with one row per `AgentToServer` message field:
 | `instance_uid`                | Stable      | Done                  | Globally unique identifier of the running Agent instance. Must be 16 bytes, generated using UUID v7. Must be set on every message. |                                                              |
 | `sequence_num`                | Stable      | Done                  | Monotonically incrementing counter (by 1 per message) so the Server can detect missed messages. |                                                              |
 | `agent_description`           | Stable      | Done                  | Describes the Agent: its type, version, OS, and where it runs. Should be omitted if unchanged since last message. |                                                              |
-| `capabilities`                | Stable      | Done                  | Bitmask of `AgentCapabilities` flags declaring what the Agent supports. Must always be set. | Currently config driven - perhaps change to be based on abstraction of agent type (Fluent Bit, Fluentd) |
-| `health`                      | Beta        | Done                   | Current health of the Agent and its sub-components. May be omitted if unchanged since last message. | We pickup on the health of Fluent Bit |
+| `capabilities`                | Stable      | Done                  | Bitmask of `AgentCapabilities` flags declaring what the Agent supports. Must always be set. |  |
+| `health`                      | Beta        | Done                   | Current health of the Agent and its sub-components. May be omitted if unchanged since last message. | Basic Fluent API interrogation is used |
 | `effective_config`            | Stable      | ToDo                  | The Agent's current active configuration (may differ from the remote config). Should be omitted if unchanged since last message. | We use the metrics to get health of sources. |
 | `remote_config_status`        | Stable      | Long Term             | Status of the last remote configuration received from the Server. Should be omitted if unchanged since last message. |                                                              |
 | `package_statuses`            | Beta        | Not Planned           | List of Agent packages and their installation/update statuses. Should be omitted if unchanged since last message. | Makes more sense with Fluentd as greater package portfolio   |
 | `agent_disconnect`            | Stable      | Done             | Must be set in the last `AgentToServer` message before the Agent disconnects. |                                                              |
 | `**flags**`                   | Stable      | Done             | Bitmask of `AgentToServerFlags`. Currently includes `RequestInstanceUid` to ask the Server to assign a new instance UID. |                                                              |
 | `connection_settings_request` | Development | Long Term             | A request from the Agent to initiate creation of new connection settings (agent-initiated CSR flow). |                                                              |
-| `custom_capabilities`         | Development | Done                  | Declares custom/extension capabilities supported by this Agent. | This is support the ChatOps concept                          |
+| `custom_capabilities`         | Development | Done                  | Declares custom/extension capabilities supported by this Agent. | This is support the ChatOps concept. Documentation provided on how to add your own. |
 | `custom_message`              | Development | Done                  | An arbitrary custom message sent from the Agent to the Server, scoped to a declared custom capability. | This is support the ChatOps concept                          |
 | `available_components`        | Development | Not Planned           | Lists the components available in the Agent. Should only be set when `ReportsAvailableComponents` capability is declared. |                                                              |
 | `connection_settings_status`  | Development | Not Planned           | Reports the status of connection settings previously offered by the Server. Should be omitted if unchanged since last message. | This would be invasive to Fluent Bit                         |
@@ -55,23 +55,23 @@ Connection settings policy note:
 ## Immediate ToDos
 
 ### Client Side
-* set header correctly based on channel
+* Additional testing of headers needed.
 
 
 ### Server Side
-* Implement the socket connection control (Duplicate WebSockets Connections) where a disconnesct is sent if necessary
+* Implement the socket connection control (Duplicate WebSockets Connections) where a disconnect is sent if a client appears to connect more than once on a socket.
 
 
 ## Future Features
 
-### Recently Completed
-* Wheel packaging for provider/server and consumer/agent.
-* SBOM generation (CycloneDX JSON) for deployable wheel artifacts.
+### In Progress or Recently Completed
+* Wheel packaging for provider/server and consumer/agent - **needs testing**
+* SBOM generation (CycloneDX JSON) for deployable provider/server and consumer/client wheel artifacts (need to automate publication)
 
-### All
-* GitHub driven test rig
-* Docs on readthedocs
-* test with a 3rd party server
+### Server & Client
+* GitHub driven test rig including validating against 3rd party server or client implementation for functional behavior tests.
+* Docs on [readthedocs](https://about.readthedocs.com/pricing/#/community)
+* Handshake for bearer token allocation and [mTLS](https://goteleport.com/learn/what-is-mtls/)
 
 ### Client Side
 * Allow consumer attributes to come from commenting block in Fluent Bit configuration
@@ -80,12 +80,9 @@ Connection settings policy note:
 
 * share namespace when running in a K8s deployment
 
-* implement authentication or bearer token
-
   
 
 ### Server Side
-* Extend persistence mechanism beyond initial snapshot/restore support
-* send configurations to multiple nodes at once
+* Extend persistence mechanism beyond initial file mechanism.
+* Load configurations and distribute to relevant nodes
 * Certificate management - this is messy to setup and test properly
-* code signing

@@ -74,7 +74,8 @@ Use `build_and_publish_wheels.py` to generate wheels for both components:
 
 - provider (server) wheel -> `dist/provider/*.whl`
 - consumer (agent) wheel -> `dist/consumer/*.whl`
-- deployable artifacts SBOM (CycloneDX JSON) -> `dist/sbom/opamp_deployable_artifacts.cyclonedx.json`
+- provider deployable artifact SBOM (CycloneDX JSON) -> `dist/sbom/opamp_provider_deployable_artifacts.cyclonedx.json`
+- consumer deployable artifact SBOM (CycloneDX JSON) -> `dist/sbom/opamp_consumer_deployable_artifacts.cyclonedx.json`
 
 Build only:
 
@@ -95,9 +96,10 @@ Optional publish flags:
 - `--release-notes "..."` or `--release-notes-file <path>`
 - `--draft`
 - `--prerelease`
-- `--sbom-path <path>` to override where SBOM JSON is written
+- `--provider-sbom-path <path>` to override provider SBOM output path
+- `--consumer-sbom-path <path>` to override consumer SBOM output path
 
-When `--publish` is used, both wheel files and the generated SBOM file are uploaded as release assets.
+When `--publish` is used, both wheel files and both generated SBOM files are uploaded as release assets.
 
 ## Mermaid PNG rendering
 

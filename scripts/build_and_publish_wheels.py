@@ -22,6 +22,12 @@ from typing import Any
 
 
 DEFAULT_REPO = "mp3monster/fluent-opamp"
+DEFAULT_PROVIDER_SBOM_PATH = (
+    "dist/sbom/opamp_provider_deployable_artifacts.cyclonedx.json"
+)
+DEFAULT_CONSUMER_SBOM_PATH = (
+    "dist/sbom/opamp_consumer_deployable_artifacts.cyclonedx.json"
+)
 
 
 def _run(cmd: list[str], *, cwd: Path) -> None:
@@ -132,63 +138,63 @@ def _requirement_name(requirement: str) -> str:
 def _build_cyclonedx_sbom(
     *,
     repo: str,
-    artifacts: list[Path],
+    artifact: Path,
     sbom_path: Path,
+    root_component_name: str,
 ) -> Path:
-    """Generate CycloneDX JSON SBOM for deployable wheel artifacts."""
+    """Generate CycloneDX JSON SBOM for one deployable wheel artifact."""
     components: list[dict[str, Any]] = []
     dependencies: list[dict[str, Any]] = []
     dependency_components: dict[str, dict[str, Any]] = {}
 
-    for wheel_path in artifacts:
-        wheel_meta = _read_wheel_metadata(wheel_path)
-        name = str(wheel_meta["name"])
-        version = str(wheel_meta["version"])
-        bom_ref = f"pkg:pypi/{_normalize_dist_name(name)}@{version}"
-        wheel_component = {
-            "type": "library",
-            "name": name,
-            "version": version,
-            "bom-ref": bom_ref,
-            "purl": bom_ref,
-            "hashes": [
-                {
-                    "alg": "SHA-256",
-                    "content": _sha256(wheel_path),
-                }
-            ],
-            "properties": [
-                {"name": "opamp.artifact.path", "value": str(wheel_path)},
-            ],
-        }
-        components.append(wheel_component)
-
-        depends_on: list[str] = []
-        for requirement in wheel_meta["requires_dist"]:
-            # SBOM targets deployable artifacts; omit optional extras such as dev deps.
-            if "extra ==" in requirement.lower():
-                continue
-            dep_name = _requirement_name(requirement)
-            if not dep_name:
-                continue
-            dep_ref = f"pkg:pypi/{_normalize_dist_name(dep_name)}"
-            depends_on.append(dep_ref)
-            if dep_ref not in dependency_components:
-                dependency_components[dep_ref] = {
-                    "type": "library",
-                    "name": dep_name,
-                    "bom-ref": dep_ref,
-                    "purl": dep_ref,
-                    "properties": [
-                        {"name": "opamp.requirement.raw", "value": requirement},
-                    ],
-                }
-        dependencies.append(
+    wheel_meta = _read_wheel_metadata(artifact)
+    name = str(wheel_meta["name"])
+    version = str(wheel_meta["version"])
+    bom_ref = f"pkg:pypi/{_normalize_dist_name(name)}@{version}"
+    wheel_component = {
+        "type": "library",
+        "name": name,
+        "version": version,
+        "bom-ref": bom_ref,
+        "purl": bom_ref,
+        "hashes": [
             {
-                "ref": bom_ref,
-                "dependsOn": sorted(set(depends_on)),
+                "alg": "SHA-256",
+                "content": _sha256(artifact),
             }
-        )
+        ],
+        "properties": [
+            {"name": "opamp.artifact.path", "value": str(artifact)},
+        ],
+    }
+    components.append(wheel_component)
+
+    depends_on: list[str] = []
+    for requirement in wheel_meta["requires_dist"]:
+        # SBOM targets deployable artifacts; omit optional extras such as dev deps.
+        if "extra ==" in requirement.lower():
+            continue
+        dep_name = _requirement_name(requirement)
+        if not dep_name:
+            continue
+        dep_ref = f"pkg:pypi/{_normalize_dist_name(dep_name)}"
+        depends_on.append(dep_ref)
+        if dep_ref not in dependency_components:
+            dependency_components[dep_ref] = {
+                "type": "library",
+                "name": dep_name,
+                "bom-ref": dep_ref,
+                "purl": dep_ref,
+                "properties": [
+                    {"name": "opamp.requirement.raw", "value": requirement},
+                ],
+            }
+    dependencies.append(
+        {
+            "ref": bom_ref,
+            "dependsOn": sorted(set(depends_on)),
+        }
+    )
 
     if dependency_components:
         components.extend(
@@ -205,9 +211,12 @@ def _build_cyclonedx_sbom(
             "tools": [{"vendor": "mp3monster", "name": "build_and_publish_wheels.py"}],
             "component": {
                 "type": "application",
-                "name": "fluent-opamp-deployable-artifacts",
-                "version": "0.1.0",
-                "properties": [{"name": "github.repository", "value": repo}],
+                "name": root_component_name,
+                "version": version,
+                "properties": [
+                    {"name": "github.repository", "value": repo},
+                    {"name": "wheel.name", "value": name},
+                ],
             },
         },
         "components": components,
@@ -427,10 +436,19 @@ def _parse_args() -> argparse.Namespace:
         help="Artifact root directory (default: dist)",
     )
     parser.add_argument(
-        "--sbom-path",
-        default="dist/sbom/opamp_deployable_artifacts.cyclonedx.json",
+        "--provider-sbom-path",
+        default=DEFAULT_PROVIDER_SBOM_PATH,
         help=(
-            "SBOM output path (default: dist/sbom/opamp_deployable_artifacts.cyclonedx.json)"
+            "Provider SBOM output path "
+            f"(default: {DEFAULT_PROVIDER_SBOM_PATH})"
+        ),
+    )
+    parser.add_argument(
+        "--consumer-sbom-path",
+        default=DEFAULT_CONSUMER_SBOM_PATH,
+        help=(
+            "Consumer SBOM output path "
+            f"(default: {DEFAULT_CONSUMER_SBOM_PATH})"
         ),
     )
     parser.add_argument(
@@ -505,16 +523,24 @@ def main() -> int:
         component_dir="consumer",
         out_dir=consumer_dist,
     )
-    sbom_path = _build_cyclonedx_sbom(
+    provider_sbom_path = _build_cyclonedx_sbom(
         repo=args.repo,
-        artifacts=[provider_wheel, consumer_wheel],
-        sbom_path=(repo_root / args.sbom_path).resolve(),
+        artifact=provider_wheel,
+        sbom_path=(repo_root / args.provider_sbom_path).resolve(),
+        root_component_name="fluent-opamp-provider-deployable-artifact",
+    )
+    consumer_sbom_path = _build_cyclonedx_sbom(
+        repo=args.repo,
+        artifact=consumer_wheel,
+        sbom_path=(repo_root / args.consumer_sbom_path).resolve(),
+        root_component_name="fluent-opamp-consumer-deployable-artifact",
     )
 
     print("Build complete.")
     print(f"Provider wheel: {provider_wheel}")
     print(f"Consumer wheel: {consumer_wheel}")
-    print(f"SBOM: {sbom_path}")
+    print(f"Provider SBOM: {provider_sbom_path}")
+    print(f"Consumer SBOM: {consumer_sbom_path}")
 
     if not args.publish:
         print("Publish skipped (use --publish to upload to GitHub release assets).")
@@ -539,7 +565,12 @@ def main() -> int:
         draft=args.draft,
         prerelease=args.prerelease,
         token=token,
-        artifact_paths=[provider_wheel, consumer_wheel, sbom_path],
+        artifact_paths=[
+            provider_wheel,
+            consumer_wheel,
+            provider_sbom_path,
+            consumer_sbom_path,
+        ],
     )
     print("Publish complete.")
     return 0

@@ -1,4 +1,4 @@
-# API Gateway Requirements
+# API Gateway Recommendations
 
 This guide defines a recommended baseline for fronting the provider with an API gateway (for example Kong), and how to adjust OpAMP auth configuration when clients are remote or external to a controlled environment.
 
