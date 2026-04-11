@@ -101,6 +101,7 @@ def test_load_fluentd_config_parses_monitor_agent_settings(tmp_path: Path) -> No
   port 24220
 </source>
 # service_instance_id: fluentd-instance
+# config_version: fd-1.2.3
         """.strip()
         + "\n",
         encoding="utf-8",
@@ -115,6 +116,7 @@ def test_load_fluentd_config_parses_monitor_agent_settings(tmp_path: Path) -> No
     assert loaded.agent_http_server == "on"
     assert loaded.server_url == "http://127.0.0.1"
     assert loaded.service_instance_id == "fluentd-instance"
+    assert loaded.config_version == "fd-1.2.3"
 
 
 def test_find_monitor_agent_source_bind_and_port_ignores_non_monitor_sources(

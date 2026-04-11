@@ -64,6 +64,7 @@ STARTUP_VERSION_DISCOVERY_DELAY_SECONDS = (
     5  # Delay before first version probe to let Fluentd startup settle.
 )
 KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key for agent description metadata.
+KEY_CONFIG_VERSION_COMMENT = "config_version"  # Comment key for agent config version metadata.
 _FLUENTD_SOURCE_START = re.compile(r"^\s*<source>\s*$", re.IGNORECASE)
 _FLUENTD_SOURCE_END = re.compile(r"^\s*</source>\s*$", re.IGNORECASE)
 _FLUENTD_SOURCE_TYPE = re.compile(r"^\s*@type\s+(?P<value>\S+)\s*$", re.IGNORECASE)
@@ -72,7 +73,7 @@ _FLUENTD_SOURCE_KV = re.compile(
     re.IGNORECASE,
 )
 _COMMENT_KV = re.compile(
-    rf"^\s*#\s*(?P<key>{KEY_AGENT_DESCRIPTION}|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
+    rf"^\s*#\s*(?P<key>{KEY_AGENT_DESCRIPTION}|{KEY_CONFIG_VERSION_COMMENT}|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
     r"[:=]\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )

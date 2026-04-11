@@ -107,6 +107,9 @@ class ConsumerConfig:
     agent_description: str | None = (
         None  # Optional override/metadata used for agent identification.
     )
+    config_version: str | None = (
+        None  # Optional comment-sourced config version metadata.
+    )
     service_instance_id: str | None = (
         None  # Instance identifier reported in service metadata.
     )

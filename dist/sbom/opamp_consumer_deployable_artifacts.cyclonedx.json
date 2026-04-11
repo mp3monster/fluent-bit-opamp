@@ -1,0 +1,123 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:c6492019-bc44-40a0-b71d-a5638aa3e97a",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-04-11T15:03:47+00:00",
+    "tools": [
+      {
+        "vendor": "mp3monster",
+        "name": "build_and_publish_wheels.py"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "fluent-opamp-consumer-deployable-artifact",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "github.repository",
+          "value": "mp3monster/fluent-opamp"
+        },
+        {
+          "name": "wheel.name",
+          "value": "opamp-consumer"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "opamp-consumer",
+      "version": "0.1.0",
+      "bom-ref": "pkg:pypi/opamp-consumer@0.1.0",
+      "purl": "pkg:pypi/opamp-consumer@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "244ccc08f0f942ca26ea8291860eb84ec3d72b371c1c123689cbe7f8eb85decb"
+        }
+      ],
+      "properties": [
+        {
+          "name": "opamp.artifact.path",
+          "value": "/mnt/d/dev/opamp/dist/consumer/opamp_consumer-0.1.0-py3-none-any.whl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "grpcio-tools",
+      "bom-ref": "pkg:pypi/grpcio-tools",
+      "purl": "pkg:pypi/grpcio-tools",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "grpcio-tools>=1.60"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpx",
+      "bom-ref": "pkg:pypi/httpx",
+      "purl": "pkg:pypi/httpx",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "httpx>=0.27"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "protobuf",
+      "bom-ref": "pkg:pypi/protobuf",
+      "purl": "pkg:pypi/protobuf",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "protobuf>=5.27"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uuid-v7",
+      "bom-ref": "pkg:pypi/uuid-v7",
+      "purl": "pkg:pypi/uuid-v7",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "uuid-v7>=0.1"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "websockets",
+      "bom-ref": "pkg:pypi/websockets",
+      "purl": "pkg:pypi/websockets",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "websockets>=12.0"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:pypi/opamp-consumer@0.1.0",
+      "dependsOn": [
+        "pkg:pypi/grpcio-tools",
+        "pkg:pypi/httpx",
+        "pkg:pypi/protobuf",
+        "pkg:pypi/uuid-v7",
+        "pkg:pypi/websockets"
+      ]
+    }
+  ]
+}

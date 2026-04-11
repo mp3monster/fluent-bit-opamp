@@ -32,6 +32,7 @@ def test_load_agent_identity_from_fluentbit_config(tmp_path) -> None:
     sample_path.write_text(
         """
 # agent_description = test-agent
+# config_version = 2026.04.10
 # service_instance_id: abcdef1234567890
 [SERVICE]
 HTTP_Server On
@@ -54,6 +55,7 @@ Flush 1
     load_agent_config(config)
 
     assert config.agent_description == "test-agent"
+    assert config.config_version == "2026.04.10"
     assert config.service_instance_id == "abcdef1234567890"
     assert config.client_status_port == 2020
     assert config.agent_http_port == 2020

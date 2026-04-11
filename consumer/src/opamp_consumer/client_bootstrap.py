@@ -34,6 +34,9 @@ from opamp_consumer.proto import opamp_pb2
 from shared.opamp_config import UTF8_ENCODING
 
 KEY_AGENT_DESCRIPTION = "agent_description"  # Comment key carrying free-form agent description.
+KEY_CONFIG_VERSION_COMMENT = (
+    "config_version"  # Comment key for agent configuration version metadata.
+)
 KEY_SERVICE_INSTANCE_ID_COMMENT = (
     "service_instance_id"  # Comment key for service instance template.
 )
@@ -43,14 +46,20 @@ KEY_HTTP_SERVER = "http_server"  # Fluent Bit/agent config key that enables HTTP
 TOKEN_IP = "__IP__"  # Template token replaced with resolved local IP.
 TOKEN_HOSTNAME = "__hostname__"  # Template token replaced with local hostname.
 TOKEN_MAC_ADDR = "__mac-ad__"  # Template token replaced with local MAC address.
+MATCH_GROUP_KEY = "key"  # Regex named group containing parsed config/comment key.
+MATCH_GROUP_VALUE = "value"  # Regex named group containing parsed config/comment value.
+AGENT_CONFIG_KEYS_PATTERN = (
+    f"{KEY_HTTP_PORT}|{KEY_HTTP_LISTEN}|{KEY_HTTP_SERVER}"
+)  # Regex alternation for supported Fluent Bit HTTP keys.
 
 _COMMENT_KV = re.compile(
-    rf"^\s*#\s*(?P<key>{KEY_AGENT_DESCRIPTION}|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
-    r"[:=]\s*(?P<value>.+?)\s*$",
+    rf"^\s*#\s*(?P<{MATCH_GROUP_KEY}>{KEY_AGENT_DESCRIPTION}|{KEY_CONFIG_VERSION_COMMENT}|{KEY_SERVICE_INSTANCE_ID_COMMENT})\s*"
+    rf"[:=]\s*(?P<{MATCH_GROUP_VALUE}>.+?)\s*$",
     re.IGNORECASE,
 )
 _AGENT_CONFIG_KV = re.compile(
-    r"^\s*(?P<key>http_port|http_listen|http_server)\s*(?:[:=]|\s+)\s*(?P<value>\S.*)$",
+    rf"^\s*(?P<{MATCH_GROUP_KEY}>{AGENT_CONFIG_KEYS_PATTERN})\s*(?:[:=]|\s+)\s*"
+    rf"(?P<{MATCH_GROUP_VALUE}>\S.*)$",
     re.IGNORECASE,
 )
 
@@ -203,8 +212,8 @@ def _apply_agent_comment(
     resolve_service_instance_id_template_fn: Callable[[str | None], str | None],
 ) -> None:
     """Apply supported metadata comment values to the consumer config."""
-    key = match.group("key").lower()
-    value = match.group("value")
+    key = match.group(MATCH_GROUP_KEY).lower()
+    value = match.group(MATCH_GROUP_VALUE)
     if key == KEY_SERVICE_INSTANCE_ID_COMMENT:
         value = resolve_service_instance_id_template_fn(value)
     config[key] = value
@@ -217,8 +226,8 @@ def _apply_agent_setting(
     match: re.Match[str],
 ) -> None:
     """Apply supported Fluent Bit HTTP settings to the consumer config."""
-    key = match.group("key").lower()
-    value = match.group("value").strip()
+    key = match.group(MATCH_GROUP_KEY).lower()
+    value = match.group(MATCH_GROUP_VALUE).strip()
     if key == KEY_HTTP_PORT:
         port_value = int(value)
         config.client_status_port = port_value

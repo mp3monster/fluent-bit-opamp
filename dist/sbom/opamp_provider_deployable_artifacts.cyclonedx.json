@@ -1,0 +1,136 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:489d932f-0cb3-4b4c-88cf-2f4ecf0bc2aa",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-04-11T15:03:47+00:00",
+    "tools": [
+      {
+        "vendor": "mp3monster",
+        "name": "build_and_publish_wheels.py"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "fluent-opamp-provider-deployable-artifact",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "github.repository",
+          "value": "mp3monster/fluent-opamp"
+        },
+        {
+          "name": "wheel.name",
+          "value": "opamp-provider"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "opamp-provider",
+      "version": "0.1.0",
+      "bom-ref": "pkg:pypi/opamp-provider@0.1.0",
+      "purl": "pkg:pypi/opamp-provider@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2c501bee67b06e51b42396f4ee0e3c83163fdd490526a148afaab3d3d2e6fa04"
+        }
+      ],
+      "properties": [
+        {
+          "name": "opamp.artifact.path",
+          "value": "/mnt/d/dev/opamp/dist/provider/opamp_provider-0.1.0-py3-none-any.whl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastmcp",
+      "bom-ref": "pkg:pypi/fastmcp",
+      "purl": "pkg:pypi/fastmcp",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "fastmcp>=2.0"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "grpcio-tools",
+      "bom-ref": "pkg:pypi/grpcio-tools",
+      "purl": "pkg:pypi/grpcio-tools",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "grpcio-tools>=1.60"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "protobuf",
+      "bom-ref": "pkg:pypi/protobuf",
+      "purl": "pkg:pypi/protobuf",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "protobuf>=5.27"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pydantic",
+      "bom-ref": "pkg:pypi/pydantic",
+      "purl": "pkg:pypi/pydantic",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "pydantic>=2.6"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pyjwt",
+      "bom-ref": "pkg:pypi/pyjwt",
+      "purl": "pkg:pypi/pyjwt",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "pyjwt>=2.8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quart",
+      "bom-ref": "pkg:pypi/quart",
+      "purl": "pkg:pypi/quart",
+      "properties": [
+        {
+          "name": "opamp.requirement.raw",
+          "value": "quart>=0.19"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:pypi/opamp-provider@0.1.0",
+      "dependsOn": [
+        "pkg:pypi/fastmcp",
+        "pkg:pypi/grpcio-tools",
+        "pkg:pypi/protobuf",
+        "pkg:pypi/pydantic",
+        "pkg:pypi/pyjwt",
+        "pkg:pypi/quart"
+      ]
+    }
+  ]
+}
