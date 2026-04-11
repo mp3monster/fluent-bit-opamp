@@ -6,6 +6,8 @@ Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links t
 
 - [Setup README](README.md) — full setup and run instructions.
 - [Features - spec alignment](features.md) — feature notes and design direction.
+- [UI examples](screenshots.md) - Some of the elements of the UI to illustrate the user experience.
+- [Design & Implementation principles]().
 - [Command_process_implementation_notes](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
 - [How to add_your_own_custom_action](adding_your_own_custom_action.md) — how to implement and deploy a custom provider+consumer action using `nullcommand` as the baseline.
 - [Client (consumer)_diagram (in Mermaid format)](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
@@ -28,6 +30,7 @@ Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links t
 
 - `config` — default configuration files (including `opamp.json`).
 - `consumer` — the OpAMP consumer (client) package, tests, and config samples.
+- `dist` — SBOM (Software Bill of Materials) and Wheel files
 - `docs` — project documentation.
 - `logs` — runtime logs created by scripts.
 - `proto` — protobuf definitions and generated artifacts.
