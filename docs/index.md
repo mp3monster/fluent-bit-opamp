@@ -1,29 +1,28 @@
 # Documentation
 
-Welcome to the OpAMP workspace docs. This page links to the core guides and outlines where to look for configuration, scripts, and feature notes.
+Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links to the core guides and outlines where to look for configuration, scripts, and feature notes.
 
 ## Core guides
 
-- [docs/README.md](README.md) — full setup and run instructions (moved from root).
-- [docs/features.md](features.md) — feature notes and design direction.
-- [OpAMP posts on blog.mp3monster.org](https://blog.mp3monster.org/category/technology/fluent-observability/opamp/) — external blog posts and updates.
-- [docs/command_process_implementation_note.md](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
-- [docs/adding_your_own_custom_action.md](adding_your_own_custom_action.md) — how to implement and deploy a custom provider+consumer action using `nullcommand` as the baseline.
-- [docs/consumer_client_diagram.md](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
-- [docs/consumer_client_diagrams.md](consumer_client_diagrams.md) — rendered consumer diagrams with explanation per diagram panel.
-- [docs/provider_server_diagram.md](provider_server_diagram.md) — provider/server Mermaid source diagrams.
-- [docs/provider_server_diagrams.md](provider_server_diagrams.md) — rendered provider/server diagrams plus links to auth, endpoints, and command docs.
-- [docs/consumer_mixins.md](consumer_mixins.md) — how consumer mixins are composed, dispatched, and overridden.
-- [docs/consumer_update_controllers.md](consumer_update_controllers.md) — how full update controllers drive reporting flags and outbound message field cadence.
-- [docs/authentication.md](authentication.md) — bearer token auth modes, static-token setup, Keycloak/JWT setup, and MCP token usage.
-- [docs/endpoints.md](endpoints.md) — provider endpoint inventory, including UI/API/tool/MCP routes and `/doc-set`.
-- [docs/self_signed_tls_setup.md](self_signed_tls_setup.md) — generate local self-signed cert/key and apply config values for HTTPS testing.
-- [docs/api_gateway_requirements.md](api_gateway_requirements.md) — recommended API gateway controls, internal vs external client profiles, and required auth/route hardening updates.
-- [docs/service_daemon_setup.md](service_daemon_setup.md) — running provider/consumer as `systemd` or Windows services, including Fluent Bit/Fluentd launch permissions.
-- [consumer/README.md](../consumer/README.md) — consumer configuration and CLI usage.
-- [provider/README.md](../provider/README.md) — provider configuration and web UI notes.
-- [provider state restore notes](../provider/README.md#state-persistence-and-restore) — snapshot naming, `--restore` usage, fallback behavior, and retention.
-- [docs/scripts.md](scripts.md) — script reference table by platform.
+- [Setup README](README.md) — full setup and run instructions.
+- [Features - spec alignment](features.md) — feature notes and design direction.
+- [Command_process_implementation_notes](command_process_implementation_note.md) — command API/queue/dispatch implementation details.
+- [How to add_your_own_custom_action](adding_your_own_custom_action.md) — how to implement and deploy a custom provider+consumer action using `nullcommand` as the baseline.
+- [Client (consumer)_diagram (in Mermaid format)](consumer_client_diagram.md) — consumer client architecture and runtime relationship diagrams.
+- [Client (consumer)_diagrams (as images)](consumer_client_diagrams.md) — rendered consumer diagrams with explanation per diagram panel.
+- [Server (provider)_server_diagrams (in Mermaid format)](provider_server_diagram.md) — provider/server Mermaid source diagrams.
+- [Server_(provider) diagrams (as images)](provider_server_diagrams.md) — rendered provider/server diagrams plus links to auth, endpoints, and command docs.
+- [Client (consumer) use of mixins](consumer_mixins.md) — how consumer mixins are composed, dispatched, and overridden.
+- [Client (consumer)_update_controllers](consumer_update_controllers.md) — how full update controllers drive reporting flags and outbound message field cadence.
+- [Authentication](authentication.md) — bearer token auth modes, static-token setup, Keycloak/JWT setup, and MCP token usage.
+- [Web Endpoints](endpoints.md) — provider endpoint inventory, including UI/API/tool/MCP routes and `/doc-set`.
+- [Self_signed_TLS_setup](self_signed_tls_setup.md) — generate local self-signed cert/key and apply config values for HTTPS testing.
+- [API_gateway_suggested use and requirements](api_gateway_requirements.md) — recommended API gateway controls, internal vs external client profiles, and required auth/route hardening updates.
+- [Service_daemon_setup](service_daemon_setup.md) — running provider/consumer as `systemd` or Windows services, including Fluent Bit/Fluentd launch permissions.
+- [Client README](../consumer/README.md) — client/agent (aka consumer) configuration and CLI usage.
+- [Server README](../provider/README.md) — server (aka provider) configuration and web UI notes.
+- [Server state persistence](../provider/README.md#state-persistence-and-restore) — snapshot naming, `--restore` usage, fallback behavior, and retention.
+- [Scripts](scripts.md) — script reference table by platform.
 
 ## Project layout (quick view)
 
@@ -37,3 +36,13 @@ Welcome to the OpAMP workspace docs. This page links to the core guides and outl
 - `shared` — shared utilities used by provider/consumer.
 - `src` — top-level Python package glue (if needed for tooling).
 - `tests` — repository-level tests.
+
+## Reference 3rd Party Documents
+
+- [Open Agent Management Protocol (OpAMP) Specification](https://opentelemetry.io/docs/specs/opamp/)
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/specification/2025-11-25) specification - optional feature
+- [Fluentd](https://www.fluentd.org/)
+- [Fluent Bit](https://fluentbit.io/)
+- [Quart](https://quart.palletsprojects.com/en/latest/) (foundation of the implementation)
+- [HAProxy](https://www.haproxy.com/) (optional feature, to support advanced security permutations)
+- [OpAMP posts on blog.mp3monster.org](https://blog.mp3monster.org/category/technology/fluent-observability/opamp/) — external blog posts and updates.

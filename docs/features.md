@@ -78,8 +78,6 @@ Connection settings policy note:
 
 * extend so configuration can be classic Fluent Bit
 
-* configure drive overloading of operations - so process checks can have alternate implementations
-
 * share namespace when running in a K8s deployment
 
 * implement authentication or bearer token
