@@ -17,7 +17,7 @@ Configure OpAMP MCP for Claude Desktop, ChatGPT (Codex CLI), and VS Code.
 
 .DESCRIPTION
 Supports these targets in one script:
-- Claude Desktop via `fastmcp install claude-desktop`
+- Claude Desktop via `mcp-remote` SSE endpoint entry in `claude_desktop_config.json`
 - ChatGPT/Codex CLI via `codex mcp add`
 - VS Code by writing a `servers` entry in `.vscode/mcp.json`
 
@@ -45,8 +45,9 @@ param(
     [string]$ServerSpec = "",
     [string]$Project = "",
     [string]$OpAMPServerIp = "",
+    [int]$OpAMPServerPort = 8080,
     [switch]$NoEditable,
-    [Alias("h", "help", "?")]
+    [Alias("h")]
     [switch]$Help
 )
 
@@ -55,7 +56,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $ProviderSrc = Join-Path $RepoRoot "provider/src"
-$PythonPathValue = "$RepoRoot;$ProviderSrc"
+$SharedSrc = Join-Path $RepoRoot "shared"
+$PythonPathValue = $env:PYTHONPATH
+$UseLocalSourcePaths = $false
 
 if ([string]::IsNullOrWhiteSpace($ServerSpec)) {
     $ServerSpec = Join-Path $RepoRoot "provider/src/opamp_provider/mcptool/routes.py:mcpserver"
@@ -73,7 +76,24 @@ function Get-CmdPath {
     param([string]$CommandName)
     $cmd = Get-Command $CommandName -ErrorAction SilentlyContinue
     if ($null -eq $cmd) { return $null }
-    return $cmd.Source
+    $source = $cmd.Source
+    if ([string]::IsNullOrWhiteSpace($source)) {
+        return $null
+    }
+    # PowerShell commonly resolves npm tools to *.ps1 shims (for example npx.ps1),
+    # but desktop apps spawning child processes usually need a directly executable
+    # target such as *.cmd or *.exe.
+    if ([string]::Equals([System.IO.Path]::GetExtension($source), ".ps1", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $cmdShim = [System.IO.Path]::ChangeExtension($source, ".cmd")
+        if (Test-Path -Path $cmdShim -PathType Leaf) {
+            return $cmdShim
+        }
+        $exeShim = [System.IO.Path]::ChangeExtension($source, ".exe")
+        if (Test-Path -Path $exeShim -PathType Leaf) {
+            return $exeShim
+        }
+    }
+    return $source
 }
 
 function Add-PathEntry {
@@ -101,6 +121,90 @@ function Build-RuntimePath {
     }
 
     return ($entries -join ";")
+}
+
+function Get-MissingRequiredModules {
+    # Returns a list of required modules not importable from the current Python environment.
+    $code = @'
+import importlib.util
+import os
+import tempfile
+os.chdir(tempfile.gettempdir())
+required = ("opamp_provider", "shared")
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+print(",".join(missing))
+'@
+    $result = & python -c $code
+    return @("$result".Trim())
+}
+
+function Build-PythonPathValue {
+    # Builds PYTHONPATH, adding local repo/provider/shared paths only when needed.
+    param(
+        [string]$CurrentValue,
+        [bool]$NeedLocalPaths
+    )
+    $entries = @()
+    if (-not [string]::IsNullOrWhiteSpace($CurrentValue)) {
+        $entries += ($CurrentValue -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+    if ($NeedLocalPaths) {
+        foreach ($entry in @($RepoRoot, $ProviderSrc, $SharedSrc)) {
+            if (-not [string]::IsNullOrWhiteSpace($entry) -and -not ($entries -contains $entry)) {
+                $entries += $entry
+            }
+        }
+    }
+    return ($entries -join ";")
+}
+
+function Remove-LegacyServerEntries {
+    # Removes known legacy OpAMP server names from a config map, preserving the active target name.
+    param(
+        [System.Collections.IDictionary]$ServerMap,
+        [string]$KeepName,
+        [string]$ContextLabel
+    )
+    if ($null -eq $ServerMap) {
+        return
+    }
+    $legacyNames = @("OpAMP Server", "opamp-server", "opampServer")
+    foreach ($legacyName in $legacyNames) {
+        if ([string]::Equals($legacyName, $KeepName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        if ($ServerMap.Contains($legacyName)) {
+            $ServerMap.Remove($legacyName) | Out-Null
+            Write-Host "Removed legacy $ContextLabel MCP entry '$legacyName'."
+        }
+    }
+}
+
+function Resolve-ClaudeRemoteLaunch {
+    # Resolves an executable launch form for remote MCP transport.
+    # Preference order:
+    # 1) direct mcp-remote binary
+    # 2) npx -y mcp-remote
+    $mcpRemotePath = Get-CmdPath "mcp-remote"
+    if (-not [string]::IsNullOrWhiteSpace($mcpRemotePath)) {
+        return @{
+            command = $mcpRemotePath
+            args = @($OpAMPMcpSseUrl)
+        }
+    }
+
+    $npxPath = Get-CmdPath "npx"
+    if (-not [string]::IsNullOrWhiteSpace($npxPath)) {
+        return @{
+            command = $npxPath
+            args = @("-y", "mcp-remote", $OpAMPMcpSseUrl)
+        }
+    }
+
+    Write-Error (
+        "Neither 'mcp-remote' nor 'npx' was found on PATH. " +
+        "Install one of them before configuring Claude Desktop MCP."
+    )
 }
 
 function Install-WithPackageManager {
@@ -210,25 +314,51 @@ function Get-InstallTargets {
 }
 
 function Install-ClaudeTarget {
-    $args = @(
-        "install",
-        "claude-desktop",
-        "--name", $ClaudeName,
-        "--project", $Project,
-        "--env", "PYTHONPATH=$PythonPathValue",
-        "--env", "OPAMP_SERVER_IP=$OpAMPServerIp",
-        "--env", "OPAMP_SERVER_URL=$OpAMPServerUrl",
-        "--env", "OPAMP_MCP_SSE_URL=$OpAMPMcpSseUrl",
-        "--env", "PATH=$RuntimePath"
-    )
-    if (-not $NoEditable) {
-        $args += @("--with-editable", $Project)
+    $remoteLaunch = Resolve-ClaudeRemoteLaunch
+    $serverConfig = @{
+        command = $remoteLaunch.command
+        args = $remoteLaunch.args
+        env = @{
+            OPAMP_SERVER_IP = $OpAMPServerIp
+            OPAMP_SERVER_URL = $OpAMPServerUrl
+            OPAMP_MCP_SSE_URL = $OpAMPMcpSseUrl
+        }
     }
-    $args += $ServerSpec
-    Write-Host "Installing Claude Desktop MCP server via fastmcp..."
-    Write-Host ("Command: fastmcp " + ($args -join " "))
-    & fastmcp @args
-    Write-Host "Claude Desktop configuration has been updated."
+
+    $appDataPath = [Environment]::GetFolderPath("ApplicationData")
+    if ([string]::IsNullOrWhiteSpace($appDataPath)) {
+        Write-Error "Unable to resolve ApplicationData folder for Claude Desktop config."
+    }
+    $claudeConfigPath = Join-Path $appDataPath "Claude\claude_desktop_config.json"
+
+    if (Test-Path -Path $claudeConfigPath) {
+        $existingText = Get-Content -Raw -Path $claudeConfigPath
+        if ([string]::IsNullOrWhiteSpace($existingText)) {
+            $document = @{}
+        } else {
+            $document = $existingText | ConvertFrom-Json -AsHashtable
+        }
+    } else {
+        $document = @{}
+    }
+    if ($document -isnot [System.Collections.IDictionary]) {
+        Write-Error "Invalid Claude Desktop MCP config format in $claudeConfigPath"
+    }
+    if (-not $document.ContainsKey("mcpServers") -or $document["mcpServers"] -isnot [System.Collections.IDictionary]) {
+        $document["mcpServers"] = @{}
+    }
+    Remove-LegacyServerEntries -ServerMap $document["mcpServers"] -KeepName $ClaudeName -ContextLabel "Claude Desktop"
+    $document["mcpServers"][$ClaudeName] = $serverConfig
+
+    $claudeConfigDir = Split-Path -Parent $claudeConfigPath
+    if (-not (Test-Path -Path $claudeConfigDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $claudeConfigDir -Force | Out-Null
+    }
+
+    $jsonOutput = $document | ConvertTo-Json -Depth 20
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($claudeConfigPath, "$jsonOutput`n", $utf8NoBom)
+    Write-Host "Claude Desktop configuration has been updated at $claudeConfigPath (mcp-remote -> $OpAMPMcpSseUrl)."
 }
 
 function Install-ChatGPTTarget {
@@ -240,6 +370,18 @@ function Install-ChatGPTTarget {
     } catch {
         # Not found is fine.
     }
+    foreach ($legacyName in @("OpAMP Server", "opamp-server", "opampServer")) {
+        if ([string]::Equals($legacyName, $ChatGPTName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        try {
+            & codex mcp get $legacyName | Out-Null
+            Write-Host "Removing legacy ChatGPT/Codex MCP server '$legacyName'..."
+            & codex mcp remove $legacyName | Out-Null
+        } catch {
+            # Not found is fine.
+        }
+    }
 
     $serverCommand = @(
         "uv",
@@ -249,6 +391,9 @@ function Install-ChatGPTTarget {
     )
     if (-not $NoEditable) {
         $serverCommand += @("--with-editable", $Project)
+        if ($UseLocalSourcePaths) {
+            $serverCommand += @("--with-editable", $RepoRoot)
+        }
     }
     $serverCommand += @(
         "fastmcp",
@@ -289,6 +434,9 @@ function Install-VSCodeTarget {
     )
     if (-not $NoEditable) {
         $mcpJsonArgs += @("--with-editable", $Project)
+        if ($UseLocalSourcePaths) {
+            $mcpJsonArgs += @("--with-editable", $RepoRoot)
+        }
     }
     $mcpJsonArgs += $ServerSpec
     $generatedJson = & fastmcp @mcpJsonArgs
@@ -325,6 +473,7 @@ function Install-VSCodeTarget {
     if (-not $document.ContainsKey("servers") -or $document["servers"] -isnot [System.Collections.IDictionary]) {
         $document["servers"] = @{}
     }
+    Remove-LegacyServerEntries -ServerMap $document["servers"] -KeepName $VSCodeName -ContextLabel "VS Code"
     $document["servers"][$VSCodeName] = $serverConfig
 
     $vscodeDir = Split-Path -Parent $VSCodeConfigPath
@@ -355,6 +504,7 @@ Options:
   -ServerSpec <value>      Server spec (default: provider/src/opamp_provider/mcptool/routes.py:mcpserver)
   -Project <path>          Project directory for uv --project/--with-editable
   -OpAMPServerIp <ip>      OpAMP server IP (if omitted, prompts; default: localhost)
+  -OpAMPServerPort <port>  OpAMP server port used for URL env vars (default: 8080)
   -NoEditable              Skip --with-editable
   --help / -Help / -h      Show this help
 
@@ -379,21 +529,39 @@ if ([string]::IsNullOrWhiteSpace($OpAMPServerIp)) {
         $OpAMPServerIp = $enteredIp.Trim()
     }
 }
-$OpAMPServerUrl = "http://$OpAMPServerIp:8000"
+$OpAMPServerUrl = "http://$($OpAMPServerIp):$($OpAMPServerPort)"
 $OpAMPMcpSseUrl = "$OpAMPServerUrl/sse"
 
 $InstallTargets = Get-InstallTargets -ClientList $Clients
-Ensure-Python
-Ensure-Pip
-Ensure-Uv
-Ensure-FastMCP
 $NeedChatGPT = [bool]$InstallTargets["chatgpt"]
-if ($NeedChatGPT) {
-    Ensure-Codex
-}
-$RuntimePath = Build-RuntimePath
+$NeedVSCode = [bool]$InstallTargets["vscode"]
+$NeedPythonTooling = ($NeedChatGPT -or $NeedVSCode)
+$NeedFastMCPCli = $NeedVSCode
 
-if (-not (Test-Path -Path $Project -PathType Container)) {
+if ($NeedPythonTooling) {
+    Ensure-Python
+    Ensure-Pip
+    Ensure-Uv
+    if ($NeedFastMCPCli) {
+        Ensure-FastMCP
+    }
+    $missingModules = Get-MissingRequiredModules
+    if (-not [string]::IsNullOrWhiteSpace($missingModules[0])) {
+        $UseLocalSourcePaths = $true
+        Write-Host "Detected missing Python modules ($($missingModules[0])); using local source paths."
+    } else {
+        $UseLocalSourcePaths = $false
+        Write-Host "Detected globally importable opamp_provider/shared modules; local source paths are optional."
+    }
+    $PythonPathValue = Build-PythonPathValue -CurrentValue $env:PYTHONPATH -NeedLocalPaths $UseLocalSourcePaths
+    $RuntimePath = Build-RuntimePath
+} else {
+    $UseLocalSourcePaths = $false
+    $PythonPathValue = ""
+    $RuntimePath = $env:PATH
+}
+
+if (($NeedChatGPT -or $NeedVSCode) -and -not (Test-Path -Path $Project -PathType Container)) {
     Write-Error "Project directory not found: $Project"
 }
 
@@ -401,6 +569,7 @@ if ([bool]$InstallTargets["claude"]) {
     Install-ClaudeTarget
 }
 if ([bool]$InstallTargets["chatgpt"]) {
+    Ensure-Codex
     Install-ChatGPTTarget
 }
 if ([bool]$InstallTargets["vscode"]) {

@@ -27,14 +27,24 @@ if [[ ! -f "${CANONICAL_SCRIPT}" ]]; then
 fi
 
 FORWARDED_ARGS=()
+HAS_CLIENTS_FLAG=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --name)
+    --name|--server-name)
       if [[ $# -lt 2 ]]; then
-        echo "Missing value for --name" >&2
+        echo "Missing value for $1" >&2
         exit 1
       fi
       FORWARDED_ARGS+=(--chatgpt-name "$2")
+      shift 2
+      ;;
+    --clients)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --clients" >&2
+        exit 1
+      fi
+      HAS_CLIENTS_FLAG=true
+      FORWARDED_ARGS+=("$1" "$2")
       shift 2
       ;;
     *)
@@ -43,5 +53,9 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${HAS_CLIENTS_FLAG}" != true ]]; then
+  FORWARDED_ARGS+=(--clients "chatgpt")
+fi
 
 exec "${CANONICAL_SCRIPT}" "${FORWARDED_ARGS[@]}"

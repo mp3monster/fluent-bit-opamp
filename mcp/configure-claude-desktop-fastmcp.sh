@@ -27,6 +27,7 @@ if [[ ! -f "${CANONICAL_SCRIPT}" ]]; then
 fi
 
 FORWARDED_ARGS=()
+HAS_CLIENTS_FLAG=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name)
@@ -37,11 +38,24 @@ while [[ $# -gt 0 ]]; do
       FORWARDED_ARGS+=(--claude-name "$2")
       shift 2
       ;;
+    --clients)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --clients" >&2
+        exit 1
+      fi
+      HAS_CLIENTS_FLAG=true
+      FORWARDED_ARGS+=("$1" "$2")
+      shift 2
+      ;;
     *)
       FORWARDED_ARGS+=("$1")
       shift
       ;;
   esac
 done
+
+if [[ "${HAS_CLIENTS_FLAG}" != true ]]; then
+  FORWARDED_ARGS+=(--clients "claude")
+fi
 
 exec "${CANONICAL_SCRIPT}" "${FORWARDED_ARGS[@]}"

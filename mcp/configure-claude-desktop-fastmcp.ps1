@@ -26,13 +26,12 @@ param(
     [string]$ServerSpec = "",
     [string]$Name = "OpAMP Server",
     [string]$ChatGPTName = "opamp-server",
-    [string]$VSCodeName = "opampServer",
-    [string]$VSCodeConfigPath = "",
-    [string]$Clients = "claude,chatgpt,vscode",
+    [string]$Clients = "claude",
     [string]$Project = "",
     [string]$OpAMPServerIp = "",
+    [int]$OpAMPServerPort = 8080,
     [switch]$NoEditable,
-    [Alias("h", "help", "?")]
+    [Alias("h")]
     [switch]$Help
 )
 
@@ -41,21 +40,28 @@ if (-not (Test-Path -Path $CanonicalScript -PathType Leaf)) {
     throw "Canonical script not found: $CanonicalScript"
 }
 
-$ForwardArgs = @(
-    "-ServerSpec", $ServerSpec,
-    "-ClaudeName", $Name,
-    "-ChatGPTName", $ChatGPTName,
-    "-VSCodeName", $VSCodeName,
-    "-VSCodeConfigPath", $VSCodeConfigPath,
-    "-Clients", $Clients,
-    "-Project", $Project,
-    "-OpAMPServerIp", $OpAMPServerIp
-)
+$ForwardParams = @{
+    ClaudeName  = $Name
+    ChatGPTName = $ChatGPTName
+    Clients     = $Clients
+}
+if (-not [string]::IsNullOrWhiteSpace($ServerSpec)) {
+    $ForwardParams.ServerSpec = $ServerSpec
+}
+if (-not [string]::IsNullOrWhiteSpace($Project)) {
+    $ForwardParams.Project = $Project
+}
+if (-not [string]::IsNullOrWhiteSpace($OpAMPServerIp)) {
+    $ForwardParams.OpAMPServerIp = $OpAMPServerIp
+}
+if ($OpAMPServerPort -gt 0) {
+    $ForwardParams.OpAMPServerPort = $OpAMPServerPort
+}
 if ($NoEditable) {
-    $ForwardArgs += "-NoEditable"
+    $ForwardParams.NoEditable = $true
 }
 if ($Help) {
-    $ForwardArgs += "-Help"
+    $ForwardParams.Help = $true
 }
 
-& $CanonicalScript @ForwardArgs
+& $CanonicalScript @ForwardParams
