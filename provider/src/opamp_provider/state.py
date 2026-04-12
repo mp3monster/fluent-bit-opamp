@@ -32,7 +32,8 @@ from opamp_provider.proto import opamp_pb2
 from shared.opamp_config import anyvalue_to_string
 from shared.uuid_utils import generate_uuid7_bytes
 
-MIN_INTEGER = -sys.maxsize - 1  # Sentinel initial sequence number before first AgentToServer message.
+MIN_INTEGER = -sys.maxsize - 1  
+# Sentinel initial sequence number before first AgentToServer message.
 FORCE_RESYNC_CLASSIFIER = "command"  # Classifier used for queued force-resync command events.
 FORCE_RESYNC_ACTION = "forceresync"  # Action name used to request full-state resend from client.
 FORCE_RESYNC_EVENT_DESCRIPTION = "Force Resync"  # User-visible description for force-resync events.

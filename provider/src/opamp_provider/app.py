@@ -22,9 +22,9 @@ import pathlib
 import signal
 import ssl
 import tracemalloc
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from typing import Callable
 
 from google.protobuf import text_format
 from quart import Quart, Response, jsonify, redirect, request, websocket
@@ -32,6 +32,10 @@ from werkzeug.exceptions import HTTPException
 
 from opamp_provider import auth as provider_auth
 from opamp_provider import config as provider_config
+from opamp_provider.command_queue import (
+    QueueCommandRequestError,
+    queue_command_from_payload,
+)
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.commands import (
     command_object_factory,
@@ -40,6 +44,30 @@ from opamp_provider.commands import (
 )
 from opamp_provider.exceptions import ServerToAgentException
 from opamp_provider.mcptool import register_mcp_transport, register_tool_routes
+from opamp_provider.opamp_protocol import (
+    build_error_message as protocol_build_error_message,
+)
+from opamp_provider.opamp_protocol import (
+    build_opamp_http_error_response as protocol_build_opamp_http_error_response,
+)
+from opamp_provider.opamp_protocol import (
+    evaluate_non_opamp_http_auth as protocol_evaluate_non_opamp_http_auth,
+)
+from opamp_provider.opamp_protocol import (
+    evaluate_opamp_transport_auth as protocol_evaluate_opamp_transport_auth,
+)
+from opamp_provider.opamp_protocol import (
+    extract_client_id as protocol_extract_client_id,
+)
+from opamp_provider.opamp_protocol import (
+    header_value as protocol_header_value,
+)
+from opamp_provider.opamp_protocol import (
+    log_blocked_agent_attempt as protocol_log_blocked_agent_attempt,
+)
+from opamp_provider.opamp_protocol import (
+    provider_authorization_mode_to_auth_mode as protocol_provider_authorization_mode_to_auth_mode,
+)
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE, ClientRecord
 from opamp_provider.state_persistence import (
@@ -330,9 +358,7 @@ async def enforce_bearer_auth() -> Response | None:
 
 def _extract_client_id(agent_msg: opamp_pb2.AgentToServer) -> str:
     """Return hex-encoded instance UID when present; otherwise an empty string."""
-    if not agent_msg.instance_uid:
-        return ""
-    return agent_msg.instance_uid.hex()
+    return protocol_extract_client_id(agent_msg)
 
 
 def _request_header_map() -> dict[str, str]:
@@ -435,23 +461,14 @@ def _header_value(
     name: str,
 ) -> str | None:
     """Return a case-insensitive header value from a plain header dictionary."""
-    for key, value in headers.items():
-        if str(key).strip().lower() == name.lower():
-            return str(value)
-    return None
+    return protocol_header_value(headers=headers, name=name)
 
 
 def _provider_authorization_mode_to_auth_mode(
     provider_mode: str,
 ) -> str | None:
     """Map provider config authorization values to auth module mode."""
-    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_NONE:
-        return provider_auth.AUTH_MODE_DISABLED
-    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_CONFIG_TOKEN:
-        return provider_auth.AUTH_MODE_STATIC
-    if provider_mode == provider_config.OPAMP_USE_AUTHORIZATION_IDP:
-        return provider_auth.AUTH_MODE_JWT
-    return None
+    return protocol_provider_authorization_mode_to_auth_mode(provider_mode)
 
 
 def _evaluate_opamp_transport_auth(
@@ -461,30 +478,12 @@ def _evaluate_opamp_transport_auth(
     channel: str,
 ) -> provider_auth.AuthDecision:
     """Authorize OpAMP transport requests using provider config mode."""
-    opamp_mode = str(provider_config.CONFIG.opamp_use_authorization).strip().lower()
-    mapped_mode = _provider_authorization_mode_to_auth_mode(opamp_mode)
-    if mapped_mode is None:
-        logger.error(
-            "unsupported provider.%s value=%s",
-            provider_config.CFG_OPAMP_USE_AUTHORIZATION,
-            opamp_mode,
-        )
-        return provider_auth.AuthDecision(
-            allowed=False,
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            error=ERR_OPAMP_AUTH_CONFIG_INVALID,
-            reason=f"unsupported mode {opamp_mode}",
-        )
-    authorization_header = _header_value(headers=headers, name="Authorization")
-    method = "POST" if channel == CHANNEL_HTTP else "WEBSOCKET"
-    return provider_auth.evaluate_required_bearer_auth(
-        mode=mapped_mode,
-        path=OPAMP_HTTP_PATH,
-        method=method,
-        authorization_header=authorization_header,
+    return protocol_evaluate_opamp_transport_auth(
+        headers=headers,
         remote_addr=remote_addr,
-        static_token=provider_auth.OPAMP_AUTH_SETTINGS.static_token,
-        jwt_settings=provider_auth.OPAMP_AUTH_SETTINGS,
+        channel=channel,
+        opamp_http_path=OPAMP_HTTP_PATH,
+        invalid_config_error=ERR_OPAMP_AUTH_CONFIG_INVALID,
     )
 
 
@@ -496,28 +495,12 @@ def _evaluate_non_opamp_http_auth(
     remote_addr: str | None,
 ) -> provider_auth.AuthDecision:
     """Authorize non-OpAMP HTTP requests using provider.ui-use-authorization."""
-    ui_mode = str(provider_config.CONFIG.ui_use_authorization).strip().lower()
-    mapped_mode = _provider_authorization_mode_to_auth_mode(ui_mode)
-    if mapped_mode is None:
-        logger.error(
-            "unsupported provider.%s value=%s",
-            provider_config.CFG_UI_USE_AUTHORIZATION,
-            ui_mode,
-        )
-        return provider_auth.AuthDecision(
-            allowed=False,
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            error=ERR_UI_AUTH_CONFIG_INVALID,
-            reason=f"unsupported mode {ui_mode}",
-        )
-    return provider_auth.evaluate_required_bearer_auth(
-        mode=mapped_mode,
+    return protocol_evaluate_non_opamp_http_auth(
         path=path,
         method=method,
         authorization_header=authorization_header,
         remote_addr=remote_addr,
-        static_token=provider_auth.UI_AUTH_SETTINGS.static_token,
-        jwt_settings=provider_auth.UI_AUTH_SETTINGS,
+        invalid_config_error=ERR_UI_AUTH_CONFIG_INVALID,
     )
 
 
@@ -530,12 +513,11 @@ def _build_error_message(
     ),
 ) -> opamp_pb2.ServerToAgent:
     """Build a ServerToAgent error payload without requiring prior response state."""
-    response = opamp_pb2.ServerToAgent()
-    if instance_uid:
-        response.instance_uid = instance_uid
-    response.error_response.type = error_type
-    response.error_response.error_message = error_message
-    return response
+    return protocol_build_error_message(
+        instance_uid=instance_uid,
+        error_message=error_message,
+        error_type=error_type,
+    )
 
 
 def _build_opamp_http_error_response(
@@ -549,20 +531,13 @@ def _build_opamp_http_error_response(
     ),
 ) -> Response:
     """Build a protobuf HTTP response carrying a ServerToAgent error payload."""
-    payload = _build_error_message(
+    return protocol_build_opamp_http_error_response(
         instance_uid=instance_uid,
+        status_code=status_code,
         error_message=error_message,
+        headers=headers,
         error_type=error_type,
-    ).SerializeToString()
-    response = Response(
-        payload,
-        content_type=CONTENT_TYPE_PROTO,
-        status=status_code,
     )
-    if headers:
-        for key, value in headers.items():
-            response.headers[key] = value
-    return response
 
 
 def _log_blocked_agent_attempt(
@@ -573,12 +548,12 @@ def _log_blocked_agent_attempt(
     remote_addr: str | None,
 ) -> None:
     """Log one blocked-agent request with headers for audit visibility."""
-    logger.warning(
-        "blocked agent rejected client_id=%s channel=%s remote_addr=%s headers=%s",
-        client_id or "missing",
-        channel,
-        remote_addr or "unknown",
-        headers,
+    protocol_log_blocked_agent_attempt(
+        client_id=client_id,
+        channel=channel,
+        headers=headers,
+        remote_addr=remote_addr,
+        logger=logger,
     )
 
 
@@ -1398,187 +1373,17 @@ async def delete_client(client_id: str) -> Response:
 async def queue_command(client_id: str) -> Response:
     """Queue a structured command intent for a client."""
     payload = await request.get_json(silent=True)
-    logger.debug("queue_command request client_id=%s payload=%s", client_id, payload)
-    pairs = None
-    if isinstance(payload, list):
-        pairs = payload
-    elif isinstance(payload, dict):
-        if isinstance(payload.get("pairs"), list):
-            pairs = payload["pairs"]
-    if not isinstance(pairs, list) or not pairs:
-        return (
-            jsonify({"error": "pairs array is required"}),
-            HTTPStatus.BAD_REQUEST,
+    try:
+        cmd = queue_command_from_payload(
+            client_id=client_id,
+            payload=payload,
+            store=STORE,
+            max_events=provider_config.CONFIG.client_event_history_size,
+            command_builders=COMMAND_BUILDERS,
+            logger=logger,
         )
-    logger.debug("queue_command parsed pairs client_id=%s pairs=%s", client_id, pairs)
-
-    normalized_pairs: list[dict[str, str]] = []
-    values: dict[str, str] = {}
-    for pair in pairs:
-        if not isinstance(pair, dict) or "key" not in pair or "value" not in pair:
-            return (
-                jsonify({"error": "each pair must include key and value"}),
-                HTTPStatus.BAD_REQUEST,
-            )
-        key = str(pair["key"]).strip()
-        value = str(pair["value"]).strip()
-        if not key:
-            return (
-                jsonify({"error": "pair key cannot be empty"}),
-                HTTPStatus.BAD_REQUEST,
-            )
-        normalized_pairs.append({"key": key, "value": value})
-        values[key.lower()] = value
-
-    classifier = values.get("classifier", "").strip().lower()
-    operation = values.get("operation", "").strip().lower()
-    action = values.get("action", "").strip().lower()
-    routing_action = operation or action
-    logger.debug(
-        "queue_command routing fields client_id=%s classifier=%s operation=%s action=%s routing_action=%s",
-        client_id,
-        classifier,
-        operation,
-        action,
-        routing_action,
-    )
-    if classifier not in {
-        CLASSIFIER_COMMAND,
-        CLASSIFIER_CUSTOM_COMMAND,
-        CLASSIFIER_CUSTOM,
-    }:
-        return (
-            jsonify(
-                {
-                    "error": "classifier must be command, custom, or custom_command",
-                    "classifier": classifier,
-                }
-            ),
-            HTTPStatus.BAD_REQUEST,
-        )
-    if not routing_action:
-        return jsonify({"error": "operation is required"}), HTTPStatus.BAD_REQUEST
-
-    if (classifier, routing_action) not in COMMAND_BUILDERS and (
-        classifier,
-        "*",
-    ) not in COMMAND_BUILDERS:
-        logger.debug(
-            "queue_command unsupported mapping client_id=%s classifier=%s routing_action=%s builders=%s",
-            client_id,
-            classifier,
-            routing_action,
-            sorted(COMMAND_BUILDERS.keys()),
-        )
-        return (
-            jsonify(
-                {
-                    "error": "unsupported classifier/action",
-                    "classifier": classifier,
-                    "action": routing_action,
-                }
-            ),
-            HTTPStatus.BAD_REQUEST,
-        )
-
-    # Build a command object when a concrete class exists for the operation.
-    key_value_dict = {pair["key"]: pair["value"] for pair in normalized_pairs}
-    event_description = f"{classifier} {routing_action} command queued"
-    if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_FORCE_RESYNC:
-        event_description = "Force Resync"
-    command_obj = None
-    if classifier == CLASSIFIER_COMMAND and routing_action == COMMAND_RESTART:
-        logger.debug(
-            "queue_command building command object client_id=%s classifier=%s routing_action=%s key_values=%s",
-            client_id,
-            classifier,
-            routing_action,
-            key_value_dict,
-        )
-        command_obj = command_object_factory(
-            classifier=classifier,
-            key_values=key_value_dict,
-        )
-        command_obj.set_key_value_dictionary(key_value_dict)
-        classifier = command_obj.get_command_classifier()
-        routing_action = str(routing_action).strip().lower()
-        event_description = command_obj.get_command_description()
-        logger.debug(
-            "queue_command built command object client_id=%s object_type=%s classifier=%s routing_action=%s",
-            client_id,
-            command_obj.__class__.__name__,
-            classifier,
-            routing_action,
-        )
-    elif classifier == CLASSIFIER_CUSTOM:
-        # Design intent: keep wildcard routing for extensibility, but still reject
-        # unknown custom operations early so typos do not queue opaque payloads.
-        logger.debug(
-            "queue_command validating custom command object client_id=%s classifier=%s routing_action=%s key_values=%s",
-            client_id,
-            classifier,
-            routing_action,
-            key_value_dict,
-        )
-        try:
-            command_obj = command_object_factory(
-                classifier=classifier,
-                key_values=key_value_dict,
-            )
-        except ValueError:
-            logger.debug(
-                "queue_command rejected unknown custom command mapping client_id=%s classifier=%s routing_action=%s",
-                client_id,
-                classifier,
-                routing_action,
-            )
-            return (
-                jsonify(
-                    {
-                        "error": "unsupported custom command mapping",
-                        "classifier": classifier,
-                        "action": routing_action,
-                    }
-                ),
-                HTTPStatus.BAD_REQUEST,
-            )
-        command_obj.set_key_value_dictionary(key_value_dict)
-        classifier = command_obj.get_command_classifier().strip().lower()
-        normalized_command_values = command_obj.get_key_value_dictionary()
-        routing_action = str(
-            normalized_command_values.get("action", routing_action) or routing_action
-        ).strip().lower()
-        event_description = command_obj.get_command_description()
-        logger.debug(
-            "queue_command validated custom command object client_id=%s object_type=%s classifier=%s routing_action=%s",
-            client_id,
-            command_obj.__class__.__name__,
-            classifier,
-            routing_action,
-        )
-
-    cmd = STORE.queue_command(
-        client_id,
-        classifier=classifier,
-        action=routing_action,
-        key_value_pairs=(
-            [
-                {"key": key_name, "value": key_value}
-                for key_name, key_value in command_obj.get_key_value_dictionary().items()
-            ]
-            if command_obj is not None
-            else normalized_pairs
-        ),
-        event_description=event_description,
-        max_events=provider_config.CONFIG.client_event_history_size,
-    )
-    logger.info(
-        LOG_REST_COMMAND,
-        client_id,
-        cmd.classifier,
-        cmd.action,
-        cmd.received_at,
-    )
+    except QueueCommandRequestError as exc:
+        return jsonify(exc.payload), int(exc.status_code)
     return jsonify(cmd.model_dump(mode=MODEL_DUMP_MODE)), HTTPStatus.CREATED
 
 
