@@ -20,6 +20,7 @@ References:
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -27,12 +28,19 @@ from typing import Any
 from fastmcp import FastMCP
 from quart import Blueprint, Response, jsonify
 
+from opamp_provider import config as provider_config
+from opamp_provider.command_queue import (
+    QueueCommandRequestError,
+    build_custom_command_mcp_error_payload,
+    queue_custom_command_from_mcp,
+)
 from opamp_provider.commands import get_command_metadata
 from opamp_provider.state import STORE
 
 mcptool_blueprint = Blueprint("mcptool", __name__)
 mcpserver = FastMCP("OpAMP Server")
 MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for MCP/HTTP JSON responses.
+logger = logging.getLogger(__name__)
 # MCP tool decorators below register Python callables as MCP-invocable tools.
 
 
@@ -127,3 +135,39 @@ def mcp_tool_otel_agents() -> dict[str, Any]:
 def mcp_tool_commands() -> dict[str, Any]:
     """Expose full command catalog through MCP."""
     return _list_all_commands_payload()
+
+
+@mcpserver.tool(
+    name="tool_invoke_custom_command",
+    description=(
+        "Queue a custom command for a specific OpAMP client. "
+        "Returns a friendly validation error payload when request fields are invalid."
+    ),
+)
+def mcp_tool_invoke_custom_command(
+    client_id: str,
+    operation: str,
+    capability: str | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Queue one custom command from MCP by validating and normalizing user input."""
+    try:
+        cmd = queue_custom_command_from_mcp(
+            client_id=client_id,
+            operation=operation,
+            capability=capability,
+            parameters=parameters,
+            store=STORE,
+            max_events=provider_config.CONFIG.client_event_history_size,
+            logger=logger,
+        )
+    except QueueCommandRequestError as exc:
+        return build_custom_command_mcp_error_payload(exc)
+
+    return {
+        "status": "queued",
+        "client_id": client_id,
+        "classifier": cmd.classifier,
+        "action": cmd.action,
+        "command": cmd.model_dump(mode=MODEL_DUMP_MODE),
+    }

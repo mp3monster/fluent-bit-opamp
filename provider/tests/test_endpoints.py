@@ -21,13 +21,13 @@ from opamp_provider.app import (
     ACTION_APPLY_CONFIG,
     ACTION_CHANGE_CONNECTIONS,
     ACTION_PACKAGE_AVAILABLE,
-    ERR_AGENT_AUTH_FAILED,
     ERR_AGENT_BLOCKED,
     ERR_AGENT_PENDING_APPROVAL,
     _tls_certificate_expiry_metadata,
     app,
 )
 from opamp_provider.config import ProviderConfig
+from opamp_provider.mcptool.routes import mcp_tool_invoke_custom_command
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE
 from opamp_provider.transport import decode_message, encode_message
@@ -1491,6 +1491,80 @@ async def test_tool_commands_returns_standard_and_custom_commands() -> None:
     operations = {entry.get("operation") for entry in commands}
     assert "restart" in operations
     assert "chatopcommand" in operations
+
+
+def test_mcp_tool_invoke_custom_command_queues_valid_custom_command() -> None:
+    """Verify MCP custom-command tool queues valid command payloads for a client."""
+    client_id = "0000000000000000000000000000005a"
+    result = mcp_tool_invoke_custom_command(
+        client_id=client_id,
+        operation="nullcommand",
+        capability="org.mp3monster.opamp_provider.nullcommand",
+        parameters={"dummyValue": "queued-via-mcp"},
+    )
+
+    assert result["status"] == "queued"
+    assert result["client_id"] == client_id
+    assert result["classifier"] == "custom"
+    assert result["action"] == "nullcommand"
+
+    record = STORE.get(client_id)
+    assert record is not None
+    assert len(record.commands) == 1
+    queued = record.commands[0]
+    assert queued.classifier == "custom"
+    assert queued.action == "nullcommand"
+    pairs = {entry["key"]: entry["value"] for entry in queued.key_value_pairs}
+    assert pairs["dummyValue"] == "queued-via-mcp"
+
+
+def test_mcp_tool_invoke_custom_command_returns_friendly_error_for_unknown_command() -> None:
+    """Verify MCP custom-command tool returns friendly validation details for unknown operations."""
+    client_id = "0000000000000000000000000000005b"
+    result = mcp_tool_invoke_custom_command(
+        client_id=client_id,
+        operation="definitely-not-registered",
+        capability="org.example.custom.unknown",
+        parameters={"dummyValue": "not-used"},
+    )
+
+    assert result["status"] == "error"
+    assert result["status_code"] == 400
+    assert result["error"].startswith("Custom command request rejected:")
+    assert result["validation_error"]["error"] == "unsupported custom command mapping"
+
+    record = STORE.get(client_id)
+    assert record is None or len(record.commands) == 0
+
+
+def test_mcp_tool_invoke_custom_command_rejects_invalid_payload_shape() -> None:
+    """Verify MCP custom-command tool validates reserved keys and non-primitive parameter values."""
+    client_id = "0000000000000000000000000000005c"
+
+    reserved_result = mcp_tool_invoke_custom_command(
+        client_id=client_id,
+        operation="nullcommand",
+        capability="org.mp3monster.opamp_provider.nullcommand",
+        parameters={"classifier": "command"},
+    )
+    assert reserved_result["status"] == "error"
+    assert reserved_result["status_code"] == 400
+    assert reserved_result["error"].startswith("Custom command request rejected:")
+    assert "reserved" in reserved_result["validation_error"]["error"]
+
+    nonprimitive_result = mcp_tool_invoke_custom_command(
+        client_id=client_id,
+        operation="nullcommand",
+        capability="org.mp3monster.opamp_provider.nullcommand",
+        parameters={"dummyValue": {"nested": "object-not-allowed"}},
+    )
+    assert nonprimitive_result["status"] == "error"
+    assert nonprimitive_result["status_code"] == 400
+    assert nonprimitive_result["error"].startswith("Custom command request rejected:")
+    assert "must be a primitive value" in nonprimitive_result["validation_error"]["error"]
+
+    record = STORE.get(client_id)
+    assert record is None or len(record.commands) == 0
 
 
 @pytest.mark.asyncio

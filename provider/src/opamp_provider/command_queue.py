@@ -29,6 +29,13 @@ CLASSIFIER_CUSTOM = "custom"
 COMMAND_RESTART = "restart"
 COMMAND_FORCE_RESYNC = "forceresync"
 LOG_REST_COMMAND = "queued command for client %s classifier=%s action=%s at %s"
+_MCP_VALIDATION_MESSAGE_PREFIX = "Custom command request rejected: "
+_MCP_RESERVED_PARAMETER_KEYS = {
+    "classifier",
+    "operation",
+    "action",
+    "capability",
+}
 
 
 class QueueCommandRequestError(Exception):
@@ -38,6 +45,51 @@ class QueueCommandRequestError(Exception):
         super().__init__(str(payload.get("error", "invalid command payload")))
         self.payload = payload
         self.status_code = status_code
+
+
+def _noop_command_builder(_response: Any, _command: CommandRecord) -> Any:
+    """No-op builder used only for command-routing-key validation."""
+    return _response
+
+
+def _validate_mcp_parameters(parameters: Any) -> dict[str, str]:
+    """Validate and normalize user-provided MCP key/value parameter pairs."""
+    if parameters is None:
+        return {}
+    if not isinstance(parameters, dict):
+        raise QueueCommandRequestError(
+            {"error": "parameters must be an object/dictionary"},
+            HTTPStatus.BAD_REQUEST,
+        )
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in parameters.items():
+        key = str(raw_key).strip()
+        if not key:
+            raise QueueCommandRequestError(
+                {"error": "parameter keys must be non-empty strings"},
+                HTTPStatus.BAD_REQUEST,
+            )
+        if key.lower() in _MCP_RESERVED_PARAMETER_KEYS:
+            raise QueueCommandRequestError(
+                {
+                    "error": (
+                        f"parameter key '{key}' is reserved and cannot be overridden"
+                    )
+                },
+                HTTPStatus.BAD_REQUEST,
+            )
+        if isinstance(raw_value, (dict, list, tuple, set)):
+            raise QueueCommandRequestError(
+                {
+                    "error": (
+                        f"parameter '{key}' must be a primitive value "
+                        "(string/number/boolean)"
+                    )
+                },
+                HTTPStatus.BAD_REQUEST,
+            )
+        normalized[key] = str(raw_value)
+    return normalized
 
 
 def queue_command_from_payload(
@@ -234,3 +286,67 @@ def queue_command_from_payload(
         cmd.received_at,
     )
     return cmd
+
+
+def queue_custom_command_from_mcp(
+    *,
+    client_id: str,
+    operation: str,
+    capability: str | None,
+    parameters: Any,
+    store: ClientStore,
+    max_events: int,
+    logger: logging.Logger,
+) -> CommandRecord:
+    """Queue one custom command from an MCP tool request with strict validation."""
+    normalized_client_id = str(client_id or "").strip()
+    if not normalized_client_id:
+        raise QueueCommandRequestError(
+            {"error": "client_id is required"},
+            HTTPStatus.BAD_REQUEST,
+        )
+    normalized_operation = str(operation or "").strip().lower()
+    if not normalized_operation:
+        raise QueueCommandRequestError(
+            {"error": "operation is required"},
+            HTTPStatus.BAD_REQUEST,
+        )
+    normalized_capability = str(capability or "").strip()
+    parameter_values = _validate_mcp_parameters(parameters)
+
+    pairs: list[dict[str, str]] = [
+        {"key": "classifier", "value": CLASSIFIER_CUSTOM},
+        {"key": "operation", "value": normalized_operation},
+    ]
+    if normalized_capability:
+        pairs.append({"key": "capability", "value": normalized_capability})
+    for key, value in parameter_values.items():
+        pairs.append({"key": key, "value": value})
+
+    validation_only_builders: dict[tuple[str, str], Callable[[Any, Any], Any]] = {
+        (CLASSIFIER_CUSTOM, "*"): _noop_command_builder,
+        (CLASSIFIER_CUSTOM_COMMAND, "*"): _noop_command_builder,
+    }
+
+    return queue_command_from_payload(
+        client_id=normalized_client_id,
+        payload={"pairs": pairs},
+        store=store,
+        max_events=max_events,
+        command_builders=validation_only_builders,
+        logger=logger,
+    )
+
+
+def build_custom_command_mcp_error_payload(error: QueueCommandRequestError) -> dict[str, Any]:
+    """Create a user-friendly MCP tool error payload from validation failures."""
+    detail = str(error.payload.get("error", "invalid custom command request")).strip()
+    message = _MCP_VALIDATION_MESSAGE_PREFIX + (
+        detail if detail else "invalid custom command request"
+    )
+    return {
+        "status": "error",
+        "error": message,
+        "validation_error": error.payload,
+        "status_code": int(error.status_code),
+    }
