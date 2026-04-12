@@ -15,13 +15,13 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "opamp-provider"
-version = "0.1.0"
-description = "OpAMP provider (server) skeleton using Quart"
+name = "opamp-server"
+version = "0.5.0"
+description = "OpAMP Server - upstream source https://github.com/mp3monster/fluent-opamp "
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Phil Wilkins", email = "phil@mp3monster.org" }]
 dependencies = [
   "quart>=0.19",
   "pydantic>=2.6",
@@ -39,3 +39,11 @@ dev = [
 
 [project.scripts]
 opamp-provider = "opamp_provider.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opamp_provider", "src/shared"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../docs" = "docs"
+"../scripts" = "scripts"
+"../mcp" = "mcp"

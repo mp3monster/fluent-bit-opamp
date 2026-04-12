@@ -17,11 +17,11 @@ build-backend = "hatchling.build"
 [project]
 name = "opamp-consumer"
 version = "0.1.0"
-description = "OpAMP consumer (client) skeleton using Quart transport semantics"
+description = "OpAMP client (as a supervisor) designed primarily for Fluent Bit & Fluentd  using Quart transport semantics"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Phil Wilkins", email = "phil@mp3monster.org" }]
 dependencies = [
   "protobuf>=5.27",
   "grpcio-tools>=1.60",
