@@ -46,6 +46,8 @@ opamp-provider --config-path ./config/opamp.json --restore ./runtime/opamp_serve
 Restores from the explicit snapshot file path.
 
 Snapshot files use UTC timestamp suffixes: `<state_file_prefix>.<YYYYMMDDTHHMMSSZ>.json`.
+The parent folder for `state_file_prefix` is created automatically when snapshots are written
+(for example, `server-state/` for `server-state/opamp_server_state`).
 If restore fails because the file is missing, corrupt, or incompatible, provider logs the error and continues with empty/default in-memory state.
 
 ## Quick start (consumer only)
@@ -118,9 +120,11 @@ python3 -m opamp_consumer.fluentbit_client --config-path config/opamp.json
 - Consumer diagram walkthrough (rendered PNGs): `docs/consumer_client_diagrams.md`
 - Provider/server diagram walkthrough (rendered PNGs): `docs/provider_server_diagrams.md`
 - Optional bearer auth setup (disabled/static/jwt): see `docs/authentication.md`
+- MCP client setup scripts (Claude/Codex/canonical), command-line parameters, FastMCP usage, required server parameters, and config verification commands: see `../mcp/README.md`
 - Provider state persistence/restore and snapshot retention details: see `provider/README.md#state-persistence-and-restore`
 - Recommended API gateway hardening and internal vs external client profiles: see `docs/api_gateway_requirements.md`
 - Running as a Linux daemon or Windows service (including consumer permissions to launch Fluent Bit/Fluentd): see `docs/service_daemon_setup.md`
 - If you change `provider.webui_port` in `config/opamp.json`, the UI/HTTP port will follow it.
 - `/doc-set` redirects to the URL set in `provider.latest_docs_url` (defaults to the project README on GitHub).
+- `logs/` is created automatically by provider run scripts when log output is started.
 - For Windows CMD usage, the commands are similar but use `\.venv\Scripts\activate.bat` to activate the venv.

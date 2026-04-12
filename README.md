@@ -28,6 +28,7 @@ The documentation includes background such as the implementation philosophies th
 - [docs/consumer_client_diagrams.md](docs/consumer_client_diagrams.md) — rendered consumer client diagrams with walkthrough notes.
 - [docs/provider_server_diagrams.md](docs/provider_server_diagrams.md) — rendered provider/server diagrams with architecture walkthrough notes.
 - [docs/features.md](docs/features.md) — feature notes and design direction.
+- [mcp/README.md](mcp/README.md) — MCP setup wrappers/canonical script behavior, FastMCP client role, command-line parameters, and verification.
 - [docs/scripts.md](docs/scripts.md) — script reference table by platform.
 - [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](provider/README.md) — provider configuration and web UI notes.

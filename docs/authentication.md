@@ -200,6 +200,9 @@ When your MCP client supports custom headers, pass:
 
 at connection/request time for `/sse`, `/messages`, or `/mcp` transports.
 
+For MCP client setup script usage and command-line parameters (Claude/Codex/canonical),
+see `../mcp/README.md`.
+
 If auth is enabled and no valid bearer token is provided, provider returns `401`.
 
 ## Authorization Rejection Logging

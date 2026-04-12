@@ -51,6 +51,9 @@ Helper scripts live in `scripts/` at the repo root:
 - Bash: `scripts/run_opamp_server.sh`
 
 Both scripts write logs to `logs/opamp_server.log` and rotate it on startup.
+If `logs/` does not exist yet, the scripts create it when logging starts.
+For MCP client setup wrappers/canonical script usage, FastMCP client role, and
+command-line parameters, see `../mcp/README.md`.
 
 ## Configuration
 
@@ -152,6 +155,8 @@ Example `opamp.json`:
     Enables persistent runtime snapshots when `true`.
   - `provider.state_persistence.state_file_prefix` (string, optional, default `"runtime/opamp_server_state"`)
     Prefix used for timestamped snapshot files (`<prefix>.<YYYYMMDDTHHMMSSZ>.json`).
+    The parent folder is created automatically when a snapshot is saved (for example,
+    `server-state/` when `state_file_prefix` is `server-state/opamp_server_state`).
   - `provider.state_persistence.retention_count` (integer, optional, default `5`)
     Number of most-recent snapshots to keep.
   - `provider.state_persistence.flush_mode` (string, optional, default `"graceful_shutdown"`)

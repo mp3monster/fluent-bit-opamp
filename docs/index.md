@@ -24,6 +24,7 @@ Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links t
 - [Client README](../consumer/README.md) — client/agent (aka consumer) configuration and CLI usage.
 - [Server README](../provider/README.md) — server (aka provider) configuration and web UI notes.
 - [Server state persistence](../provider/README.md#state-persistence-and-restore) — snapshot naming, `--restore` usage, fallback behavior, and retention.
+- [MCP scripts and usage](../mcp/README.md) — MCP wrapper/canonical script behavior, FastMCP client role, command-line parameters, and verification.
 - [Scripts](scripts.md) — script reference table by platform.
 
 ## Project layout (quick view)
@@ -33,6 +34,7 @@ Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links t
 - `dist` — SBOM (Software Bill of Materials) and Wheel files
 - `docs` — project documentation.
 - `logs` — runtime logs created by scripts.
+- `server-state` — state snapshot folder created when provider state persistence writes snapshots (folder name follows `provider.state_persistence.state_file_prefix` parent path).
 - `proto` — protobuf definitions and generated artifacts.
 - `provider` — the OpAMP provider (server) package, UI, and tests.
 - `scripts` — helper run and shutdown scripts.

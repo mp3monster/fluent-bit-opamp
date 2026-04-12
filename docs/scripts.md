@@ -16,6 +16,9 @@ This table lists the helper scripts and their platform-specific names.
 | Request server shutdown via API | `scripts/shutdown_opamp_server.sh` | `scripts/shutdown_opamp_server.cmd` |
 | Build deployable Python artifacts (provider + consumer) | `scripts/build_artifacts.sh` | `scripts/build_artifacts.cmd` |
 | Build wheel artifacts and optionally publish to GitHub release assets | `scripts/build_and_publish_wheels.py` | `scripts\build_and_publish_wheels.py` |
+| Configure MCP for Claude Desktop (wrapper) | `mcp/configure-claude-desktop-fastmcp.sh` | `mcp\configure-claude-desktop-fastmcp.ps1` |
+| Configure MCP for ChatGPT/Codex (wrapper) | `mcp/configure-codex-fastmcp.sh` | `mcp\configure-codex-fastmcp.ps1` |
+| Configure MCP for selected clients (canonical script) | `mcp/configure-mcp-clients-fastmcp.sh` | `mcp\configure-mcp-clients-fastmcp.ps1` |
 
 `configure_keycloak` supports a container readiness-only mode:
 
@@ -23,6 +26,20 @@ This table lists the helper scripts and their platform-specific names.
 - Windows cmd: `scripts\configure_keycloak.cmd --ready-only`
 - Windows PowerShell: `.\scripts\configure_keycloak.ps1 -ReadyOnly`
 - Optional runtime override: `CONTAINER_RUNTIME=docker|podman`
+
+## MCP Client Setup Scripts
+
+Detailed MCP client setup documentation has moved to:
+[`../mcp/README.md`](../mcp/README.md)
+
+That guide includes:
+
+- script architecture (wrapper vs canonical)
+- how FastMCP is used by ChatGPT/Codex and VS Code clients
+- Claude Desktop remote transport behavior (`mcp-remote`)
+- why `provider/uv.lock` is committed for reproducible `uv`-based MCP setup
+- full command-line parameter reference
+- usage and verification examples
 
 ## Provider HTTPS bootstrap
 

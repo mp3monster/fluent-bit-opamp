@@ -45,6 +45,20 @@ In short:
 - Claude path: remote transport (`mcp-remote`).
 - ChatGPT/Codex and VS Code paths: local stdio tooling (`fastmcp` + `uv`).
 
+## Why `uv.lock` is provided
+
+The repository includes `provider/uv.lock` so `uv run --project provider ...`
+resolves the same dependency graph across machines and over time.
+
+This matters for MCP setup because ChatGPT/Codex and VS Code script paths depend
+on `uv` + `fastmcp` execution consistency.
+
+Benefits:
+
+- reproducible installs and execution for MCP client registration
+- fewer environment-specific breakages from transitive dependency drift
+- better CI/local parity when validating MCP behavior
+
 ## Required server parameters
 
 Always pass server host (and usually port) so scripts do not prompt:
