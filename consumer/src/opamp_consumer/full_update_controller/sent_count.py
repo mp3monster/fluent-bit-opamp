@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from typing import Callable
-import json
-from typing import Any
+from typing import Any, Callable
 
 from opamp_consumer.full_update_controller.update_interface import (
     FullUpdateControllerInterface,

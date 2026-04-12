@@ -16,6 +16,7 @@ from opamp_consumer.custom_handlers.handler_interface import (
     CommandHandlerInterface,
     CustomMessageHandlerInterface,
 )
+
 # Design intent: concrete handlers are discovered dynamically from this package
 # directory by `registry.build_factory_lookup(...)`. We intentionally do not
 # re-export concrete handler classes here so imports do not imply static wiring.

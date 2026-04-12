@@ -11,7 +11,6 @@
 # limitations under the License.
 
 import pytest
-
 from opamp_provider.transport import (
     decode_message,
     decode_varint,

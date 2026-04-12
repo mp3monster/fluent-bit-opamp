@@ -11,9 +11,9 @@
 # limitations under the License.
 
 import pytest
-
 from opamp_provider.app import app
 from opamp_provider.proto import opamp_pb2
+
 from shared.opamp_config import OPAMP_HTTP_PATH
 
 

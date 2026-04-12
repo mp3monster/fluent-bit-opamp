@@ -18,6 +18,8 @@ import logging
 import pathlib
 import sys
 
+from opamp_consumer import config as consumer_config  # noqa: E402
+from opamp_provider import config as provider_config  # noqa: E402
 
 ROOT_PATH = pathlib.Path(__file__).resolve().parents[1]  # Repository root path.
 PROVIDER_SRC = ROOT_PATH / "provider" / "src"  # Provider source path added to import search path.
@@ -25,9 +27,6 @@ CONSUMER_SRC = ROOT_PATH / "consumer" / "src"  # Consumer source path added to i
 for path in (ROOT_PATH, PROVIDER_SRC, CONSUMER_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
-
-from opamp_provider import config as provider_config  # noqa: E402
-from opamp_consumer import config as consumer_config  # noqa: E402
 
 
 def _repo_root() -> pathlib.Path:

@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
-import json
 import sys
 
 from opamp_provider import config as provider_config

@@ -15,7 +15,8 @@ import pathlib
 from datetime import datetime, timezone
 
 import pytest
-
+from opamp_provider import auth as provider_auth
+from opamp_provider import config as provider_config
 from opamp_provider.app import (
     ACTION_APPLY_CONFIG,
     ACTION_CHANGE_CONNECTIONS,
@@ -26,8 +27,6 @@ from opamp_provider.app import (
     _tls_certificate_expiry_metadata,
     app,
 )
-from opamp_provider import auth as provider_auth
-from opamp_provider import config as provider_config
 from opamp_provider.config import ProviderConfig
 from opamp_provider.proto import opamp_pb2
 from opamp_provider.state import STORE

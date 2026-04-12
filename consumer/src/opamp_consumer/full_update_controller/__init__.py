@@ -12,11 +12,11 @@
 
 """Full update controller package."""
 
-from opamp_consumer.full_update_controller.update_interface import (
-    FullUpdateControllerInterface,
-)
 from opamp_consumer.full_update_controller.always_send import AlwaysSend
 from opamp_consumer.full_update_controller.sent_count import SentCount
 from opamp_consumer.full_update_controller.time_send import TimeSend
+from opamp_consumer.full_update_controller.update_interface import (
+    FullUpdateControllerInterface,
+)
 
 __all__ = ["FullUpdateControllerInterface", "AlwaysSend", "SentCount", "TimeSend"]

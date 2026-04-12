@@ -26,7 +26,7 @@ ROOT_PATH = pathlib.Path(__file__).resolve().parents[3]  # Repository root for r
 if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
-from shared.opamp_config import AgentCapabilities, UTF8_ENCODING, parse_capabilities
+from shared.opamp_config import UTF8_ENCODING, AgentCapabilities, parse_capabilities
 
 ENV_OPAMP_CONFIG_PATH = "OPAMP_CONFIG_PATH"  # Environment variable overriding config file location.
 DEFAULT_CONFIG_FILENAME = "opamp.json"  # Default configuration filename.

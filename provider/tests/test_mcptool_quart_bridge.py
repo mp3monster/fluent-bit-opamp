@@ -12,12 +12,11 @@
 
 from __future__ import annotations
 
-from quart import Quart
 import pytest
-
 from opamp_provider import auth as provider_auth
 from opamp_provider import config as provider_config
 from opamp_provider import mcptool
+from quart import Quart
 
 
 @pytest.mark.asyncio

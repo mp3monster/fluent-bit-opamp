@@ -16,6 +16,7 @@ import opamp_consumer.fluentbit_client as client
 from opamp_consumer.config import ConsumerConfig
 from opamp_consumer.fluentbit_client import CONFIG_DOCS_URL
 from opamp_consumer.proto import opamp_pb2
+
 from shared.opamp_config import AGENT_CAPABILITIES_MAP
 
 

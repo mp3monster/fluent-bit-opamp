@@ -15,7 +15,6 @@ import sys
 
 import pytest
 
-
 SUITES = {
     "provider-error-responses": ["provider/tests/test_error_responses.py"],
 }

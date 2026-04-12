@@ -10,10 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import timedelta, timezone, datetime
+from datetime import datetime, timedelta, timezone
 
-from opamp_provider.state import ClientRecord, ClientStore
 from opamp_provider.proto import opamp_pb2
+from opamp_provider.state import ClientRecord, ClientStore
 
 
 def test_disconnect_marks_and_purges() -> None:

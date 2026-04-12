@@ -19,7 +19,6 @@ import inspect
 import logging
 import pkgutil
 
-from opamp_provider.command_interface import CommandObjectInterface
 from opamp_provider.command_implementations.command_chatops import ChatOpCommand
 from opamp_provider.command_implementations.command_nullcommand import (
     CommandNullCommand,
@@ -28,6 +27,7 @@ from opamp_provider.command_implementations.command_restart_agent import Restart
 from opamp_provider.command_implementations.command_shutdown_agent import (
     CommandShutdownAgent,
 )
+from opamp_provider.command_interface import CommandObjectInterface
 
 _IMPLEMENTATIONS_PACKAGE = "opamp_provider.command_implementations"
 # Module discovery filter for command implementation files.

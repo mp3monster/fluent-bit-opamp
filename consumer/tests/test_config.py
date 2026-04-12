@@ -14,8 +14,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from opamp_consumer import config as consumer_config
+
 from shared.opamp_config import AgentCapabilities
 
 

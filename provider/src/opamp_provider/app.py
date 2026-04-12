@@ -16,22 +16,22 @@ from __future__ import annotations
 
 import asyncio
 import json
-import ssl
-from typing import Callable
 import logging
 import os
 import pathlib
 import signal
+import ssl
 import tracemalloc
-from http import HTTPStatus
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
+from typing import Callable
 
 from google.protobuf import text_format
 from quart import Quart, Response, jsonify, redirect, request, websocket
 from werkzeug.exceptions import HTTPException
 
-from opamp_provider import config as provider_config
 from opamp_provider import auth as provider_auth
+from opamp_provider import config as provider_config
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.commands import (
     command_object_factory,
@@ -55,8 +55,8 @@ from shared.opamp_config import (
     PB_FIELD_CONNECTION_SETTINGS_REQUEST,
     PB_FIELD_CUSTOM_MESSAGE,
     PB_FIELD_PACKAGE_STATUSES,
-    ServerCapabilities,
     UTF8_ENCODING,
+    ServerCapabilities,
 )
 
 app = Quart("opamp_server")

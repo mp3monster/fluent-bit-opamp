@@ -10,33 +10,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
 import json
+from datetime import datetime
 
 import pytest
-
-from opamp_provider.commands import (
-    ChatOpCommand,
-    RestartAgent,
-    command_object_factory,
-    get_command_metadata,
-    get_available_command_keys,
-    get_command_fqdn,
-    get_custom_capabilities_list,
-    get_registered_command_fqdns,
-    get_registered_command_keys,
-)
 from opamp_provider.command_implementations.command_chatops import (
     CHATOPCOMMAND_CAPABILITY,
     CHATOPCOMMAND_TYPE,
+)
+from opamp_provider.command_implementations.command_nullcommand import (
+    NULLCOMMAND_CAPABILITY,
+    NULLCOMMAND_TYPE,
 )
 from opamp_provider.command_implementations.command_shutdown_agent import (
     SHUTDOWN_AGENT_CAPABILITY,
     SHUTDOWN_AGENT_TYPE,
 )
-from opamp_provider.command_implementations.command_nullcommand import (
-    NULLCOMMAND_CAPABILITY,
-    NULLCOMMAND_TYPE,
+from opamp_provider.commands import (
+    ChatOpCommand,
+    RestartAgent,
+    command_object_factory,
+    get_available_command_keys,
+    get_command_fqdn,
+    get_command_metadata,
+    get_custom_capabilities_list,
+    get_registered_command_fqdns,
+    get_registered_command_keys,
 )
 
 

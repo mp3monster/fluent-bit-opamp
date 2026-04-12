@@ -14,14 +14,14 @@
 
 from __future__ import annotations
 
-import threading
 import logging
 import re
-import sys
-from enum import Enum
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
 import string
+import sys
+import threading
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Iterable, Optional
 
 from google.protobuf import text_format
 from pydantic import BaseModel, ConfigDict, Field, field_serializer

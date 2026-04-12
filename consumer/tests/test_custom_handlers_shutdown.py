@@ -11,7 +11,6 @@
 # limitations under the License.
 
 import pytest
-
 from opamp_consumer.config import ConsumerConfig
 from opamp_consumer.custom_handlers import build_factory_lookup, create_handler
 from opamp_consumer.custom_handlers.shutdowncommand import ShutdownCommand

@@ -10,16 +10,15 @@ import mimetypes
 import os
 import subprocess
 import sys
-import uuid
-import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+import zipfile
 from datetime import datetime, timezone
 from email import message_from_bytes
 from pathlib import Path
 from typing import Any
-
 
 DEFAULT_REPO = "mp3monster/fluent-opamp"
 DEFAULT_PROVIDER_SBOM_PATH = (

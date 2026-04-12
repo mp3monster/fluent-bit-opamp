@@ -10,13 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-import pathlib
 import logging
+import pathlib
+import sys
 
 from opamp_provider import config as provider_config
-from opamp_provider.config import ProviderConfig, ProviderTLSConfig
 from opamp_provider import server as provider_server
+from opamp_provider.config import ProviderConfig, ProviderTLSConfig
 
 
 def test_server_main_invokes_app(monkeypatch) -> None:
