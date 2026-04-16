@@ -17,8 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import logging.config
 import os
+import pathlib
 import sys
+from typing import Any
 
 from opamp_provider import config as provider_config
 from opamp_provider.app import app, set_state_restore_status
@@ -28,6 +31,82 @@ from opamp_provider.state_persistence import (
     resolve_restore_snapshot_path,
     restore_state_snapshot,
 )
+
+ENV_PROVIDER_LOGGING_CONFIG_PATH = "OPAMP_PROVIDER_LOGGING_CONFIG"
+DEFAULT_PROVIDER_LOGGING_CONFIG_FILENAME = "provider_logging.json"
+
+
+def _normalize_log_level_name(log_level: str | int | None) -> str:
+    """Return canonical logging level name for dictConfig usage."""
+    if isinstance(log_level, int):
+        level_name = logging.getLevelName(log_level)
+        if isinstance(level_name, str):
+            return level_name.upper()
+        return "INFO"
+    return str(log_level or "INFO").strip().upper() or "INFO"
+
+
+def _default_logging_config(level_name: str) -> dict[str, Any]:
+    """Return fallback logging dictConfig when no config file is available."""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+            }
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+                "formatter": "default",
+            }
+        },
+        "root": {"level": level_name, "handlers": ["console"]},
+    }
+
+
+def _load_logging_config(level_name: str) -> dict[str, Any]:
+    """Load provider logging dictConfig from env/default path with fallback."""
+    configured_path = os.getenv(ENV_PROVIDER_LOGGING_CONFIG_PATH)
+    config_path = (
+        pathlib.Path(configured_path)
+        if configured_path
+        else pathlib.Path(__file__).with_name(DEFAULT_PROVIDER_LOGGING_CONFIG_FILENAME)
+    )
+    if config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(config, dict):
+                config.setdefault("version", 1)
+                config.setdefault("disable_existing_loggers", False)
+                root = config.setdefault("root", {})
+                if isinstance(root, dict):
+                    root["level"] = level_name
+                return config
+        except Exception as exc:  # pragma: no cover - defensive fallback.
+            print(
+                f"failed to load provider logging config {config_path}: {exc}",
+                file=sys.stderr,
+            )
+    return _default_logging_config(level_name)
+
+
+def _configure_logging(log_level: str | int | None) -> None:
+    """Configure logging with dictConfig while preserving test harness handlers."""
+    level_name = _normalize_log_level_name(log_level)
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        logging.config.dictConfig(
+            {
+                "version": 1,
+                "incremental": True,
+                "root": {"level": level_name},
+            }
+        )
+        return
+    logging.config.dictConfig(_load_logging_config(level_name))
 
 
 def _provider_tls_run_kwargs(config: provider_config.ProviderConfig) -> dict[str, str]:
@@ -67,13 +146,7 @@ def main() -> None:
         help="restore persisted provider state from latest snapshot or explicit file path",
     )
     args = parser.parse_args()
-    root_logger = logging.getLogger()
-    # Bootstrap startup logs before config load/restore so manual runs always show
-    # config path + restore decisions even when no handlers were preconfigured.
-    if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    else:
-        root_logger.setLevel(logging.INFO)
+    _configure_logging("INFO")
     effective_config_path = provider_config.get_effective_config_path(args.config_path)
     logger = logging.getLogger(__name__)
     logger.info(
@@ -167,13 +240,7 @@ def main() -> None:
                 )
 
     resolved_log_level = provider_config.resolve_log_level(config.log_level)
-    root_logger = logging.getLogger()
-    # Do not force-reconfigure handlers here. In tests/tools, handlers may be
-    # preinstalled (for capture), and replacing them can break stream lifecycle.
-    if not root_logger.handlers:
-        logging.basicConfig(level=resolved_log_level, stream=sys.stdout)
-    else:
-        root_logger.setLevel(resolved_log_level)
+    _configure_logging(resolved_log_level)
     app.config["DIAGNOSTIC_MODE"] = bool(args.diagnostic)
     port = args.port if args.port is not None else config.webui_port
     app.run(

@@ -182,8 +182,10 @@ Field reference:
 
 Recommended startup commands:
 
-- Linux/macOS: `./scripts/start_broker.sh`
-- Windows PowerShell: `.\scripts\start_broker.ps1`
+- Linux/macOS foreground: `./scripts/start_broker.sh`
+- Linux/macOS background service: `./scripts/start_broker.sh --service`
+- Windows PowerShell foreground: `.\scripts\start_broker.ps1`
+- Windows PowerShell background service: `.\scripts\start_broker.ps1 -Service`
 
 These scripts set:
 
@@ -196,17 +198,15 @@ They also ensure dependencies are installed before launch by:
 2. Running `pip install -r requirements.txt`
 3. Launching the broker runtime
 
-They then call `run.sh`/`run.ps1` to start:
+They then start the broker directly:
 
 - `python -m opamp_broker.broker_app`
 
-### Background service convenience scripts
+### Service mode and stop scripts
 
-If you want the broker to run in the background with a PID file:
+If you run startup in service mode, use these stop scripts for graceful shutdown:
 
-- Linux/macOS start: `./scripts/start_broker_service.sh`
 - Linux/macOS stop (graceful): `./scripts/stop_broker_service.sh`
-- Windows start: `.\scripts\start_broker_service.ps1`
 - Windows stop: `.\scripts\stop_broker_service.ps1`
 
 Runtime artifact defaults:
@@ -230,7 +230,7 @@ Shutdown behavior:
 
 Windows note:
 
-- If `.venv` was previously created from WSL/Linux (for example contains `bin/python` instead of `Scripts/python.exe`), `start_broker.ps1`/`run.ps1` will fall back to `python` on PATH instead of failing.
+- If `.venv` was previously created from WSL/Linux (for example contains `bin/python` instead of `Scripts/python.exe`), `start_broker.ps1` will fall back to `python` on PATH instead of failing.
 
 ### 5. Broker CLI options
 

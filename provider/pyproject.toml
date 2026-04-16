@@ -21,7 +21,7 @@ description = "OpAMP Server - upstream source https://github.com/mp3monster/flue
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Phil Wilkins", email = "phil@mp3monster.org" }]
+authors = [{ name = "Phil Wilkins", email = "phil-AT-mp3monster.org" }]
 dependencies = [
   "quart>=0.19",
   "pydantic>=2.6",
@@ -42,6 +42,7 @@ opamp-provider = "opamp_provider.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opamp_provider", "src/shared"]
+include = ["src/opamp_provider/provider_logging.json"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "../docs" = "docs"

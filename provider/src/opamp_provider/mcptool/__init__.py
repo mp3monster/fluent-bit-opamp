@@ -28,8 +28,10 @@ be exposed over SSE and/or Streamable HTTP.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from contextlib import suppress
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, Literal
 
@@ -141,6 +143,72 @@ def register_mcp_transport(
     if not app_mappings:
         logger.info("No MCP transport app was initialised; skipping Quart MCP exposure")
         return False
+
+    class _ASGILifespanController:
+        """Manage ASGI lifespan startup/shutdown for mounted FastMCP apps."""
+
+        def __init__(self, asgi_app: Any, label: str) -> None:
+            self._asgi_app = asgi_app
+            self._label = label
+            self._task: asyncio.Task[None] | None = None
+            self._receive_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+            self._startup_event = asyncio.Event()
+            self._shutdown_event = asyncio.Event()
+            self._startup_error: str | None = None
+
+        async def _run(self) -> None:
+            async def receive() -> dict[str, Any]:
+                return await self._receive_queue.get()
+
+            async def send(message: dict[str, Any]) -> None:
+                msg_type = str(message.get("type", ""))
+                if msg_type == "lifespan.startup.complete":
+                    self._startup_event.set()
+                    return
+                if msg_type == "lifespan.startup.failed":
+                    self._startup_error = str(message.get("message", "unknown startup failure"))
+                    self._startup_event.set()
+                    return
+                if msg_type in {"lifespan.shutdown.complete", "lifespan.shutdown.failed"}:
+                    self._shutdown_event.set()
+
+            scope = {"type": "lifespan", "asgi": {"version": "3.0", "spec_version": "2.3"}}
+            await self._asgi_app(scope, receive, send)
+
+        async def startup(self) -> None:
+            if self._task is None:
+                self._task = asyncio.create_task(self._run(), name=f"fastmcp-lifespan-{self._label}")
+                await self._receive_queue.put({"type": "lifespan.startup"})
+            await self._startup_event.wait()
+            if self._startup_error:
+                raise RuntimeError(
+                    f"FastMCP lifespan startup failed for {self._label}: {self._startup_error}"
+                )
+
+        async def shutdown(self) -> None:
+            if self._task is None:
+                return
+            await self._receive_queue.put({"type": "lifespan.shutdown"})
+            await self._shutdown_event.wait()
+            with suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    lifespan_controllers = [
+        _ASGILifespanController(mcp_asgi_app, mode)
+        for mode, mcp_asgi_app in app_mappings
+    ]
+
+    @app.before_serving
+    async def _start_fastmcp_lifespans() -> None:
+        for controller in lifespan_controllers:
+            await controller.startup()
+
+    @app.after_serving
+    async def _stop_fastmcp_lifespans() -> None:
+        for controller in lifespan_controllers:
+            with suppress(Exception):
+                await controller.shutdown()
 
     quart_asgi_app = app.asgi_app
     sse_prefixes = (normalized_sse, "/messages")
