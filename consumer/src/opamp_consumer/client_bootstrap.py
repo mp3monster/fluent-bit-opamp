@@ -18,7 +18,9 @@ import argparse
 import asyncio
 import json
 import logging
+import logging.config
 import os
+import pathlib
 import re
 import socket
 import sys
@@ -69,6 +71,55 @@ DEFAULT_CONFIG_PATH_ARGS = ("--config-path",)
 DEFAULT_AGENT_CONFIG_PATH_ARGS = ("--agent-config-path",)
 # Supported CLI option names for additional launched-agent command parameters.
 DEFAULT_AGENT_ADDITIONAL_ARGS = ("--agent-additional-params",)
+ENV_CONSUMER_LOGGING_CONFIG_PATH = "OPAMP_CONSUMER_LOGGING_CONFIG"
+DEFAULT_CONSUMER_LOGGING_CONFIG_FILENAME = "consumer_logging.json"
+
+
+def _default_logging_config(level_name: str) -> dict[str, object]:
+    """Return fallback logging dictConfig when no config file exists."""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+            }
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+                "formatter": "default",
+            }
+        },
+        "root": {"level": level_name, "handlers": ["console"]},
+    }
+
+
+def _load_logging_config(level_name: str) -> dict[str, object]:
+    """Load consumer logging dictConfig from env/default path with fallback."""
+    configured_path = os.getenv(ENV_CONSUMER_LOGGING_CONFIG_PATH)
+    config_path = (
+        pathlib.Path(configured_path)
+        if configured_path
+        else pathlib.Path(__file__).with_name(DEFAULT_CONSUMER_LOGGING_CONFIG_FILENAME)
+    )
+    if config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding=UTF8_ENCODING))
+            if isinstance(config, dict):
+                config.setdefault("version", 1)
+                config.setdefault("disable_existing_loggers", False)
+                root = config.setdefault("root", {})
+                if isinstance(root, dict):
+                    root["level"] = level_name
+                return config
+        except Exception as exc:  # pragma: no cover - defensive fallback.
+            print(
+                f"failed to load consumer logging config {config_path}: {exc}",
+                file=sys.stderr,
+            )
+    return _default_logging_config(level_name)
 
 
 def build_common_cli_parser(
@@ -140,11 +191,22 @@ def load_config_from_cli_args(args: argparse.Namespace) -> ConsumerConfig:
 def configure_logging_for_config(config: ConsumerConfig) -> logging.Logger:
     """Configure root logging based on config log level and return module logger."""
     resolved_log_level = consumer_config.resolve_log_level(config.log_level)
+    resolved_log_level_name = logging.getLevelName(resolved_log_level)
+    if not isinstance(resolved_log_level_name, str):
+        resolved_log_level_name = "DEBUG"
     root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(level=resolved_log_level)
+    if root_logger.handlers:
+        logging.config.dictConfig(
+            {
+                "version": 1,
+                "incremental": True,
+                "root": {"level": resolved_log_level_name.upper()},
+            }
+        )
     else:
-        root_logger.setLevel(resolved_log_level)
+        logging.config.dictConfig(
+            _load_logging_config(resolved_log_level_name.upper())
+        )
     return logging.getLogger(__name__)
 
 

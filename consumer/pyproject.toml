@@ -21,7 +21,7 @@ description = "OpAMP client (as a supervisor) designed primarily for Fluent Bit 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Phil Wilkins", email = "phil@mp3monster.org" }]
+authors = [{ name = "Phil Wilkins", email = "phil-AT-mp3monster.org" }]
 dependencies = [
   "protobuf>=5.27",
   "grpcio-tools>=1.60",
@@ -39,3 +39,7 @@ dev = [
 [project.scripts]
 opamp-consumer = "opamp_consumer.fluentbit_client:main"
 opamp-consumer-fluentd = "opamp_consumer.fluentd_client:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opamp_consumer"]
+include = ["src/opamp_consumer/consumer_logging.json"]
