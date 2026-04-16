@@ -1,0 +1,53 @@
+{
+  "broker": {
+    "name": "opamp-conversation-broker",
+    "log_level": "DEBUG",
+    "idle_timeout_seconds": 240,
+    "sweeper_interval_seconds": 30,
+    "send_idle_goodbye": true,
+    "send_shutdown_goodbye": true
+  },
+  "slack": {
+    "command_name": "/opamp",
+    "app_mention_enabled": true,
+    "dm_enabled": true
+  },
+  "social_collaboration": {
+    "implementation": "slack"
+  },
+  "messages": {
+    "idle_goodbye": "I've been idle for a while, so I've cleared my working context for this thread. Reply here to start again.",
+    "shutdown_goodbye": "I'm going to bed now, so I'm clearing my working context for this thread. When I wake up, please remind me what you want to do.",
+    "restart_notice": "I'm awake again, but I don't have my earlier working context for this thread. Tell me what you want to check.",
+    "server_offline": "The OpAMP server is currently offline. Please try again shortly.",
+    "slack_error_reply": "sorry a bit dizzy at the moment",
+    "help": "Try `/opamp status collector-a`, `/opamp health collector-a`, or mention me with a question like `@OpAMP why is collector-a unhealthy?`"
+  },
+  "paths": {
+    "opamp_project_root": "../fluent-opamp",
+    "opamp_config_path": "../fluent-opamp/config/opamp.json"
+  },
+  "mcp": {
+    "request_timeout_seconds": 30,
+    "connection_mode": "auto",
+    "protocol_version_attempts": ["2025-06-18", "2025-03-26"],
+    "startup_discovery_max_attempts": 5,
+    "startup_discovery_initial_backoff_seconds": 0.5,
+    "startup_discovery_max_backoff_seconds": 5.0,
+    "startup_discovery_backoff_multiplier": 2.0,
+    "startup_discovery_jitter_seconds": 0.25
+  },
+  "planner": {
+    "mode": "rule-first",
+    "llm_enabled": true,
+    "provider": "openai",
+    "model": "gpt-5.2",
+    "request_timeout_seconds": 30,
+    "temperature": 0.0,
+    "api_key_env_var": "OPENAI_API_KEY",
+    "base_url": "https://api.openai.com/v1",
+    "max_completion_tokens": 1024,
+    "verify_max_completion_tokens_attempts": [64, 512],
+    "prompts_config_path": "planner_prompts.json"
+  }
+}

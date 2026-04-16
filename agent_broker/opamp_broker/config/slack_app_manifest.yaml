@@ -1,0 +1,33 @@
+display_information:
+  name: OpAMP Conversation Broker
+  description: Conversational Slack broker for OpAMP diagnostics and operations.
+  background_color: "#1a73e8"
+features:
+  bot_user:
+    display_name: OpAMP Conversation Broker
+    always_online: false
+  slash_commands:
+    - command: /opamp
+      description: Query OpAMP status, health, config, and diagnostics.
+      usage_hint: "[status|health|config|tools] <target>"
+      should_escape: false
+      url: https://example.invalid/slack/commands
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - channels:history
+      - chat:write
+      - commands
+      - groups:history
+      - im:history
+      - im:write
+      - mpim:history
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
