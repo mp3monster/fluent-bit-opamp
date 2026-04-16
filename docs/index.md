@@ -25,10 +25,19 @@ Welcome to the Fluent Bit & Fluentd OpAMP implementation docs. This page links t
 - [Server README](../provider/README.md) — server (aka provider) configuration and web UI notes.
 - [Server state persistence](../provider/README.md#state-persistence-and-restore) — snapshot naming, `--restore` usage, fallback behavior, and retention.
 - [MCP scripts and usage](../mcp/README.md) — MCP wrapper/canonical script behavior, FastMCP client role, command-line parameters, and verification.
+- [Agent broker README](../agent_broker/README.md) — optional standalone conversation broker overview and run steps.
+- [Agent broker docs index](../agent_broker/docs/README.md) — broker runbooks (startup/shutdown/logging, Slack setup, architecture notes).
 - [Scripts](scripts.md) — script reference table by platform.
+
+## Optional components
+
+- `agent_broker` is optional and runs as a separate process.
+- Provider/server and consumer/client do not require the broker to run.
+- If used, start and stop the broker independently from provider and consumer.
 
 ## Project layout (quick view)
 
+- `agent_broker` — optional standalone conversation broker package and docs.
 - `config` — default configuration files (including `opamp.json`).
 - `consumer` — the OpAMP consumer (client) package, tests, and config samples.
 - `dist` — SBOM (Software Bill of Materials) and Wheel files
