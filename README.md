@@ -32,9 +32,20 @@ The documentation includes background such as the implementation philosophies th
 - [docs/scripts.md](docs/scripts.md) — script reference table by platform.
 - [consumer/README.md](consumer/README.md) — consumer configuration and CLI usage.
 - [provider/README.md](provider/README.md) — provider configuration and web UI notes.
+- [agent_broker/README.md](agent_broker/README.md) — optional conversation broker overview, setup, and run modes.
+- [agent_broker/docs/README.md](agent_broker/docs/README.md) — broker documentation index and operational guides.
+
+## Optional Broker
+
+The conversation broker under `agent_broker/` is optional. The core OpAMP
+provider/server and consumer/client run without it.
+
+When used, the broker is a separate process with its own startup/shutdown flow
+and configuration. It is started independently from provider and consumer.
 
 ## Folder summary
 
+- `agent_broker` — optional standalone conversation broker package and docs.
 - `config` — default configuration files (including `opamp.json`).
 - `consumer` — the OpAMP consumer (client) package, tests, and config samples.
 - `dist` — SBOM and Wheel files.

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "opamp-broker"
+version = "0.1.0"
+description = "OpAMP conversation broker package for standalone wheel deployment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "mp3monster.org" }]
+dependencies = [
+  "quart>=0.19",
+  "slack-bolt>=1.20.1",
+  "aiohttp>=3.9.0",
+  "langgraph>=0.2.40",
+  "langchain-core>=0.3.18",
+  "pydantic>=2.9.2",
+  "httpx>=0.27.2",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+opamp-broker = "opamp_broker.broker_app:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["opamp_broker"]
+include = ["opamp_broker/config/*.json", "opamp_broker/*.json"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "README.md",
+  "requirements.txt",
+  "opamp_broker/**",
+  "scripts/**",
+  "docs/**",
+]
