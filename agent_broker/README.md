@@ -91,11 +91,14 @@ existing `fluent-opamp` MCP-enabled service.
    - activate the venv
    - `pip install -r requirements.txt`
 6. Run:
-   - Linux/macOS: `./scripts/run.sh`
-   - Windows PowerShell: `./scripts/run.ps1`
-   - Preferred startup wrappers (also ensure dependencies are installed each run):
-     - Linux/macOS: `./scripts/start_broker.sh`
-     - Windows PowerShell: `.\scripts\start_broker.ps1`
+   - Preferred startup scripts (also ensure dependencies are installed each run):
+     - Linux/macOS foreground: `./scripts/start_broker.sh`
+     - Windows PowerShell foreground: `.\scripts\start_broker.ps1`
+     - Linux/macOS background service mode: `./scripts/start_broker.sh --service`
+     - Windows PowerShell background service mode: `.\scripts\start_broker.ps1 -Service`
+   - Stop service mode:
+     - Linux/macOS: `./scripts/stop_broker_service.sh`
+     - Windows PowerShell: `.\scripts\stop_broker_service.ps1`
    - Optional explicit adapter selection: `python -m opamp_broker.broker_app --social-collaboration slack`
    - Optional startup verification only: `python -m opamp_broker.broker_app --verify-startup social`
    - Optional AI service verification only: `python -m opamp_broker.broker_app --verify-startup ai_svc`
