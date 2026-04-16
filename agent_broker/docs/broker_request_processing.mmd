@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant U as Slack User
+    participant H as slack/handlers.py
+    participant S as session/manager.py
+    participant G as graph/graph.py
+    participant N as graph/nodes.py
+    participant P as planner/*
+    participant R as mcp/tools.py
+    participant C as mcp/client.py
+    participant M as OpAMP MCP Server
+
+    U->>H: Message / slash command
+    H->>S: upsert(thread session)
+    H->>G: compiled_graph.ainvoke(state)
+    G->>N: normalize_input
+    G->>N: classify_intent
+    G->>N: plan_action
+    N->>R: list_names() / refresh() if empty
+    N->>P: planner.plan(text, tools)
+    P-->>N: plan {tool_name, tool_args, response_text}
+    alt tool selected
+        G->>N: execute_or_summarize
+        N->>R: call_tool(name, args)
+        R->>C: tools/call JSON-RPC
+        C->>M: POST /mcp
+        M-->>C: tool result payload
+        C-->>R: parsed result
+        R-->>N: result
+        N-->>G: plain-English response_text
+    else no tool selected
+        N-->>G: direct response_text
+    end
+    G-->>H: final state
+    H->>S: update session summary/intent
+    H-->>U: thread reply

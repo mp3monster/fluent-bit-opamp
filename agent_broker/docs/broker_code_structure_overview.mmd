@@ -1,0 +1,56 @@
+flowchart LR
+    subgraph Runtime["Runtime Orchestration"]
+        BrokerApp["broker_app.py"]
+        ConfigLoader["config/loader.py"]
+        SocialFactory["social_collaboration/factory.py"]
+        SessionManager["session/manager.py"]
+        SessionSweeper["session/sweeper.py"]
+    end
+
+    subgraph Collaboration["Social Collaboration"]
+        SocialBase["social_collaboration/base.py"]
+        SocialSlack["social_collaboration/slack.py"]
+        SlackClient["slack/client.py"]
+        SlackHandlers["slack/handlers.py"]
+    end
+
+    subgraph Planning["Conversation Planning + Execution"]
+        GraphBuilder["graph/graph.py"]
+        GraphNodes["graph/nodes.py"]
+        PlannerFactory["planner/factory.py"]
+        RulePlanner["planner/rule_first_planner.py"]
+        AISvcPlanner["planner/ai_svc_planner.py"]
+        AIConnFactory["planner/ai_connection_factory.py"]
+        OpenAIConn["planner/openai_compatible_connection.py"]
+    end
+
+    subgraph MCP["MCP Integration"]
+        MCPClient["mcp/client.py"]
+        MCPRegistry["mcp/tools.py"]
+    end
+
+    BrokerApp --> ConfigLoader
+    BrokerApp --> SocialFactory
+    BrokerApp --> SessionManager
+    BrokerApp --> SessionSweeper
+    BrokerApp --> MCPClient
+    BrokerApp --> MCPRegistry
+    BrokerApp --> GraphBuilder
+
+    SocialFactory --> SocialBase
+    SocialFactory --> SocialSlack
+    SocialSlack --> SlackClient
+    SocialSlack --> SlackHandlers
+    SlackHandlers --> GraphBuilder
+    SlackHandlers --> SessionManager
+
+    GraphBuilder --> GraphNodes
+    GraphBuilder --> PlannerFactory
+    GraphNodes --> MCPRegistry
+    GraphNodes --> RulePlanner
+    PlannerFactory --> RulePlanner
+    PlannerFactory --> AISvcPlanner
+    PlannerFactory --> AIConnFactory
+    AIConnFactory --> OpenAIConn
+    AISvcPlanner --> OpenAIConn
+    MCPRegistry --> MCPClient
