@@ -24,9 +24,51 @@ from typing import Any
 
 from slack_bolt.async_app import AsyncApp
 
+from opamp_broker.graph.state import (
+    STATE_KEY_CHANNEL_ID,
+    STATE_KEY_INTENT,
+    STATE_KEY_TARGET,
+    STATE_KEY_TEAM_ID,
+    STATE_KEY_TEXT,
+    STATE_KEY_THREAD_TS,
+    STATE_KEY_TOOL_ARGS,
+    STATE_KEY_TOOL_NAME,
+    STATE_KEY_USER_ID,
+)
 from opamp_broker.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
+CONFIG_KEY_MESSAGES = "messages"
+CONFIG_KEY_SLACK = "slack"
+CONFIG_KEY_COMMAND_NAME = "command_name"
+MESSAGE_KEY_HELP = "help"
+MESSAGE_KEY_SLACK_ERROR_REPLY = "slack_error_reply"
+SLACK_KEY_EVENT = "event"
+SLACK_KEY_TEAM_ID = "team_id"
+SLACK_KEY_AUTHORIZATIONS = "authorizations"
+SLACK_KEY_CHANNEL = "channel"
+SLACK_KEY_CHANNEL_ID = "channel_id"
+SLACK_KEY_THREAD_TS = "thread_ts"
+SLACK_KEY_TS = "ts"
+SLACK_KEY_TRIGGER_ID = "trigger_id"
+SLACK_KEY_USER = "user"
+SLACK_KEY_USER_ID = "user_id"
+SLACK_KEY_TEXT = "text"
+SLACK_KEY_MESSAGE_TS = "message_ts"
+SLACK_KEY_CHANNEL_TYPE = "channel_type"
+SLACK_KEY_RESPONSE_TEXT = "response_text"
+SLACK_KEY_ENVIRONMENT = "environment"
+SLACK_KEY_REQUIRES_CONFIRMATION = "requires_confirmation"
+SLACK_KEY_PENDING_ACTION_TOOL = "tool"
+SLACK_KEY_PENDING_ACTION_ARGS = "args"
+SLACK_KEY_UNKNOWN = "unknown"
+SLACK_KEY_NO_THREAD = "no-thread"
+SLACK_KEY_SLASH = "slash"
+SLACK_KEY_EPHEMERAL = "ephemeral"
+SLACK_CHANNEL_TYPE_IM = "im"
+LOG_KEY_EVENT = "event"
+LOG_KEY_CONTEXT = "context"
+LOG_KEY_COMMAND = "command"
 
 
 def register_handlers(
@@ -51,20 +93,20 @@ def register_handlers(
         None: Handlers are registered by side effect on ``app``.
     """
     message_config = (
-        config.get("messages", {})
+        config.get(CONFIG_KEY_MESSAGES, {})
         if isinstance(config, dict)
         else {}
     )
     help_text = str(
         message_config.get(
-            "help",
+            MESSAGE_KEY_HELP,
             "Try `/opamp status collector-a`, `/opamp health collector-a`, "
             "or mention me with a question.",
         )
     )
     slack_error_reply = str(
         message_config.get(
-            "slack_error_reply",
+            MESSAGE_KEY_SLACK_ERROR_REPLY,
             "sorry a bit dizzy at the moment",
         )
     ).strip() or "sorry a bit dizzy at the moment"
@@ -84,52 +126,62 @@ def register_handlers(
         Returns:
             None: Updates session state and posts a threaded response.
         """
-        event = body.get("event", {})
-        team_id = body.get("team_id") or body.get("authorizations", [{}])[0].get("team_id", "unknown")
-        channel_id = event.get("channel") or body.get("channel_id")
-        ts = event.get("thread_ts") or event.get("ts") or body.get("trigger_id", "no-thread")
-        user_id = event.get("user") or body.get("user_id")
+        event = body.get(SLACK_KEY_EVENT, {})
+        team_id = body.get(SLACK_KEY_TEAM_ID) or body.get(
+            SLACK_KEY_AUTHORIZATIONS,
+            [{}],
+        )[0].get(SLACK_KEY_TEAM_ID, SLACK_KEY_UNKNOWN)
+        channel_id = event.get(SLACK_KEY_CHANNEL) or body.get(SLACK_KEY_CHANNEL_ID)
+        ts = (
+            event.get(SLACK_KEY_THREAD_TS)
+            or event.get(SLACK_KEY_TS)
+            or body.get(SLACK_KEY_TRIGGER_ID, SLACK_KEY_NO_THREAD)
+        )
+        user_id = event.get(SLACK_KEY_USER) or body.get(SLACK_KEY_USER_ID)
         try:
             session = await session_manager.upsert(team_id, channel_id, ts, user_id)
             result = await compiled_graph.ainvoke(
                 {
-                    "team_id": team_id,
-                    "channel_id": channel_id,
-                    "thread_ts": ts,
-                    "user_id": user_id or "",
-                    "text": text,
+                    STATE_KEY_TEAM_ID: team_id,
+                    STATE_KEY_CHANNEL_ID: channel_id,
+                    STATE_KEY_THREAD_TS: ts,
+                    STATE_KEY_USER_ID: user_id or "",
+                    STATE_KEY_TEXT: text,
                 }
             )
 
             await session_manager.update(
                 session.key,
-                current_target=result.get("target"),
-                environment=result.get("environment"),
-                intent=result.get("intent"),
-                last_summary=result.get("response_text"),
+                current_target=result.get(STATE_KEY_TARGET),
+                environment=result.get(SLACK_KEY_ENVIRONMENT),
+                intent=result.get(STATE_KEY_INTENT),
+                last_summary=result.get(SLACK_KEY_RESPONSE_TEXT),
                 pending_action=(
-                    {"tool": result.get("tool_name"), "args": result.get("tool_args")}
-                    if result.get("requires_confirmation")
+                    {
+                        SLACK_KEY_PENDING_ACTION_TOOL: result.get(STATE_KEY_TOOL_NAME),
+                        SLACK_KEY_PENDING_ACTION_ARGS: result.get(STATE_KEY_TOOL_ARGS),
+                    }
+                    if result.get(SLACK_KEY_REQUIRES_CONFIRMATION)
                     else None
                 ),
             )
-            await say(text=result.get("response_text", help_text), thread_ts=ts)
+            await say(text=result.get(SLACK_KEY_RESPONSE_TEXT, help_text), thread_ts=ts)
         except Exception:
             logger.exception(
                 "failed processing Slack message event",
                 extra={
-                    "event": "slack.handlers.message_processing_failed",
-                    "context": {
-                        "team_id": team_id,
-                        "channel_id": channel_id,
-                        "thread_ts": ts,
+                    LOG_KEY_EVENT: "slack.handlers.message_processing_failed",
+                    LOG_KEY_CONTEXT: {
+                        SLACK_KEY_TEAM_ID: team_id,
+                        SLACK_KEY_CHANNEL_ID: channel_id,
+                        SLACK_KEY_THREAD_TS: ts,
                     },
                 },
             )
             with suppress(Exception):
                 await say(text=slack_error_reply, thread_ts=ts)
 
-    @app.command(config["slack"]["command_name"])
+    @app.command(config[CONFIG_KEY_SLACK][CONFIG_KEY_COMMAND_NAME])
     async def handle_command(ack: Any, body: dict[str, Any], respond: Any) -> None:
         """Handle `/opamp` commands and return an ephemeral response.
 
@@ -146,56 +198,66 @@ def register_handlers(
             None: Acknowledges, updates session state, and sends a response.
         """
         await ack()
-        text = body.get("text", "").strip()
+        text = body.get(SLACK_KEY_TEXT, "").strip()
         if not text:
             await respond(help_text)
             return
 
-        team_id = body.get("team_id", "unknown")
-        channel_id = body.get("channel_id", "unknown")
-        thread_ts = body.get("thread_ts") or body.get("message_ts") or body.get("trigger_id", "slash")
-        user_id = body.get("user_id")
+        team_id = body.get(SLACK_KEY_TEAM_ID, SLACK_KEY_UNKNOWN)
+        channel_id = body.get(SLACK_KEY_CHANNEL_ID, SLACK_KEY_UNKNOWN)
+        thread_ts = (
+            body.get(SLACK_KEY_THREAD_TS)
+            or body.get(SLACK_KEY_MESSAGE_TS)
+            or body.get(SLACK_KEY_TRIGGER_ID, SLACK_KEY_SLASH)
+        )
+        user_id = body.get(SLACK_KEY_USER_ID)
         try:
             session = await session_manager.upsert(team_id, channel_id, thread_ts, user_id)
 
             result = await compiled_graph.ainvoke(
                 {
-                    "team_id": team_id,
-                    "channel_id": channel_id,
-                    "thread_ts": thread_ts,
-                    "user_id": user_id or "",
-                    "text": text,
+                    STATE_KEY_TEAM_ID: team_id,
+                    STATE_KEY_CHANNEL_ID: channel_id,
+                    STATE_KEY_THREAD_TS: thread_ts,
+                    STATE_KEY_USER_ID: user_id or "",
+                    STATE_KEY_TEXT: text,
                 }
             )
 
             await session_manager.update(
                 session.key,
-                current_target=result.get("target"),
-                environment=result.get("environment"),
-                intent=result.get("intent"),
-                last_summary=result.get("response_text"),
+                current_target=result.get(STATE_KEY_TARGET),
+                environment=result.get(SLACK_KEY_ENVIRONMENT),
+                intent=result.get(STATE_KEY_INTENT),
+                last_summary=result.get(SLACK_KEY_RESPONSE_TEXT),
                 pending_action=(
-                    {"tool": result.get("tool_name"), "args": result.get("tool_args")}
-                    if result.get("requires_confirmation")
+                    {
+                        SLACK_KEY_PENDING_ACTION_TOOL: result.get(STATE_KEY_TOOL_NAME),
+                        SLACK_KEY_PENDING_ACTION_ARGS: result.get(STATE_KEY_TOOL_ARGS),
+                    }
+                    if result.get(SLACK_KEY_REQUIRES_CONFIRMATION)
                     else None
                 ),
             )
-            await respond(text=result.get("response_text", help_text), response_type="ephemeral")
+            await respond(
+                text=result.get(SLACK_KEY_RESPONSE_TEXT, help_text),
+                response_type=SLACK_KEY_EPHEMERAL,
+            )
         except Exception:
             logger.exception(
                 "failed handling Slack slash command",
                 extra={
-                    "event": "slack.handlers.command_failed",
-                    "context": {
-                        "team_id": team_id,
-                        "channel_id": channel_id,
-                        "thread_ts": thread_ts,
-                        "command": config["slack"]["command_name"],
+                    LOG_KEY_EVENT: "slack.handlers.command_failed",
+                    LOG_KEY_CONTEXT: {
+                        SLACK_KEY_TEAM_ID: team_id,
+                        SLACK_KEY_CHANNEL_ID: channel_id,
+                        SLACK_KEY_THREAD_TS: thread_ts,
+                        LOG_KEY_COMMAND: config[CONFIG_KEY_SLACK][CONFIG_KEY_COMMAND_NAME],
                     },
                 },
             )
             with suppress(Exception):
-                await respond(text=slack_error_reply, response_type="ephemeral")
+                await respond(text=slack_error_reply, response_type=SLACK_KEY_EPHEMERAL)
 
     @app.event("app_mention")
     async def handle_mention(body: dict[str, Any], say: Any) -> None:
@@ -208,7 +270,7 @@ def register_handlers(
         Returns:
             None: Posts graph output back to the mention thread.
         """
-        text = body.get("event", {}).get("text", "")
+        text = body.get(SLACK_KEY_EVENT, {}).get(SLACK_KEY_TEXT, "")
         await _process_message(body, text, say)
 
     @app.event("message")
@@ -229,8 +291,8 @@ def register_handlers(
         Returns:
             None: Processes DM text through the conversation graph when eligible.
         """
-        channel_type = event.get("channel_type")
-        if channel_type != "im":
+        channel_type = event.get(SLACK_KEY_CHANNEL_TYPE)
+        if channel_type != SLACK_CHANNEL_TYPE_IM:
             return
-        text = event.get("text", "")
+        text = event.get(SLACK_KEY_TEXT, "")
         await _process_message(body, text, say)

@@ -32,6 +32,14 @@ except ImportError:  # pragma: no cover - allows tests without slack_sdk install
 
 logger = logging.getLogger(__name__)
 SLACK_APPS_CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open"
+SLACK_KEY_AUTHORIZATION = "Authorization"
+SLACK_KEY_OK = "ok"
+SLACK_KEY_ERROR = "error"
+SLACK_KEY_TEAM = "team"
+SLACK_KEY_USER = "user"
+SLACK_KEY_BOT_ID = "bot_id"
+SLACK_VALUE_UNKNOWN = "unknown"
+SLACK_VALUE_UNKNOWN_ERROR = "unknown_error"
 
 
 def create_app(bot_token: str, signing_secret: str) -> AsyncApp:
@@ -66,15 +74,15 @@ async def start_socket_mode(app: AsyncApp, app_token: str) -> None:
         verification = await verify_slack_connection(app, app_token)
         logger.info(
             "***** Successfully connected to Slack (team=%s, bot_user=%s, bot_id=%s) *****",
-            verification.get("team", "unknown"),
-            verification.get("user", "unknown"),
-            verification.get("bot_id", "unknown"),
+            verification.get(SLACK_KEY_TEAM, SLACK_VALUE_UNKNOWN),
+            verification.get(SLACK_KEY_USER, SLACK_VALUE_UNKNOWN),
+            verification.get(SLACK_KEY_BOT_ID, SLACK_VALUE_UNKNOWN),
         )
         await handler.start_async()
     except SlackApiError as exc:
         response = getattr(exc, "response", None)
         slack_error = (
-            response.get("error", "unknown_error")
+            response.get(SLACK_KEY_ERROR, SLACK_VALUE_UNKNOWN_ERROR)
             if response is not None
             else str(exc)
         )
@@ -99,18 +107,18 @@ async def verify_slack_connection(app: AsyncApp, app_token: str) -> dict[str, st
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(
             SLACK_APPS_CONNECTIONS_OPEN_URL,
-            headers={"Authorization": f"Bearer {app_token}"},
+            headers={SLACK_KEY_AUTHORIZATION: f"Bearer {app_token}"},
         )
         response.raise_for_status()
         payload = response.json()
 
-    if not payload.get("ok"):
+    if not payload.get(SLACK_KEY_OK):
         raise RuntimeError(
-            f"Slack apps.connections.open failed: {payload.get('error', 'unknown_error')}"
+            f"Slack apps.connections.open failed: {payload.get(SLACK_KEY_ERROR, SLACK_VALUE_UNKNOWN_ERROR)}"
         )
 
     return {
-        "team": str(auth_response.get("team", "unknown")),
-        "user": str(auth_response.get("user", "unknown")),
-        "bot_id": str(auth_response.get("bot_id", "unknown")),
+        SLACK_KEY_TEAM: str(auth_response.get(SLACK_KEY_TEAM, SLACK_VALUE_UNKNOWN)),
+        SLACK_KEY_USER: str(auth_response.get(SLACK_KEY_USER, SLACK_VALUE_UNKNOWN)),
+        SLACK_KEY_BOT_ID: str(auth_response.get(SLACK_KEY_BOT_ID, SLACK_VALUE_UNKNOWN)),
     }

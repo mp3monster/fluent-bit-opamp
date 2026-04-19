@@ -116,3 +116,6 @@ existing `fluent-opamp` MCP-enabled service.
 - On shutdown the broker tells active threads it is "going to bed" and clears working context.
 - MCP connectivity is intentionally simplified to the provider `/mcp` endpoint and supports configurable connection strategy (`auto`/`json`/`sse`), protocol version attempts, timeout, and startup discovery retry/backoff via `mcp.*` settings.
 - Ensure broker `mcp.connection_mode` aligns with provider response mode (SSE/streaming vs JSON). `auto` is recommended unless you explicitly need to force one mode.
+- Agent filters can be passed directly to the discovered listing tool, for example:
+  - `/opamp tool_otel_agents service_instance_id=checkout host_name=prod-node invert_filter=true`
+  - `/opamp show agents host_ip=10.0.0.5 client_version=1.2`

@@ -92,6 +92,35 @@ def _default_logging_config(level_name: str) -> dict[str, Any]:
     }
 
 
+def _normalize_logging_config_levels(
+    config: dict[str, Any],
+    fallback_level_name: str,
+) -> dict[str, Any]:
+    """Normalize dictConfig level fields so case variants like ``debug`` are valid."""
+    root_config = config.get("root")
+    if isinstance(root_config, dict):
+        root_level = root_config.get("level", fallback_level_name)
+        root_config["level"] = _normalize_log_level_name(root_level)
+
+    handlers = config.get("handlers")
+    if isinstance(handlers, dict):
+        for handler_config in handlers.values():
+            if isinstance(handler_config, dict) and "level" in handler_config:
+                handler_config["level"] = _normalize_log_level_name(
+                    handler_config.get("level")
+                )
+
+    loggers = config.get("loggers")
+    if isinstance(loggers, dict):
+        for logger_config in loggers.values():
+            if isinstance(logger_config, dict) and "level" in logger_config:
+                logger_config["level"] = _normalize_log_level_name(
+                    logger_config.get("level")
+                )
+
+    return config
+
+
 def _load_logging_config(level_name: str) -> tuple[dict[str, Any], Path | None]:
     """Load broker logging dictConfig and return source path when file-backed."""
     configured_path = os.getenv(ENV_BROKER_LOGGING_CONFIG_PATH)
@@ -104,6 +133,10 @@ def _load_logging_config(level_name: str) -> tuple[dict[str, Any], Path | None]:
             if isinstance(config, dict):
                 config.setdefault("version", 1)
                 config.setdefault("disable_existing_loggers", False)
+                _normalize_logging_config_levels(
+                    config,
+                    fallback_level_name=level_name,
+                )
                 return config, config_path
         except Exception as exc:  # pragma: no cover - defensive fallback.
             print(

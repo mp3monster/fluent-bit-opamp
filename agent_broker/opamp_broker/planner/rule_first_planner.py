@@ -24,6 +24,18 @@ from opamp_broker.planner.constants import (
     TOOL_NAME_KEY,
 )
 
+BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}
+BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
+ARGUMENT_KEY_VALUE_PATTERN = re.compile(
+    r"(?P<key>(?:--)?[A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|:)\s*"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|\S+)"
+)
+ARGUMENT_TOKEN_PATTERN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
+AGENT_LIST_QUERY_PATTERN = re.compile(
+    r"\b(?:list|show|find|get|query)\b.*\b(?:agents|collectors|clients)\b"
+)
+AGENT_NOUN_PATTERN = re.compile(r"\b(?:agent|agents|collector|collectors|client|clients)\b")
+
 
 class RuleFirstPlanner:
     """Deterministic fallback planner when LLM planning is unavailable."""
@@ -31,13 +43,27 @@ class RuleFirstPlanner:
     async def plan(self, *, text: str, tools: list[dict[str, Any]]) -> dict[str, Any]:
         """Create a tool-constrained plan using deterministic keyword rules."""
         tool_names = [str(tool.get("name", "")).strip() for tool in tools]
+        tool_lookup = {
+            str(tool.get("name", "")).strip(): tool
+            for tool in tools
+            if str(tool.get("name", "")).strip()
+        }
         normalized = text.strip().lower()
         parts = text.split()
         target = parts[-1] if len(parts) > 1 else None
 
         direct_tool = _find_direct_tool_request(text=text, tool_names=tool_names)
         if direct_tool is not None:
-            direct_target = _extract_direct_target(text=text, tool_name=direct_tool)
+            direct_args = _extract_tool_arguments(
+                text=text,
+                tool_name=direct_tool,
+                tool=tool_lookup.get(direct_tool),
+                scoped_to_direct_invocation=True,
+            )
+            if not direct_args:
+                direct_target = _extract_direct_target(text=text, tool_name=direct_tool)
+                if direct_target:
+                    direct_args = {"target": direct_target}
             requires_confirmation = any(
                 keyword in direct_tool.lower()
                 for keyword in ("restart", "delete", "remove", "shutdown")
@@ -45,11 +71,7 @@ class RuleFirstPlanner:
             return {
                 RESPONSE_TEXT_KEY: "",
                 TOOL_NAME_KEY: direct_tool,
-                TOOL_ARGS_KEY: (
-                    {"target": direct_target}
-                    if direct_target
-                    else {}
-                ),
+                TOOL_ARGS_KEY: direct_args,
                 REQUIRES_CONFIRMATION_KEY: requires_confirmation,
             }
 
@@ -74,7 +96,8 @@ class RuleFirstPlanner:
             return {
                 RESPONSE_TEXT_KEY: (
                     "Try `/opamp status collector-a`, `/opamp health collector-a`, "
-                    "`/opamp config collector-a`, or ask me what is wrong with an agent."
+                    "`/opamp config collector-a`, or filter agents with "
+                    "`/opamp tool_otel_agents host_name=alpha-node client_version=1.2.3`."
                 ),
                 TOOL_NAME_KEY: None,
                 TOOL_ARGS_KEY: {},
@@ -96,6 +119,20 @@ class RuleFirstPlanner:
                     TOOL_ARGS_KEY: {"target": target} if (chosen and target) else {},
                     REQUIRES_CONFIRMATION_KEY: prefix in {"restart"},
                 }
+
+        otel_agents_tool = _find_otel_agents_tool_name(tool_names)
+        if otel_agents_tool and _looks_like_agent_list_query(text):
+            return {
+                RESPONSE_TEXT_KEY: "",
+                TOOL_NAME_KEY: otel_agents_tool,
+                TOOL_ARGS_KEY: _extract_tool_arguments(
+                    text=text,
+                    tool_name=otel_agents_tool,
+                    tool=tool_lookup.get(otel_agents_tool),
+                    scoped_to_direct_invocation=False,
+                ),
+                REQUIRES_CONFIRMATION_KEY: False,
+            }
 
         chosen = next((name for name in tool_names if "health" in name.lower()), None) or next(
             (name for name in tool_names if "status" in name.lower()), None
@@ -197,3 +234,192 @@ def _extract_direct_target(text: str, tool_name: str) -> str | None:
         return None
     target = match.group("target").strip()
     return target if target else None
+
+
+def _find_otel_agents_tool_name(tool_names: list[str]) -> str | None:
+    """Return the best discovered tool name for listing/filtering agents."""
+    for name in tool_names:
+        if "otel_agents" in name.lower():
+            return name
+    for name in tool_names:
+        lowered = name.lower()
+        if "agent" in lowered and "tool" in lowered:
+            return name
+    return None
+
+
+def _looks_like_agent_list_query(text: str) -> bool:
+    """Determine whether free text likely intends an agent listing/filter request."""
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    if normalized in {"agents", "collectors", "clients"}:
+        return True
+    if AGENT_LIST_QUERY_PATTERN.search(normalized):
+        return True
+    return bool(AGENT_NOUN_PATTERN.search(normalized) and ARGUMENT_KEY_VALUE_PATTERN.search(text))
+
+
+def _extract_tool_arguments(
+    *,
+    text: str,
+    tool_name: str,
+    tool: dict[str, Any] | None,
+    scoped_to_direct_invocation: bool,
+) -> dict[str, Any]:
+    """Extract schema-aware tool arguments from user text.
+
+    Arguments are accepted as ``key=value`` (or ``key:value``) tokens and only
+    mapped when they match the discovered tool schema. This keeps rule-first
+    behavior aligned with the currently available tool options.
+    """
+    scope_text = text
+    if scoped_to_direct_invocation:
+        invocation_pattern = re.compile(rf"^\s*{re.escape(tool_name)}\b", re.IGNORECASE)
+        match = invocation_pattern.search(scope_text)
+        if not match:
+            return {}
+        scope_text = scope_text[match.end():]
+    scope_text = scope_text.strip()
+    if not scope_text:
+        return {}
+
+    properties = _extract_input_schema_properties(tool)
+    parsed = _extract_key_value_arguments(scope_text, properties)
+
+    if "invert_filter" in properties and "invert_filter" not in parsed:
+        lowered_scope = scope_text.lower()
+        if re.search(r"\bexclude\b", lowered_scope):
+            parsed["invert_filter"] = True
+        elif parsed and re.search(r"\bshow\b", lowered_scope):
+            parsed["invert_filter"] = False
+
+    if not parsed and "target" in properties:
+        positional_target = _extract_first_positional_token(scope_text)
+        if positional_target:
+            parsed["target"] = positional_target
+    return parsed
+
+
+def _extract_input_schema_properties(tool: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Return normalized ``inputSchema.properties`` mapping for a tool."""
+    if not isinstance(tool, dict):
+        return {}
+    input_schema = tool.get("inputSchema")
+    if not isinstance(input_schema, dict):
+        return {}
+    raw_properties = input_schema.get("properties")
+    if not isinstance(raw_properties, dict):
+        return {}
+    properties: dict[str, dict[str, Any]] = {}
+    for key, value in raw_properties.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        properties[key_text] = value if isinstance(value, dict) else {}
+    return properties
+
+
+def _extract_key_value_arguments(
+    text: str,
+    properties: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Extract ``key=value`` tokens and coerce values using schema metadata."""
+    parsed: dict[str, Any] = {}
+    for match in ARGUMENT_KEY_VALUE_PATTERN.finditer(text):
+        raw_key = str(match.group("key") or "").strip().lstrip("-")
+        raw_value = _strip_wrapping_quotes(str(match.group("value") or "").strip())
+        if not raw_key or not raw_value:
+            continue
+        resolved_key = _resolve_argument_key(raw_key, properties)
+        if resolved_key is None:
+            if properties:
+                continue
+            resolved_key = raw_key
+        parsed[resolved_key] = _coerce_argument_value(
+            raw_value,
+            properties.get(resolved_key, {}),
+        )
+    return parsed
+
+
+def _resolve_argument_key(raw_key: str, properties: dict[str, dict[str, Any]]) -> str | None:
+    """Resolve a user-provided argument name to one schema property key."""
+    if not properties:
+        return raw_key
+
+    normalized_lookup = {
+        _normalize_argument_name(name): name
+        for name in properties
+        if _normalize_argument_name(name)
+    }
+    normalized_key = _normalize_argument_name(raw_key)
+    if not normalized_key:
+        return None
+    if normalized_key in normalized_lookup:
+        return normalized_lookup[normalized_key]
+
+    suffix_matches = {
+        name
+        for normalized_name, name in normalized_lookup.items()
+        if normalized_name.endswith(normalized_key)
+        or normalized_key.endswith(normalized_name)
+    }
+    if len(suffix_matches) == 1:
+        return next(iter(suffix_matches))
+    return None
+
+
+def _normalize_argument_name(value: str) -> str:
+    """Normalize argument names for forgiving matching across separators/casing."""
+    return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    """Remove one pair of matching leading/trailing quotes."""
+    stripped = value.strip()
+    if len(stripped) < 2:
+        return stripped
+    if (
+        (stripped.startswith('"') and stripped.endswith('"'))
+        or (stripped.startswith("'") and stripped.endswith("'"))
+    ):
+        return stripped[1:-1]
+    return stripped
+
+
+def _coerce_argument_value(raw_value: str, schema: dict[str, Any]) -> Any:
+    """Coerce user text to primitive schema type when safe."""
+    arg_type = str(schema.get("type", "")).strip().lower() if schema else ""
+    if arg_type == "boolean":
+        normalized = raw_value.strip().lower()
+        if normalized in BOOLEAN_TRUE_VALUES:
+            return True
+        if normalized in BOOLEAN_FALSE_VALUES:
+            return False
+        return raw_value
+    if arg_type == "integer":
+        try:
+            return int(raw_value, 10)
+        except ValueError:
+            return raw_value
+    if arg_type == "number":
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+    return raw_value
+
+
+def _extract_first_positional_token(text: str) -> str | None:
+    """Return first non-key=value token from a command tail."""
+    for token in ARGUMENT_TOKEN_PATTERN.findall(text):
+        candidate = _strip_wrapping_quotes(token.strip())
+        if not candidate:
+            continue
+        if ARGUMENT_KEY_VALUE_PATTERN.fullmatch(candidate):
+            continue
+        if "=" in candidate or ":" in candidate:
+            continue
+        return candidate
+    return None

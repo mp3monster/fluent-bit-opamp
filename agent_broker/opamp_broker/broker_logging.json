@@ -15,7 +15,7 @@
         }
   },
   "root": {
-    "level": "debug",
+    "level": "DEBUG",
     "handlers": ["console"]
   }
 }
