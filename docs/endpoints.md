@@ -33,6 +33,10 @@ Bearer protection is controlled by provider config plus environment-backed secre
 When `provider.ui-use-authorization` is set to `config-token` or `idp`, `/tool`
 endpoints require an `Authorization: Bearer <token>` header.
 
+`GET /tool/otelAgents` supports additional query filters (documented in `/tool` OpenAPI),
+including `service_instance_id`, `client_version`, `host_name`, `host_ip`, and
+`invertFilter=true` to invert active filter matches.
+
 ## API Endpoints
 
 | Method | Path | Purpose |
@@ -56,6 +60,15 @@ endpoints require an `Authorization: Bearer <token>` header.
 | PUT | `/api/settings/client` | Update global client settings. |
 | GET | `/api/help/global-settings` | Get shared help text for Global Settings labels/tooltips. |
 | POST | `/api/shutdown` | Shutdown server (requires `{"confirm": true}`). |
+
+`GET /api/clients` query parameters:
+
+- `service_instance_id` (string): case-insensitive substring match against displayed service instance name (falls back to `client_id` when `service.instance.id` is absent).
+- `client_version` (string): case-insensitive substring match.
+- `host_name` (string): case-insensitive substring match.
+- `host_ip` (string): case-insensitive substring match.
+- Active filters are combined with OR semantics (records are included when any active filter matches).
+- `invertFilter` (boolean): when `true`, invert active filter matches (equivalent to `!=` for the active filter set). Accepted boolean values: `true|false|1|0|yes|no|on|off`.
 
 ## OpAMP Transport Endpoints
 

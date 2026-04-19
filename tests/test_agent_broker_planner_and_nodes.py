@@ -62,6 +62,14 @@ class _RaisingPlanner:
         raise RuntimeError("planner unavailable")
 
 
+def _looks_like_json_blob(value: str) -> bool:
+    stripped = value.strip()
+    return (
+        (stripped.startswith("{") and stripped.endswith("}"))
+        or (stripped.startswith("[") and stripped.endswith("]"))
+    )
+
+
 def test_create_planner_returns_rule_first_without_api_key() -> None:
     api_key_env_var = planner_engine.DEFAULT_AI_SVC_API_KEY_ENV
     os.environ.pop(api_key_env_var, None)
@@ -282,6 +290,98 @@ def test_rule_first_planner_allows_direct_tool_name_with_target() -> None:
     assert plan[planner_engine.REQUIRES_CONFIRMATION_KEY] is False
 
 
+def test_rule_first_planner_parses_direct_tool_key_value_arguments() -> None:
+    planner = planner_engine.RuleFirstPlanner()
+    plan = asyncio.run(
+        planner.plan(
+            text=(
+                "tool_otel_agents "
+                "service_instance_id=checkout "
+                "host_name=alpha-node "
+                "invert_filter=true"
+            ),
+            tools=[
+                {
+                    "name": "tool_otel_agents",
+                    "description": "List OpenTelemetry agents",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "service_instance_id": {"type": "string"},
+                            "host_name": {"type": "string"},
+                            "invert_filter": {"type": "boolean"},
+                        },
+                    },
+                }
+            ],
+        )
+    )
+    assert plan[planner_engine.TOOL_NAME_KEY] == "tool_otel_agents"
+    assert plan[planner_engine.TOOL_ARGS_KEY] == {
+        "service_instance_id": "checkout",
+        "host_name": "alpha-node",
+        "invert_filter": True,
+    }
+    assert plan[planner_engine.REQUIRES_CONFIRMATION_KEY] is False
+
+
+def test_rule_first_planner_routes_agent_list_queries_with_filters() -> None:
+    planner = planner_engine.RuleFirstPlanner()
+    plan = asyncio.run(
+        planner.plan(
+            text="show agents host-ip=10.0.0.5 version=1.2 exclude",
+            tools=[
+                {
+                    "name": "tool_otel_agents",
+                    "description": "List OpenTelemetry agents",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "host_ip": {"type": "string"},
+                            "client_version": {"type": "string"},
+                            "invert_filter": {"type": "boolean"},
+                        },
+                    },
+                }
+            ],
+        )
+    )
+    assert plan[planner_engine.TOOL_NAME_KEY] == "tool_otel_agents"
+    assert plan[planner_engine.TOOL_ARGS_KEY] == {
+        "host_ip": "10.0.0.5",
+        "client_version": "1.2",
+        "invert_filter": True,
+    }
+    assert plan[planner_engine.REQUIRES_CONFIRMATION_KEY] is False
+
+
+def test_rule_first_planner_supports_direct_tool_camel_case_argument_names() -> None:
+    planner = planner_engine.RuleFirstPlanner()
+    plan = asyncio.run(
+        planner.plan(
+            text="tool_otel_agents invertFilter=true hostName=alpha",
+            tools=[
+                {
+                    "name": "tool_otel_agents",
+                    "description": "List OpenTelemetry agents",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "invert_filter": {"type": "boolean"},
+                            "host_name": {"type": "string"},
+                        },
+                    },
+                }
+            ],
+        )
+    )
+    assert plan[planner_engine.TOOL_NAME_KEY] == "tool_otel_agents"
+    assert plan[planner_engine.TOOL_ARGS_KEY] == {
+        "invert_filter": True,
+        "host_name": "alpha",
+    }
+
+
 def test_plan_action_uses_only_discovered_tool_names() -> None:
     tool_registry = _FakeToolRegistry(
         {
@@ -425,7 +525,7 @@ def test_execute_or_summarize_returns_offline_message_when_mcp_unavailable() -> 
     )
 
 
-def test_execute_or_summarize_renders_otel_agents_json_as_plain_english() -> None:
+def test_execute_or_summarize_preserves_plain_text_for_otel_agents() -> None:
     class _FakeToolRegistry:
         async def call_tool(
             self,
@@ -433,11 +533,12 @@ def test_execute_or_summarize_renders_otel_agents_json_as_plain_english() -> Non
             arguments: dict[str, Any],
         ) -> dict[str, Any]:
             del name, arguments
+            plain_text = "I checked and found no OpenTelemetry agents."
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": '{"agents":[],"total":0}',
+                        "text": plain_text,
                     }
                 ]
             }
@@ -447,12 +548,12 @@ def test_execute_or_summarize_renders_otel_agents_json_as_plain_english() -> Non
         state_module.STATE_KEY_TOOL_ARGS: {},
     }
     updated = asyncio.run(nodes.execute_or_summarize(state, _FakeToolRegistry()))
-    assert updated[state_module.STATE_KEY_RESPONSE_TEXT] == (
-        "I checked and found no OpenTelemetry agents."
-    )
+    response = str(updated[state_module.STATE_KEY_RESPONSE_TEXT])
+    assert response == "I checked and found no OpenTelemetry agents."
+    assert not _looks_like_json_blob(response)
 
 
-def test_execute_or_summarize_renders_commands_json_as_plain_english() -> None:
+def test_execute_or_summarize_preserves_plain_text_for_commands() -> None:
     class _FakeToolRegistry:
         async def call_tool(
             self,
@@ -460,15 +561,14 @@ def test_execute_or_summarize_renders_commands_json_as_plain_english() -> None:
             arguments: dict[str, Any],
         ) -> dict[str, Any]:
             del name, arguments
+            plain_text = (
+                "I found 2 available command(s): opamp/restart, Shutdown Agent."
+            )
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            '{"commands":[{"operation":"restart","classifier":"opamp"},'
-                            '{"displayname":"Shutdown Agent","operation":"shutdown","classifier":"custom"}],'
-                            '"total":2}'
-                        ),
+                        "text": plain_text,
                     }
                 ]
             }
@@ -482,7 +582,57 @@ def test_execute_or_summarize_renders_commands_json_as_plain_english() -> None:
     assert "I found 2 available command(s)" in response
     assert "opamp/restart" in response
     assert "Shutdown Agent" in response
-    assert "<structured>" not in response
+    assert not _looks_like_json_blob(response)
+
+
+def test_render_agent_short_rich_text_includes_only_present_identity_values() -> None:
+    agent = {
+        "client_id": "abc123",
+        "remote_addr": "10.0.0.10",
+        "agent_description": (
+            'identifying_attributes { key: "service.name" value { string_value: "orders-api" } }\n'
+            'identifying_attributes { key: "service.version" value { string_value: "1.2.3" } }\n'
+            'identifying_attributes { key: "host.name" value { string_value: "otel-host-01" } }\n'
+        ),
+    }
+
+    rendered = nodes._render_agent_short_rich_text(agent)
+
+    assert "service.name=orders-api" in rendered
+    assert "service.version=1.2.3" in rendered
+    assert "hostname=otel-host-01" in rendered
+    assert "ip=10.0.0.10" in rendered
+    assert "mac_address=" not in rendered
+    assert "service.type=" not in rendered
+
+
+def test_render_agent_long_rich_text_uses_openapi_descriptions_when_available() -> None:
+    agent = {
+        "client_id": "agent-001",
+        "agent_description": (
+            'identifying_attributes { key: "service.name" value { string_value: "payments-api" } }\n'
+        ),
+    }
+    openapi_spec = {
+        "components": {
+            "schemas": {
+                "OtelAgent": {
+                    "properties": {
+                        "client_id": {"description": "Client ID from provider state."}
+                    }
+                }
+            }
+        }
+    }
+
+    descriptions = nodes._resolve_agent_field_descriptions(openapi_spec)
+    rendered = nodes._render_agent_long_rich_text(
+        agent,
+        field_descriptions=descriptions,
+    )
+
+    assert "`client_id`: `agent-001` (Client ID from provider state.)" in rendered
+    assert "`service.name`: `payments-api`" in rendered
 
 
 def test_verify_ai_svc_connection_uses_connection_factory(
