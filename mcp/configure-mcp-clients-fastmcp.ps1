@@ -123,6 +123,58 @@ function Build-RuntimePath {
     return ($entries -join ";")
 }
 
+function ConvertTo-HashtableRecursive {
+    # Recursively converts PSCustomObject/dictionaries/arrays into hashtable-friendly structures.
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $table = @{}
+        foreach ($key in $Value.Keys) {
+            $table[$key] = ConvertTo-HashtableRecursive -Value $Value[$key]
+        }
+        return $table
+    }
+
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $table = @{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $table[$property.Name] = ConvertTo-HashtableRecursive -Value $property.Value
+        }
+        return $table
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        $items = @()
+        foreach ($entry in $Value) {
+            $items += ,(ConvertTo-HashtableRecursive -Value $entry)
+        }
+        return $items
+    }
+
+    return $Value
+}
+
+function ConvertFrom-JsonCompat {
+    # Converts JSON text to hashtable structures across Windows PowerShell and PowerShell 7+.
+    param([string]$JsonText)
+
+    if ([string]::IsNullOrWhiteSpace($JsonText)) {
+        return @{}
+    }
+
+    $convertCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
+    if ($convertCommand.Parameters.ContainsKey("AsHashtable")) {
+        return $JsonText | ConvertFrom-Json -AsHashtable
+    }
+
+    $parsed = $JsonText | ConvertFrom-Json
+    return ConvertTo-HashtableRecursive -Value $parsed
+}
+
 function Get-MissingRequiredModules {
     # Returns a list of required modules not importable from the current Python environment.
     $code = @'
@@ -336,7 +388,7 @@ function Install-ClaudeTarget {
         if ([string]::IsNullOrWhiteSpace($existingText)) {
             $document = @{}
         } else {
-            $document = $existingText | ConvertFrom-Json -AsHashtable
+            $document = ConvertFrom-JsonCompat -JsonText $existingText
         }
     } else {
         $document = @{}
@@ -440,7 +492,7 @@ function Install-VSCodeTarget {
     }
     $mcpJsonArgs += $ServerSpec
     $generatedJson = & fastmcp @mcpJsonArgs
-    $generated = $generatedJson | ConvertFrom-Json -AsHashtable
+    $generated = ConvertFrom-JsonCompat -JsonText $generatedJson
 
     $serverConfig = $generated[$VSCodeName]
     if ($null -eq $serverConfig) {
@@ -452,7 +504,7 @@ function Install-VSCodeTarget {
     if ($null -eq $serverConfig) {
         Write-Error "Unable to parse generated MCP JSON for VS Code."
     }
-    $serverConfig = ($serverConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable)
+    $serverConfig = ConvertFrom-JsonCompat -JsonText ($serverConfig | ConvertTo-Json -Depth 20)
     if (-not $serverConfig.ContainsKey("type")) {
         $serverConfig["type"] = "stdio"
     }
@@ -462,7 +514,7 @@ function Install-VSCodeTarget {
         if ([string]::IsNullOrWhiteSpace($existingText)) {
             $document = @{}
         } else {
-            $document = $existingText | ConvertFrom-Json -AsHashtable
+            $document = ConvertFrom-JsonCompat -JsonText $existingText
         }
     } else {
         $document = @{}
