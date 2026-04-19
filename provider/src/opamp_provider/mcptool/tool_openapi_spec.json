@@ -3,7 +3,7 @@
   "info": {
     "title": "OpAMP Provider Tool API",
     "version": "1.0.0",
-    "description": "OpenAPI specification for /tool endpoints. Bearer authentication is optional at deployment time; when enabled, protected /tool paths may return 401/403."
+    "description": "OpenAPI specification for /tool endpoints. Bearer authentication is optional at deployment time; when enabled, protected /tool paths may return 401/403. OtelAgent and OtelAgentsResponse schemas are injected at runtime from opamp_provider.tool_api_contract."
   },
   "components": {
     "securitySchemes": {
@@ -15,6 +15,167 @@
       }
     },
     "schemas": {
+      "KeyValueStringPair": {
+        "type": "object",
+        "description": "Normalized command parameter stored as a string key/value pair.",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Parameter name."
+          },
+          "value": {
+            "type": "string",
+            "description": "Parameter value as a string."
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "EventHistory": {
+        "type": "object",
+        "description": "One event entry in the per-agent timeline.",
+        "properties": {
+          "event_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC timestamp when the event object was created."
+          },
+          "event_description": {
+            "type": "string",
+            "description": "Human-readable event summary."
+          }
+        },
+        "required": [
+          "event_time",
+          "event_description"
+        ]
+      },
+      "CommandRecord": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHistory"
+          },
+          {
+            "type": "object",
+            "description": "Queued command entry, including dispatch lifecycle timestamps.",
+            "properties": {
+              "classifier": {
+                "type": "string",
+                "description": "Command classifier used to route payload construction."
+              },
+              "action": {
+                "type": "string",
+                "description": "Command action value sent to the target agent."
+              },
+              "key_value_pairs": {
+                "type": "array",
+                "description": "Normalized command parameters.",
+                "items": {
+                  "$ref": "#/components/schemas/KeyValueStringPair"
+                }
+              },
+              "received_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "UTC timestamp when the command was queued by the provider."
+              },
+              "sent_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "UTC timestamp when the command was transmitted to the agent; null means pending."
+              }
+            },
+            "required": [
+              "classifier",
+              "action",
+              "key_value_pairs",
+              "received_at",
+              "sent_at"
+            ]
+          }
+        ]
+      },
+      "ComponentHealthStatus": {
+        "type": "object",
+        "description": "Health status for one component in the agent health map.",
+        "properties": {
+          "healthy": {
+            "type": "string",
+            "description": "String form of the proto boolean health flag (typically \"True\" or \"False\")."
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "description": "Component status text, if provided by the agent."
+          },
+          "last_error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Last reported component error message, if any."
+          },
+          "start_time_unix_nano": {
+            "type": "string",
+            "description": "Component start time as Unix epoch nanoseconds encoded as a string."
+          },
+          "status_time_unix_nano": {
+            "type": "string",
+            "description": "Timestamp of the current status as Unix epoch nanoseconds encoded as a string."
+          }
+        },
+        "required": [
+          "healthy",
+          "status",
+          "last_error",
+          "start_time_unix_nano",
+          "status_time_unix_nano"
+        ]
+      },
+      "HealthPayload": {
+        "type": "object",
+        "description": "Latest top-level health payload from the agent.",
+        "properties": {
+          "healthy": {
+            "type": "string",
+            "description": "String form of the proto boolean health flag (typically \"True\" or \"False\")."
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "description": "Overall health status text, if provided."
+          },
+          "last_error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Overall health last error text, if provided."
+          },
+          "start_time_unix_nano": {
+            "type": "string",
+            "description": "Overall start time as Unix epoch nanoseconds encoded as a string."
+          },
+          "status_time_unix_nano": {
+            "type": "string",
+            "description": "Overall status timestamp as Unix epoch nanoseconds encoded as a string."
+          },
+          "component_health_map": {
+            "type": "object",
+            "description": "Health map keyed by component name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComponentHealthStatus"
+            }
+          }
+        },
+        "required": [
+          "healthy",
+          "status",
+          "last_error",
+          "start_time_unix_nano",
+          "status_time_unix_nano",
+          "component_health_map"
+        ]
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -32,7 +193,7 @@
     "/tool/otelAgents": {
       "get": {
         "summary": "List connected agents",
-        "description": "Returns agents that are not disconnected.",
+        "description": "Returns provider-tracked agents with optional query filters. By default, only agents that are not disconnected are returned.",
         "security": [
           {
             "BearerAuth": []
@@ -45,22 +206,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "agents": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
-                      }
-                    },
-                    "total": {
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "agents",
-                    "total"
-                  ]
+                  "$ref": "#/components/schemas/OtelAgentsResponse"
                 }
               }
             }

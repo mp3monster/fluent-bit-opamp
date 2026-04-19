@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from opamp_provider.command_record import CommandRecord
 from opamp_provider.event_history import EventHistory
 from opamp_provider.proto import opamp_pb2
+from opamp_provider.tool_api_contract import OTEL_AGENT_EXPORT_FIELDS
 from shared.opamp_config import anyvalue_to_string
 from shared.uuid_utils import generate_uuid7_bytes
 
@@ -244,6 +245,19 @@ class ClientRecord(BaseModel):
         if pending_agent_identification is None:
             return None
         return pending_agent_identification.hex()
+
+    def model_dump_for_otel_agents_tool(self) -> dict[str, Any]:
+        """Serialize one client using the shared `/tool/otelAgents` contract.
+
+        Contract dependency:
+        this export intentionally depends on ``OTEL_AGENT_EXPORT_FIELDS`` from
+        ``opamp_provider.tool_api_contract`` so payload keys stay aligned with
+        the OpenAPI OtelAgent schema when ClientRecord evolves.
+        """
+        return self.model_dump(
+            mode="json",
+            include=set(OTEL_AGENT_EXPORT_FIELDS),
+        )
 
 
 class ClientStore:

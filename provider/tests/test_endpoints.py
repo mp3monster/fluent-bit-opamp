@@ -12,7 +12,7 @@
 
 import json
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from opamp_provider import auth as provider_auth
@@ -25,6 +25,9 @@ from opamp_provider.app import (
     ERR_AGENT_PENDING_APPROVAL,
     _tls_certificate_expiry_metadata,
     app,
+)
+from opamp_provider.command_implementations.command_shutdown_agent import (
+    SHUTDOWN_AGENT_CAPABILITY,
 )
 from opamp_provider.config import ProviderConfig
 from opamp_provider.mcptool.routes import mcp_tool_invoke_custom_command
@@ -83,6 +86,65 @@ def _test_provider_config(
         opamp_use_authorization=opamp_use_authorization,
         ui_use_authorization=ui_use_authorization,
     )
+
+
+def _add_agent_description_attribute(
+    agent_msg: opamp_pb2.AgentToServer,
+    *,
+    key: str,
+    value: str,
+) -> None:
+    """Append an identifying string attribute to AgentDescription."""
+    item = agent_msg.agent_description.identifying_attributes.add()
+    item.key = key
+    item.value.string_value = value
+
+
+def _seed_tool_agent_record(
+    *,
+    client_id: str,
+    disconnected: bool = False,
+    remote_addr: str | None = None,
+    service_instance_id: str | None = None,
+    host_name: str | None = None,
+    host_ip: str | None = None,
+    client_version: str | None = None,
+    custom_capabilities: list[str] | None = None,
+    capabilities: int = 0,
+) -> None:
+    """Insert one tool-visible client record into STORE for /tool/otelAgents tests."""
+    agent_msg = opamp_pb2.AgentToServer(instance_uid=bytes.fromhex(client_id))
+    agent_msg.sequence_num = 1
+    agent_msg.capabilities = capabilities
+    if client_version:
+        _add_agent_description_attribute(
+            agent_msg,
+            key="service.version",
+            value=client_version,
+        )
+    if service_instance_id:
+        _add_agent_description_attribute(
+            agent_msg,
+            key="service.instance.id",
+            value=service_instance_id,
+        )
+    if host_name:
+        _add_agent_description_attribute(
+            agent_msg,
+            key="host.name",
+            value=host_name,
+        )
+    if host_ip:
+        _add_agent_description_attribute(
+            agent_msg,
+            key="host.ip",
+            value=host_ip,
+        )
+    if custom_capabilities:
+        agent_msg.custom_capabilities.capabilities.extend(custom_capabilities)
+    if disconnected:
+        agent_msg.agent_disconnect.SetInParent()
+    STORE.upsert_from_agent_msg(agent_msg, channel="HTTP", remote_addr=remote_addr)
 
 
 @pytest.mark.asyncio
@@ -971,6 +1033,8 @@ async def test_help_page_includes_restore_usage() -> None:
     assert "--restore" in html
     assert "state_file_prefix" in html
     assert "empty/default in-memory state" in html
+    assert "No wildcard characters are needed" in html
+    assert "invertFilter=true" in html
 
 
 @pytest.mark.asyncio
@@ -1286,6 +1350,372 @@ async def test_tool_otel_agents_returns_only_connected_agents() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_otel_agents_filter_mdisconnected() -> None:
+    """Verify `mdisconnected` toggles connected/disconnected filtering behavior."""
+    connected_id = "00000000000000000000000000000033"
+    disconnected_id = "00000000000000000000000000000044"
+    STORE._clients.clear()
+    _seed_tool_agent_record(client_id=connected_id, disconnected=False)
+    _seed_tool_agent_record(client_id=disconnected_id, disconnected=True)
+
+    async with app.test_client() as client:
+        disconnected_resp = await client.get("/tool/otelAgents?mdisconnected=true")
+        connected_resp = await client.get("/tool/otelAgents?mdisconnected=false")
+        assert disconnected_resp.status_code == 200
+        assert connected_resp.status_code == 200
+        disconnected_payload = await disconnected_resp.get_json()
+        connected_payload = await connected_resp.get_json()
+
+    assert disconnected_payload["total"] == 1
+    assert disconnected_payload["agents"][0]["client_id"] == disconnected_id
+    assert disconnected_payload["agents"][0]["disconnected"] is True
+    assert connected_payload["total"] == 1
+    assert connected_payload["agents"][0]["client_id"] == connected_id
+    assert connected_payload["agents"][0]["disconnected"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_filters_text_fields_and_host_fields() -> None:
+    """Verify `/tool/otelAgents` supports text filters for id/version/description/host fields."""
+    first_id = "00000000000000000000000000000055"
+    second_id = "00000000000000000000000000000066"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        client_version="1.2.3",
+        host_name="alpha-node",
+        host_ip="10.1.1.5",
+        remote_addr="192.168.10.1",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        client_version="9.9.9",
+        host_name="beta-node",
+        host_ip="10.9.9.9",
+        remote_addr="172.20.8.8",
+    )
+
+    async with app.test_client() as client:
+        by_id_resp = await client.get("/tool/otelAgents?client_id=55")
+        by_version_resp = await client.get("/tool/otelAgents?client_version=1.2")
+        by_description_resp = await client.get("/tool/otelAgents?agent_description=alpha-node")
+        by_host_name_resp = await client.get("/tool/otelAgents?host_name=alpha")
+        by_host_ip_resp = await client.get("/tool/otelAgents?host_ip=192.168.10.1")
+        assert by_id_resp.status_code == 200
+        assert by_version_resp.status_code == 200
+        assert by_description_resp.status_code == 200
+        assert by_host_name_resp.status_code == 200
+        assert by_host_ip_resp.status_code == 200
+        by_id_payload = await by_id_resp.get_json()
+        by_version_payload = await by_version_resp.get_json()
+        by_description_payload = await by_description_resp.get_json()
+        by_host_name_payload = await by_host_name_resp.get_json()
+        by_host_ip_payload = await by_host_ip_resp.get_json()
+
+    assert by_id_payload["total"] == 1
+    assert by_id_payload["agents"][0]["client_id"] == first_id
+    assert by_version_payload["total"] == 1
+    assert by_version_payload["agents"][0]["client_id"] == first_id
+    assert by_description_payload["total"] == 1
+    assert by_description_payload["agents"][0]["client_id"] == first_id
+    assert by_host_name_payload["total"] == 1
+    assert by_host_name_payload["agents"][0]["client_id"] == first_id
+    assert by_host_ip_payload["total"] == 1
+    assert by_host_ip_payload["agents"][0]["client_id"] == first_id
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_filters_service_instance_id_substring() -> None:
+    """Verify `/tool/otelAgents` supports service_instance_id substring filtering."""
+    first_id = "00000000000000000000000000000067"
+    second_id = "00000000000000000000000000000068"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        service_instance_id="svc-alpha-01",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        service_instance_id="svc-beta-01",
+    )
+
+    async with app.test_client() as client:
+        by_service_instance_resp = await client.get(
+            "/tool/otelAgents?service_instance_id=ha-0"
+        )
+        assert by_service_instance_resp.status_code == 200
+        by_service_instance_payload = await by_service_instance_resp.get_json()
+
+    assert by_service_instance_payload["total"] == 1
+    assert by_service_instance_payload["agents"][0]["client_id"] == first_id
+
+
+@pytest.mark.asyncio
+async def test_list_clients_filters_service_instance_version_host_name_and_ip() -> None:
+    """Verify `/api/clients` supports query filtering for service ID/version/host/IP."""
+    first_id = "00000000000000000000000000000099"
+    second_id = "000000000000000000000000000000aa"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        service_instance_id="svc-alpha-01",
+        client_version="1.2.3",
+        host_name="alpha-node",
+        host_ip="10.1.1.5",
+        remote_addr="192.168.10.1",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        service_instance_id="svc-beta-01",
+        client_version="9.9.9",
+        host_name="beta-node",
+        host_ip="10.9.9.9",
+        remote_addr="172.20.8.8",
+    )
+
+    async with app.test_client() as client:
+        by_service_instance_resp = await client.get(
+            "/api/clients?service_instance_id=ha-0"
+        )
+        by_version_resp = await client.get("/api/clients?client_version=1.2")
+        by_host_name_resp = await client.get("/api/clients?host_name=alpha")
+        by_host_ip_resp = await client.get("/api/clients?host_ip=192.168.10.1")
+        assert by_service_instance_resp.status_code == 200
+        assert by_version_resp.status_code == 200
+        assert by_host_name_resp.status_code == 200
+        assert by_host_ip_resp.status_code == 200
+        by_service_instance_payload = await by_service_instance_resp.get_json()
+        by_version_payload = await by_version_resp.get_json()
+        by_host_name_payload = await by_host_name_resp.get_json()
+        by_host_ip_payload = await by_host_ip_resp.get_json()
+
+    assert by_service_instance_payload["total"] == 1
+    assert by_service_instance_payload["clients"][0]["client_id"] == first_id
+    assert by_version_payload["total"] == 1
+    assert by_version_payload["clients"][0]["client_id"] == first_id
+    assert by_host_name_payload["total"] == 1
+    assert by_host_name_payload["clients"][0]["client_id"] == first_id
+    assert by_host_ip_payload["total"] == 1
+    assert by_host_ip_payload["clients"][0]["client_id"] == first_id
+
+
+@pytest.mark.asyncio
+async def test_list_clients_combines_multiple_filters_with_or_semantics() -> None:
+    """Verify `/api/clients` combines active text filters with OR semantics."""
+    first_id = "000000000000000000000000000000b1"
+    second_id = "000000000000000000000000000000b2"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        service_instance_id="svc-alpha-01",
+        client_version="1.2.3",
+        host_name="alpha-node",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        service_instance_id="svc-beta-01",
+        client_version="9.9.9",
+        host_name="beta-node",
+    )
+
+    async with app.test_client() as client:
+        resp = await client.get("/api/clients?host_name=alpha&client_version=9.9")
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    returned_ids = {item["client_id"] for item in payload["clients"]}
+    assert payload["total"] == 2
+    assert returned_ids == {first_id, second_id}
+
+
+@pytest.mark.asyncio
+async def test_list_clients_filters_invert_filter_returns_non_matches() -> None:
+    """Verify `/api/clients?invertFilter=true` negates active filter matches."""
+    first_id = "000000000000000000000000000000c1"
+    second_id = "000000000000000000000000000000c2"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        service_instance_id="svc-alpha-01",
+        client_version="1.2.3",
+        host_name="alpha-node",
+        host_ip="10.1.1.5",
+        remote_addr="192.168.10.1",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        service_instance_id="svc-beta-01",
+        client_version="9.9.9",
+        host_name="beta-node",
+        host_ip="10.9.9.9",
+        remote_addr="172.20.8.8",
+    )
+
+    async with app.test_client() as client:
+        exclude_resp = await client.get(
+            "/api/clients?host_name=alpha&invertFilter=true"
+        )
+        assert exclude_resp.status_code == 200
+        exclude_payload = await exclude_resp.get_json()
+
+    assert exclude_payload["total"] == 1
+    assert exclude_payload["clients"][0]["client_id"] == second_id
+
+
+@pytest.mark.asyncio
+async def test_list_clients_invert_filter_with_multiple_filters_uses_or_base() -> None:
+    """Verify invertFilter negates OR-based matching across active filters."""
+    first_id = "000000000000000000000000000000c4"
+    second_id = "000000000000000000000000000000c5"
+    third_id = "000000000000000000000000000000c6"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        host_name="alpha-node",
+        client_version="1.2.3",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        host_name="beta-node",
+        client_version="9.9.9",
+    )
+    _seed_tool_agent_record(
+        client_id=third_id,
+        host_name="gamma-node",
+        client_version="5.5.5",
+    )
+
+    async with app.test_client() as client:
+        resp = await client.get(
+            "/api/clients?host_name=alpha&client_version=9.9&invertFilter=true"
+        )
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+
+    assert payload["total"] == 1
+    assert payload["clients"][0]["client_id"] == third_id
+
+
+@pytest.mark.asyncio
+async def test_list_clients_rejects_invalid_invert_filter_value() -> None:
+    """Verify malformed `/api/clients?invertFilter=` values return HTTP 400."""
+    _seed_tool_agent_record(client_id="000000000000000000000000000000c3")
+    async with app.test_client() as client:
+        resp = await client.get("/api/clients?invertFilter=maybe")
+
+    assert resp.status_code == 400
+    payload = await resp.get_json()
+    assert "invertFilter" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_filters_last_communication_range() -> None:
+    """Verify communication_since and communication_before filter on last_communication."""
+    older_id = "00000000000000000000000000000077"
+    newer_id = "00000000000000000000000000000088"
+    STORE._clients.clear()
+    _seed_tool_agent_record(client_id=older_id)
+    _seed_tool_agent_record(client_id=newer_id)
+
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    older_record = STORE.get(older_id)
+    newer_record = STORE.get(newer_id)
+    assert older_record is not None
+    assert newer_record is not None
+    older_record.last_communication = now - timedelta(hours=2)
+    newer_record.last_communication = now - timedelta(minutes=10)
+
+    since = (now - timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+    before = (now - timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+
+    async with app.test_client() as client:
+        since_resp = await client.get(f"/tool/otelAgents?communication_since={since}")
+        before_resp = await client.get(f"/tool/otelAgents?communication_before={before}")
+        assert since_resp.status_code == 200
+        assert before_resp.status_code == 200
+        since_payload = await since_resp.get_json()
+        before_payload = await before_resp.get_json()
+
+    assert since_payload["total"] == 1
+    assert since_payload["agents"][0]["client_id"] == newer_id
+    assert before_payload["total"] == 1
+    assert before_payload["agents"][0]["client_id"] == older_id
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_filters_supports_command_name() -> None:
+    """Verify supports_command_name filters by inferred standard/custom command support."""
+    restart_id = "00000000000000000000000000000099"
+    custom_id = "000000000000000000000000000000aa"
+    none_id = "000000000000000000000000000000bb"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=restart_id,
+        capabilities=opamp_pb2.AgentCapabilities.AgentCapabilities_AcceptsRestartCommand,
+    )
+    _seed_tool_agent_record(
+        client_id=custom_id,
+        custom_capabilities=[SHUTDOWN_AGENT_CAPABILITY],
+    )
+    _seed_tool_agent_record(client_id=none_id)
+
+    async with app.test_client() as client:
+        restart_resp = await client.get("/tool/otelAgents?supports_command_name=restart")
+        shutdown_resp = await client.get("/tool/otelAgents?supports_command_name=shutdown")
+        assert restart_resp.status_code == 200
+        assert shutdown_resp.status_code == 200
+        restart_payload = await restart_resp.get_json()
+        shutdown_payload = await shutdown_resp.get_json()
+
+    assert restart_payload["total"] == 1
+    assert restart_payload["agents"][0]["client_id"] == restart_id
+    assert shutdown_payload["total"] == 1
+    assert shutdown_payload["agents"][0]["client_id"] == custom_id
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_rejects_invalid_filter_values() -> None:
+    """Verify invalid bool/datetime filter values produce HTTP 400 error payloads."""
+    _seed_tool_agent_record(client_id="000000000000000000000000000000cc")
+    async with app.test_client() as client:
+        invalid_date = await client.get("/tool/otelAgents?communication_since=not-a-date")
+        invalid_bool = await client.get("/tool/otelAgents?mdisconnected=maybe")
+
+    assert invalid_date.status_code == 400
+    invalid_date_payload = await invalid_date.get_json()
+    assert "communication_since" in invalid_date_payload["error"]
+    assert invalid_bool.status_code == 400
+    invalid_bool_payload = await invalid_bool.get_json()
+    assert "mdisconnected" in invalid_bool_payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_tool_otel_agents_invert_filter_returns_non_matches() -> None:
+    """Verify `/tool/otelAgents?invertFilter=true` negates active filter matches."""
+    first_id = "000000000000000000000000000000d1"
+    second_id = "000000000000000000000000000000d2"
+    STORE._clients.clear()
+    _seed_tool_agent_record(
+        client_id=first_id,
+        host_name="alpha-node",
+    )
+    _seed_tool_agent_record(
+        client_id=second_id,
+        host_name="beta-node",
+    )
+
+    async with app.test_client() as client:
+        exclude_resp = await client.get(
+            "/tool/otelAgents?host_name=alpha&invertFilter=true"
+        )
+        assert exclude_resp.status_code == 200
+        exclude_payload = await exclude_resp.get_json()
+
+    assert exclude_payload["total"] == 1
+    assert exclude_payload["agents"][0]["client_id"] == second_id
+
+
+@pytest.mark.asyncio
 async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
     """Verify `/tool` serves OpenAPI metadata that includes documented tool endpoint paths."""
     async with app.test_client() as client:
@@ -1301,6 +1731,23 @@ async def test_tool_openapi_spec_lists_tool_endpoints() -> None:
     assert "/tool/commands" in paths
     assert "get" in paths["/tool/commands"]
     assert "responses" in paths["/tool/commands"]["get"]
+    otel_agents_get = paths["/tool/otelAgents"]["get"]
+    param_names = {
+        param.get("name")
+        for param in otel_agents_get.get("parameters", [])
+        if isinstance(param, dict)
+    }
+    assert "agent_description" in param_names
+    assert "client_id" in param_names
+    assert "communication_before" in param_names
+    assert "communication_since" in param_names
+    assert "client_version" in param_names
+    assert "mdisconnected" in param_names
+    assert "supports_command_name" in param_names
+    assert "service_instance_id" in param_names
+    assert "host_name" in param_names
+    assert "host_ip" in param_names
+    assert "invertFilter" in param_names
 
 
 @pytest.mark.asyncio

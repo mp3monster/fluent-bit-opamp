@@ -25,6 +25,14 @@
       httpsCertificateExpiryDate: null,
       httpsCertificateDaysRemaining: null,
       httpsCertificateExpiringSoon: false,
+      filters: {
+        serviceInstanceId: "",
+        clientVersion: "",
+        hostName: "",
+        hostIp: "",
+        invertFilter: false,
+        collapsed: false,
+      },
       authToken: "",
       timer: null,
     };
@@ -41,6 +49,20 @@
     const pageJump = document.getElementById("pageJump");
     const refreshInput = document.getElementById("refreshInput");
     const pageSizeInput = document.getElementById("pageSizeInput");
+    const toggleFiltersBtn = document.getElementById("toggleFiltersBtn");
+    const filterControls = document.getElementById("filterControls");
+    const filterServiceInstanceInput = document.getElementById(
+      "filterServiceInstanceInput"
+    );
+    const filterClientVersionInput = document.getElementById(
+      "filterClientVersionInput"
+    );
+    const filterHostNameInput = document.getElementById("filterHostNameInput");
+    const filterHostIpInput = document.getElementById("filterHostIpInput");
+    const filterModeBtn = document.getElementById("filterModeBtn");
+    const filterApplyBtn = document.getElementById("filterApplyBtn");
+    const clearFiltersBtn = document.getElementById("clearFiltersBtn");
+    const activeFiltersIndicator = document.getElementById("activeFiltersIndicator");
     const authTokenInput = document.getElementById("authTokenInput");
     const applyAuthTokenBtn = document.getElementById("applyAuthTokenBtn");
     const clearAuthTokenBtn = document.getElementById("clearAuthTokenBtn");

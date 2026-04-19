@@ -293,13 +293,162 @@
       }
     }
 
+    function normalizeFilterValue(value) {
+      return String(value || "").trim();
+    }
+
+    function setFilterModeButtonState() {
+      const isExclude = state.filters.invertFilter === true;
+      filterModeBtn.textContent = isExclude ? "Exclude" : "Show";
+      filterModeBtn.classList.toggle("exclude", isExclude);
+      filterModeBtn.setAttribute("aria-pressed", isExclude ? "true" : "false");
+    }
+
+    function setFiltersCollapsed(collapsed) {
+      const isCollapsed = collapsed === true;
+      state.filters.collapsed = isCollapsed;
+      filterControls.classList.toggle("collapsed", isCollapsed);
+      toggleFiltersBtn.textContent = isCollapsed ? "Show Filters" : "Hide Filters";
+      toggleFiltersBtn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      toggleFiltersBtn.classList.toggle("closed", isCollapsed);
+    }
+
+    function setClientFilterState(filters = {}) {
+      if (Object.prototype.hasOwnProperty.call(filters, "serviceInstanceId")) {
+        state.filters.serviceInstanceId = normalizeFilterValue(filters.serviceInstanceId);
+      }
+      if (Object.prototype.hasOwnProperty.call(filters, "clientVersion")) {
+        state.filters.clientVersion = normalizeFilterValue(filters.clientVersion);
+      }
+      if (Object.prototype.hasOwnProperty.call(filters, "hostName")) {
+        state.filters.hostName = normalizeFilterValue(filters.hostName);
+      }
+      if (Object.prototype.hasOwnProperty.call(filters, "hostIp")) {
+        state.filters.hostIp = normalizeFilterValue(filters.hostIp);
+      }
+      if (Object.prototype.hasOwnProperty.call(filters, "invertFilter")) {
+        state.filters.invertFilter = filters.invertFilter === true;
+      }
+      if (Object.prototype.hasOwnProperty.call(filters, "collapsed")) {
+        state.filters.collapsed = filters.collapsed === true;
+      }
+    }
+
+    function readClientFiltersFromInputs() {
+      return {
+        serviceInstanceId: normalizeFilterValue(filterServiceInstanceInput.value),
+        clientVersion: normalizeFilterValue(filterClientVersionInput.value),
+        hostName: normalizeFilterValue(filterHostNameInput.value),
+        hostIp: normalizeFilterValue(filterHostIpInput.value),
+      };
+    }
+
+    function syncClientFiltersFromInputs() {
+      setClientFilterState(readClientFiltersFromInputs());
+    }
+
+    function writeClientFiltersToInputs() {
+      filterServiceInstanceInput.value = state.filters.serviceInstanceId;
+      filterClientVersionInput.value = state.filters.clientVersion;
+      filterHostNameInput.value = state.filters.hostName;
+      filterHostIpInput.value = state.filters.hostIp;
+      setFilterModeButtonState();
+      setFiltersCollapsed(state.filters.collapsed);
+    }
+
+    function activeClientFilters(includeMode = false) {
+      const active = [];
+      if (state.filters.serviceInstanceId) {
+        active.push(["service_instance_id", state.filters.serviceInstanceId]);
+      }
+      if (state.filters.clientVersion) {
+        active.push(["client_version", state.filters.clientVersion]);
+      }
+      if (state.filters.hostName) {
+        active.push(["host_name", state.filters.hostName]);
+      }
+      if (state.filters.hostIp) {
+        active.push(["host_ip", state.filters.hostIp]);
+      }
+      if (includeMode && state.filters.invertFilter === true && active.length > 0) {
+        active.push(["invertFilter", "true"]);
+      }
+      return active;
+    }
+
+    function activeFilterCount() {
+      return activeClientFilters(false).length;
+    }
+
+    function updateActiveFiltersIndicator() {
+      if (!activeFiltersIndicator) return;
+      const activeCount = activeFilterCount();
+      const mode = state.filters.invertFilter === true ? "exclude" : "show";
+      if (activeCount === 0) {
+        activeFiltersIndicator.textContent = "Filters: none";
+      } else {
+        activeFiltersIndicator.textContent = `Filters active: ${activeCount} (${mode})`;
+      }
+      activeFiltersIndicator.classList.toggle("active", activeCount > 0);
+      if (clearFiltersBtn) {
+        clearFiltersBtn.disabled = activeCount === 0;
+      }
+      toggleFiltersBtn.classList.toggle(
+        "filters-active",
+        state.filters.collapsed === true && activeCount > 0
+      );
+    }
+
+    function buildClientFilterQueryString() {
+      const params = new URLSearchParams();
+      activeClientFilters(true).forEach(([key, value]) => {
+        params.append(key, value);
+      });
+      return params.toString();
+    }
+
+    async function applyClientFilters() {
+      syncClientFiltersFromInputs();
+      state.page = 1;
+      updateActiveFiltersIndicator();
+      await fetchClients();
+    }
+
+    async function clearClientFilters() {
+      setClientFilterState({
+        serviceInstanceId: "",
+        clientVersion: "",
+        hostName: "",
+        hostIp: "",
+        invertFilter: false,
+      });
+      writeClientFiltersToInputs();
+      state.page = 1;
+      updateActiveFiltersIndicator();
+      await fetchClients();
+    }
+
+    function toggleFilterMode() {
+      state.filters.invertFilter = state.filters.invertFilter !== true;
+      setFilterModeButtonState();
+      updateActiveFiltersIndicator();
+    }
+
+    function toggleFiltersPanel() {
+      setFiltersCollapsed(state.filters.collapsed !== true);
+      updateActiveFiltersIndicator();
+    }
+
     async function fetchClients() {
-      const resp = await apiFetch("/api/clients");
+      const query = buildClientFilterQueryString();
+      const endpoint = query ? `/api/clients?${query}` : "/api/clients";
+      const resp = await apiFetch(endpoint);
       if (!resp.ok) return;
       const data = await resp.json();
       state.clients = data.clients || [];
       lastUpdated.textContent = new Date().toLocaleTimeString();
-      agentCount.textContent = state.clients.length;
+      const total = Number.isInteger(data.total) ? data.total : state.clients.length;
+      agentCount.textContent = total;
       if (state.humanInLoopApproval === true) {
         updatePendingApprovalCount(data.pending_approval_total ?? state.pendingApprovals.length);
       } else {
@@ -1750,6 +1899,9 @@
 
     async function init() {
       initializeAuthToken();
+      setClientFilterState(state.filters);
+      writeClientFiltersToInputs();
+      updateActiveFiltersIndicator();
       await fetchGlobalSettingsHelp();
       await fetchSettings();
       await fetchClientSettings();

@@ -94,6 +94,23 @@
       <li>Disconnected status means the agent explicitly sent an OpAMP disconnect message and will be purged after the configured retention period.</li>
       <li>Disconnected agents are excluded from late/overdue counts and are tinted electric blue in the table.</li>
     </ul>
+    <section class="custom-commands">
+      <h2>Server Console Filters</h2>
+      <p>
+        The main page filter row supports <strong>Service Instance ID</strong>, <strong>Client Version</strong>,
+        <strong>Host Name</strong>, and <strong>IP Address</strong>.
+      </p>
+      <ul class="command-list">
+        <li><strong>Match behavior:</strong> Case-insensitive substring matching.</li>
+        <li><strong>No wildcard characters are needed:</strong> entering <code>alpha</code> matches <code>svc-alpha-01</code>.</li>
+        <li><strong>Service Instance ID filter:</strong> Matches anywhere in the displayed service instance name.</li>
+        <li><strong>Show/Exclude mode:</strong> Use the <strong>Show</strong>/<strong>Exclude</strong> toggle to switch between matching records and non-matching records.</li>
+        <li><strong>API parameter:</strong> <code>invertFilter=true</code> is the query equivalent of <strong>Exclude</strong> mode.</li>
+        <li><strong>Combined filters:</strong> Filters are combined with OR (a row is shown when any active filter matches).</li>
+        <li><strong>Clear Filters:</strong> Use <strong>Clear Filters</strong> to remove all active filters.</li>
+        <li><strong>Close Filters:</strong> On smaller screens you can hide the filter row; if hidden while active, the <strong>Show Filters</strong> button is highlighted to indicate filtering is still applied.</li>
+      </ul>
+    </section>
     <div class="thresholds">
       <div class="threshold-card">
         <strong>Amber Threshold</strong>
