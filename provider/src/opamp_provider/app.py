@@ -19,11 +19,13 @@ import json
 import logging
 import os
 import pathlib
+import re
 import signal
 import ssl
 import tracemalloc
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from http import HTTPStatus
 
 from google.protobuf import text_format
@@ -85,6 +87,7 @@ from shared.opamp_config import (
     PB_FIELD_PACKAGE_STATUSES,
     UTF8_ENCODING,
     ServerCapabilities,
+    anyvalue_to_string,
 )
 
 app = Quart("opamp_server")
@@ -108,6 +111,19 @@ MODEL_DUMP_MODE = "json"  # Pydantic model_dump mode used for API JSON payloads.
 CERT_NOT_AFTER_SUFFIX_GMT = " GMT"  # Trailing timezone marker emitted by ssl certificate decoder.
 CERT_NOT_AFTER_PARSE_FORMAT = "%b %d %H:%M:%S %Y"  # Datetime parse format for decoded certificate notAfter values.
 TLS_EXPIRY_WARNING_DAYS = 30  # Number of days before expiry to highlight certificate warning state.
+QUERY_PARAM_SERVICE_INSTANCE_ID = "service_instance_id"  # Query parameter used to filter by service.instance.id.
+QUERY_PARAM_CLIENT_VERSION = "client_version"  # Query parameter used to filter by client version.
+QUERY_PARAM_HOST_NAME = "host_name"  # Query parameter used to filter by host name.
+QUERY_PARAM_HOST_IP = "host_ip"  # Query parameter used to filter by host IP.
+QUERY_PARAM_INVERT_FILTER = "invertFilter"  # Query parameter used to invert filter semantics.
+AGENT_DESCRIPTION_CACHE_SIZE = 512  # LRU size for parsed AgentDescription text payloads.
+AGENT_DESCRIPTION_ATTRIBUTE_SPLIT_PATTERN = r"[,\s]+"  # Split pattern for host.ip lists.
+BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}  # Accepted true-like query values.
+BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}  # Accepted false-like query values.
+ERROR_INVALID_BOOLEAN_FILTER = (
+    "invalid boolean query parameter '%s'; expected one of: true, false, "
+    "1, 0, yes, no, on, off"
+)  # Validation message for malformed boolean query values.
 
 COMMAND_RESTART = "restart"  # Standard OpAMP restart command action name.
 COMMAND_FORCE_RESYNC = "forceresync"  # Custom action name used to trigger full state resync.
@@ -396,6 +412,173 @@ def _coerce_bool_setting(value: object, *, key: str) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{key} must be a boolean")
+
+
+def _normalize_query_text(value: str | None) -> str | None:
+    """Return stripped query text or None when empty/unset."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _parse_optional_bool(value: str | bool | None, *, parameter_name: str) -> bool | None:
+    """Parse a bool-like query value into `bool | None`."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in BOOLEAN_TRUE_VALUES:
+        return True
+    if normalized in BOOLEAN_FALSE_VALUES:
+        return False
+    raise ValueError(ERROR_INVALID_BOOLEAN_FILTER % parameter_name)
+
+
+def _matches_text(value: str | None, query: str | None) -> bool:
+    """Return True when query is unset or is a case-insensitive substring match."""
+    if query is None:
+        return True
+    if not value:
+        return False
+    return query.lower() in value.lower()
+
+
+def _any_matches_text(values: tuple[str, ...], query: str | None) -> bool:
+    """Return True when any value matches query (case-insensitive substring)."""
+    if query is None:
+        return True
+    needle = query.lower()
+    for value in values:
+        if needle in str(value).lower():
+            return True
+    return False
+
+
+@lru_cache(maxsize=AGENT_DESCRIPTION_CACHE_SIZE)
+def _parse_agent_description_attributes(
+    agent_description: str,
+) -> dict[str, tuple[str, ...]]:
+    """Parse AgentDescription text and return key -> tuple(values) mapping."""
+    desc = opamp_pb2.AgentDescription()
+    text_format.Parse(agent_description, desc)
+    collected: dict[str, list[str]] = {}
+    for item in [*desc.identifying_attributes, *desc.non_identifying_attributes]:
+        key = str(item.key).strip()
+        value = anyvalue_to_string(item.value)
+        if not key or value is None:
+            continue
+        collected.setdefault(key, []).append(value)
+    return {key: tuple(values) for key, values in collected.items()}
+
+
+def _record_agent_description_attributes(record: ClientRecord) -> dict[str, tuple[str, ...]]:
+    """Read parsed agent-description attributes for one client record."""
+    if not record.agent_description:
+        return {}
+    try:
+        return _parse_agent_description_attributes(record.agent_description)
+    except text_format.ParseError:
+        logger.debug(
+            "unable to parse agent_description for client_id=%s",
+            record.client_id,
+            exc_info=True,
+        )
+        return {}
+
+
+def _record_service_instance_ids(record: ClientRecord) -> tuple[str, ...]:
+    """Return service-instance display-name candidates for filtering.
+
+    The table displays `service.instance.id` when present and falls back to
+    the OpAMP instance UID (`client_id`). Keep filter semantics aligned with
+    what operators see in the UI by supporting both.
+    """
+    attributes = _record_agent_description_attributes(record)
+    candidates: list[str] = list(attributes.get("service.instance.id", ()))
+    if not candidates and record.client_id:
+        candidates.append(record.client_id)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in candidates:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return tuple(deduped)
+
+
+def _record_host_names(record: ClientRecord) -> tuple[str, ...]:
+    """Return host name values extracted from agent description."""
+    attributes = _record_agent_description_attributes(record)
+    candidates: list[str] = []
+    for key in ("host.name", "hostname"):
+        candidates.extend(attributes.get(key, ()))
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in candidates:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return tuple(deduped)
+
+
+def _record_host_ips(record: ClientRecord) -> tuple[str, ...]:
+    """Return host IP candidates from remote_addr and agent description fields."""
+    candidates: list[str] = []
+    if record.remote_addr:
+        candidates.append(record.remote_addr)
+    attributes = _record_agent_description_attributes(record)
+    for key in ("host.ip", "ip_address", "ip"):
+        for raw in attributes.get(key, ()):
+            stripped = str(raw).strip().strip("[]")
+            if not stripped:
+                continue
+            for part in re.split(AGENT_DESCRIPTION_ATTRIBUTE_SPLIT_PATTERN, stripped):
+                normalized = part.strip()
+                if normalized:
+                    candidates.append(normalized)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in candidates:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return tuple(deduped)
+
+
+def _client_matches_api_clients_filters(
+    client: ClientRecord,
+    *,
+    service_instance_id: str | None,
+    client_version: str | None,
+    host_name: str | None,
+    host_ip: str | None,
+    invert_filter: bool,
+    has_active_filters: bool,
+) -> bool:
+    """Evaluate whether one client satisfies requested /api/clients filters."""
+    active_matches: list[bool] = []
+    if service_instance_id is not None:
+        active_matches.append(
+            _any_matches_text(_record_service_instance_ids(client), service_instance_id)
+        )
+    if client_version is not None:
+        active_matches.append(_matches_text(client.client_version, client_version))
+    if host_name is not None:
+        active_matches.append(_any_matches_text(_record_host_names(client), host_name))
+    if host_ip is not None:
+        active_matches.append(_any_matches_text(_record_host_ips(client), host_ip))
+
+    matches = True if not active_matches else any(active_matches)
+    if invert_filter and has_active_filters:
+        return not matches
+    return matches
 
 
 def _load_tls_certificate_expiry_utc(cert_file: str) -> datetime | None:
@@ -1262,7 +1445,38 @@ async def list_clients() -> Response:
         if removed:
             logger.info("purged %s disconnected clients", len(removed))
         _LAST_DISCONNECT_PURGE = now
-    clients = [client.model_dump(mode=MODEL_DUMP_MODE) for client in STORE.list()]
+    service_instance_id = _normalize_query_text(
+        request.args.get(QUERY_PARAM_SERVICE_INSTANCE_ID)
+    )
+    client_version = _normalize_query_text(request.args.get(QUERY_PARAM_CLIENT_VERSION))
+    host_name = _normalize_query_text(request.args.get(QUERY_PARAM_HOST_NAME))
+    host_ip = _normalize_query_text(request.args.get(QUERY_PARAM_HOST_IP))
+    try:
+        invert_filter = (
+            _parse_optional_bool(
+                request.args.get(QUERY_PARAM_INVERT_FILTER),
+                parameter_name=QUERY_PARAM_INVERT_FILTER,
+            )
+            is True
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), HTTPStatus.BAD_REQUEST
+    has_active_filters = any(
+        value is not None for value in (service_instance_id, client_version, host_name, host_ip)
+    )
+    clients = [
+        client.model_dump(mode=MODEL_DUMP_MODE)
+        for client in STORE.list()
+        if _client_matches_api_clients_filters(
+            client,
+            service_instance_id=service_instance_id,
+            client_version=client_version,
+            host_name=host_name,
+            host_ip=host_ip,
+            invert_filter=invert_filter,
+            has_active_filters=has_active_filters,
+        )
+    ]
     return jsonify(
         {
             "clients": clients,
